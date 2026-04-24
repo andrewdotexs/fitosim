@@ -17,10 +17,8 @@ from fitosim.science.radiation import (
     extraterrestrial_radiation,
 )
 
-MILAN_LATITUDE = 45.47    # gradi decimali, positiva a nord dell'equatore
-SARONNO_LATITUDE = 45.63  
-PALERMO_LATITUDE = 38.12  
-YEAR = 2025               # anno non bisestile, qualunque va bene
+MILAN_LATITUDE = 45.47  # gradi decimali, positiva a nord dell'equatore
+YEAR = 2025             # anno non bisestile, qualunque va bene
 
 MONTH_NAMES_IT = [
     "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
@@ -29,7 +27,7 @@ MONTH_NAMES_IT = [
 
 
 def main() -> None:
-    print(f"Radiazione extra-atmosferica R_a per Milano ({PALERMO_LATITUDE}° N)")
+    print(f"Radiazione extra-atmosferica R_a per Milano ({MILAN_LATITUDE}° N)")
     print(f"Anno: {YEAR}, giorno 15 di ogni mese\n")
     print(f"{'Mese':<12} {'R_a (MJ/m²/giorno)':>20}")
     print("-" * 34)
@@ -37,7 +35,7 @@ def main() -> None:
     for month in range(1, 13):
         d = date(YEAR, month, 15)
         j = day_of_year(d)
-        ra = extraterrestrial_radiation(PALERMO_LATITUDE, j)
+        ra = extraterrestrial_radiation(MILAN_LATITUDE, j)
         print(f"{MONTH_NAMES_IT[month - 1]:<12} {ra:>20.2f}")
 
 
