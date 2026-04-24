@@ -165,12 +165,22 @@ def extraterrestrial_radiation(latitude_deg: float, j: int) -> float:
     dr = inverse_relative_distance(j)
     omega_s = sunset_hour_angle(phi, delta)
 
-    # La formula intera. Il fattore (24 × 60 / π) converte il prodotto
-    # adimensionale di costante solare × d_r × integrale-angolare in
-    # energia giornaliera per unità di superficie. Il termine fra
-    # parentesi quadre (bracket) è l'integrale di cos(θ) sulla semigiornata,
-    # scritto in forma chiusa per l'emisfero visibile.
+    # Fattore (24 * 60 / π):
+    #   - il 1440 = 24 * 60 è la conversione giorno→minuti, richiesta
+    #     perché G_sc è espressa in MJ/m²/minuto;
+    #   - il divisione per π viene dalla conversione angolo-orario→tempo
+    #     (la Terra ruota 2π radianti in 1440 minuti) combinata con il
+    #     fattore 2 di simmetria del giorno attorno a mezzogiorno.
     factor = (24.0 * 60.0 / math.pi) * SOLAR_CONSTANT * dr
+    
+    # Il "bracket" è il termine tra parentesi quadre nella formula FAO-56
+    # (in Python usiamo parentesi tonde perché le quadre sono riservate
+    # alle liste). Risulta dall'integrazione analitica di cos(θ) da -ω_s
+    # a +ω_s, e raccoglie due contributi fisicamente distinti:
+    #   - ω_s * sin(φ) * sin(δ):   componente stagionale, pesata dalla
+    #                              durata del giorno;
+    #   - cos(φ) * cos(δ) * sin(ω_s): componente zenitale, pesata dalla
+    #                                 verticalità dei raggi a mezzogiorno.
     bracket = (
         omega_s * math.sin(phi) * math.sin(delta)
         + math.cos(phi) * math.cos(delta) * math.sin(omega_s)
