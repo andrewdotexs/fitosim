@@ -267,3 +267,80 @@ def water_balance_step_mm(
         lower_bound=lower_mm,
         alert_threshold=alert_mm,
     )
+
+
+# =======================================================================
+#  Coefficiente di stress idrico (FAO-56 eq. 84)
+# =======================================================================
+
+def stress_coefficient_ks(
+    current_theta: float,
+    substrate: Substrate,
+    depletion_fraction: float = DEFAULT_DEPLETION_FRACTION,
+) -> float:
+    """
+    Coefficiente di stress idrico Ks, adimensionale, in [0, 1].
+
+    Implementa l'equazione 84 del paper FAO-56: Ks modula
+    l'evapotraspirazione della coltura in funzione del contenuto idrico
+    del substrato, catturando la chiusura progressiva degli stomi che
+    avviene quando la pianta fatica a estrarre acqua. La logica è
+    lineare a tratti con due punti di rottura:
+
+        θ ≥ (θ_FC − RAW)   →  Ks = 1            (zona di comfort)
+        θ_PWP ≤ θ < soglia →  Ks scende da 1 a 0 (zona di stress)
+        θ < θ_PWP          →  Ks = 0            (pianta appassita)
+
+    Nella zona di stress la formula è l'interpolazione lineare:
+
+        Ks = (θ − θ_PWP) / [(θ_FC − RAW) − θ_PWP]
+           = (θ − θ_PWP) / (TAW − RAW)
+
+    Moltiplicando ET_c per Ks si ottiene l'evapotraspirazione reale
+    della coltura ET_c,act. Questo meccanismo risolve il "plateau
+    terminale" che si osserva nei modelli senza stress: invece di
+    raggiungere PWP bruscamente e restarci incollati, lo stato idrico
+    si avvicina a PWP asintoticamente, perché ET cala al ridursi di Ks.
+
+    Parametri
+    ---------
+    current_theta : float
+        Contenuto idrico volumetrico attuale del substrato, in [0, 1].
+    substrate : Substrate
+        Substrato di riferimento, da cui si ricavano θ_FC e θ_PWP.
+    depletion_fraction : float, opzionale
+        Frazione di deplezione p specifica della specie. Default 0.5
+        (raccomandazione generica FAO-56 per colture orticole comuni).
+        Specie sensibili allo stress (lattughe, foglie tenere) usano
+        0.3; xerofite come rosmarino o succulente tollerano 0.6-0.7.
+
+    Ritorna
+    -------
+    float
+        Ks in [0, 1].
+
+    Solleva
+    -------
+    ValueError
+        Se current_theta esce da [0, 1], o se depletion_fraction non è
+        nell'intervallo atteso (delegato a readily_available_water).
+    """
+    if not 0.0 <= current_theta <= 1.0:
+        raise ValueError(
+            f"current_theta deve essere in [0, 1] "
+            f"(ricevuto {current_theta})."
+        )
+
+    raw_fraction = readily_available_water(substrate, depletion_fraction)
+    theta_alert = substrate.theta_fc - raw_fraction
+
+    # Zona di comfort: Ks = 1, l'ET non è ridotta.
+    if current_theta >= theta_alert:
+        return 1.0
+    # Sotto PWP: Ks = 0, la pianta non traspira più.
+    if current_theta <= substrate.theta_pwp:
+        return 0.0
+    # Zona di stress: interpolazione lineare tra 0 e 1.
+    return (current_theta - substrate.theta_pwp) / (
+        theta_alert - substrate.theta_pwp
+    )
