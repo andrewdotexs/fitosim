@@ -1,0 +1,64 @@
+[build-system]
+# Il backend di build moderno raccomandato da PyPA. Richiede una versione
+# recente di setuptools per supportare la configurazione interamente in
+# pyproject.toml (PEP 621) senza un setup.cfg parallelo.
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fitosim"
+version = "0.1.0"
+description = "Motore scientifico per la simulazione agronomica di piante in vaso: bilancio idrico, evapotraspirazione, calendario di cura."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Andrea" }
+]
+keywords = [
+    "gardening", "agronomy", "FAO-56",
+    "evapotranspiration", "irrigation", "simulation",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Hydrology",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+]
+
+# Nessuna dipendenza runtime: il motore scientifico usa solo la standard
+# library di Python. Questo è un vincolo architetturale che vogliamo
+# mantenere a lungo: garantisce che fitosim si installi ovunque in pochi
+# secondi, comprese piattaforme minimali come Termux su Android.
+dependencies = []
+
+# Dipendenze opzionali, installabili con `pip install -e '.[dev]'`.
+# Qui siamo liberi di usare lo stack scientifico: ci serve per scrivere
+# test più ricchi, per produrre grafici di validazione, e per confrontare
+# le nostre implementazioni con quelle di riferimento.
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+]
+
+[tool.setuptools.packages.find]
+# Layout src/: evita che Python importi accidentalmente il pacchetto dalla
+# directory di lavoro invece che dalla versione installata (un classico
+# baco sottile). "where" dice a setuptools dove cercare i pacchetti.
+where = ["src"]
+
+[tool.pytest.ini_options]
+# Aggiungere src/ al pythonpath dei test significa che possiamo lanciare
+# `pytest` senza bisogno di installare il pacchetto, utile in CI e durante
+# iterazioni rapide.
+testpaths = ["tests"]
+pythonpath = ["src"]
