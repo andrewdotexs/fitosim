@@ -19,7 +19,11 @@ from fitosim.science.substrate import (
     PERLITE_RICH,
     Substrate,
     UNIVERSAL_POTTING_SOIL,
+    circular_pot_surface_area_m2,
+    mm_to_theta,
+    pot_substrate_depth_mm,
     readily_available_water,
+    theta_to_mm,
     total_available_water,
     water_volume_at_field_capacity,
     water_volume_available,
@@ -187,6 +191,65 @@ class TestCatalogIntegrity(unittest.TestCase):
         for i in range(len(fcs) - 1):
             with self.subTest(position=i):
                 self.assertGreater(fcs[i], fcs[i + 1])
+
+
+class TestGeometryAndConversion(unittest.TestCase):
+    """Verifica delle utility geometriche e di conversione θ ↔ mm."""
+
+    def test_circular_pot_area_standard_size(self):
+        # Vaso con diametro 20 cm → raggio 0.1 m → area π × 0.01 ≈
+        # 0.0314 m². È il caso di riferimento citato negli esempi.
+        area = circular_pot_surface_area_m2(20.0)
+        self.assertAlmostEqual(area, 0.0314, places=3)
+
+    def test_circular_pot_area_scales_with_square_of_diameter(self):
+        # Raddoppiando il diametro, l'area deve quadruplicare.
+        area_small = circular_pot_surface_area_m2(10.0)
+        area_large = circular_pot_surface_area_m2(20.0)
+        self.assertAlmostEqual(area_large / area_small, 4.0, places=6)
+
+    def test_circular_pot_area_rejects_nonpositive(self):
+        with self.assertRaises(ValueError):
+            circular_pot_surface_area_m2(0.0)
+        with self.assertRaises(ValueError):
+            circular_pot_surface_area_m2(-5.0)
+
+    def test_pot_depth_reference_case(self):
+        # 5 L in un vaso di area 0.0314 m² dà circa 159 mm di profondità.
+        depth = pot_substrate_depth_mm(5.0, 0.0314)
+        self.assertAlmostEqual(depth, 159.2, places=1)
+
+    def test_pot_depth_identity_1L_1m2_equals_1mm(self):
+        # L'identità mnemonica fondamentale: 1 L spalmato su 1 m² dà
+        # esattamente 1 mm di colonna d'acqua equivalente.
+        self.assertAlmostEqual(pot_substrate_depth_mm(1.0, 1.0), 1.0, places=6)
+
+    def test_pot_depth_rejects_nonpositive_area(self):
+        with self.assertRaises(ValueError):
+            pot_substrate_depth_mm(5.0, 0.0)
+        with self.assertRaises(ValueError):
+            pot_substrate_depth_mm(5.0, -0.01)
+
+    def test_theta_to_mm_basic(self):
+        # θ=0.40 su profondità 150 mm → 60 mm di colonna.
+        self.assertAlmostEqual(theta_to_mm(0.40, 150.0), 60.0, places=6)
+
+    def test_mm_to_theta_basic(self):
+        # 60 mm su profondità 150 mm → θ=0.40.
+        self.assertAlmostEqual(mm_to_theta(60.0, 150.0), 0.40, places=6)
+
+    def test_theta_mm_roundtrip_identity(self):
+        # La doppia conversione θ → mm → θ deve restituire il valore
+        # originale entro l'errore di arrotondamento in virgola mobile.
+        for theta in [0.05, 0.15, 0.30, 0.40, 0.55, 0.85]:
+            with self.subTest(theta=theta):
+                back = mm_to_theta(theta_to_mm(theta, 200.0), 200.0)
+                self.assertAlmostEqual(theta, back, places=10)
+
+    def test_mm_to_theta_rejects_zero_depth(self):
+        # Divisione per zero deve essere rifiutata esplicitamente.
+        with self.assertRaises(ValueError):
+            mm_to_theta(50.0, 0.0)
 
 
 if __name__ == "__main__":

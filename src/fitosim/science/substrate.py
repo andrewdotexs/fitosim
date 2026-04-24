@@ -35,6 +35,7 @@ parametri sulla base dei feedback reali del sensore WH51.
 """
 
 from dataclasses import dataclass
+import math
 
 
 # Frazione di deplezione di default. Il valore 0.5 è quello raccomandato
@@ -281,3 +282,104 @@ def _validate_pot_volume(pot_volume_l: float) -> None:
             f"pot_volume_l non può essere negativo (ricevuto "
             f"{pot_volume_l}). Verifica il volume del vaso in litri."
         )
+
+
+# =======================================================================
+#  UTILITÀ GEOMETRICHE E DI CONVERSIONE DI UNITÀ
+# =======================================================================
+# Queste funzioni fanno da ponte tra la rappresentazione "nativa" del
+# substrato — contenuto idrico volumetrico θ, adimensionale — e la
+# rappresentazione "nativa" dell'agronomia FAO-56 — colonna d'acqua
+# equivalente espressa in mm. La conversione richiede di conoscere la
+# profondità effettiva del substrato, che per un vaso si ricava dal
+# rapporto volume/area-superficiale.
+
+
+def circular_pot_surface_area_m2(diameter_cm: float) -> float:
+    """
+    Area superficiale (sommità) di un vaso cilindrico dato il diametro.
+
+    Ritorna l'area in m² a partire dal diametro in cm. È un piccolo
+    aiuto per evitare conversioni manuali quando si descrive un vaso
+    reale: i cataloghi commerciali di vasi quotano tipicamente il
+    diametro in cm, mentre le formule del bilancio idrico hanno bisogno
+    dell'area in m².
+
+    Parametri
+    ---------
+    diameter_cm : float
+        Diametro del vaso in centimetri. Positivo.
+
+    Ritorna
+    -------
+    float
+        Area della base circolare in m².
+    """
+    if diameter_cm <= 0:
+        raise ValueError(
+            f"diameter_cm deve essere positivo (ricevuto {diameter_cm})."
+        )
+    radius_m = (diameter_cm / 100.0) / 2.0
+    return math.pi * radius_m * radius_m
+
+
+def pot_substrate_depth_mm(
+    pot_volume_l: float,
+    surface_area_m2: float,
+) -> float:
+    """
+    Profondità effettiva del substrato come "colonna equivalente" in mm.
+
+    Formula: depth_mm = pot_volume_l / surface_area_m2.
+
+    La derivazione dimensionale è compatta. 1 L = 1 dm³ = 10⁻³ m³ = 10⁶
+    mm³; 1 m² = 10⁶ mm². Quindi V_L / A_m² = 10⁶·V / (10⁶·A) = V/A in
+    mm. L'identità "1 L distribuito su 1 m² equivale a 1 mm di spessore"
+    è la chiave mnemonica.
+
+    Ha significato fisico diretto per un vaso cilindrico, in cui la
+    profondità media è proprio la sua altezza. Per vasi di forma
+    irregolare (tronco-conici, quadrati, figurati) resta una profondità
+    "equivalente" coerente per il bilancio idrico, anche se non
+    corrisponde letteralmente a nessuna altezza del contenitore.
+    """
+    if surface_area_m2 <= 0:
+        raise ValueError(
+            f"surface_area_m2 deve essere positiva "
+            f"(ricevuto {surface_area_m2})."
+        )
+    _validate_pot_volume(pot_volume_l)
+    return pot_volume_l / surface_area_m2
+
+
+def theta_to_mm(theta: float, depth_mm: float) -> float:
+    """
+    Converte contenuto idrico volumetrico θ in colonna d'acqua in mm.
+
+    Formula: mm = θ × profondità_mm. Adimensionale × mm = mm.
+
+    Esempio: θ = 0.40 in un vaso con profondità 150 mm → 60 mm di
+    colonna d'acqua (corrispondenti a 60 litri per m² di superficie).
+    """
+    if depth_mm < 0:
+        raise ValueError(
+            f"depth_mm non può essere negativo (ricevuto {depth_mm})."
+        )
+    return theta * depth_mm
+
+
+def mm_to_theta(mm: float, depth_mm: float) -> float:
+    """
+    Converte colonna d'acqua in mm in contenuto idrico volumetrico θ.
+
+    Formula: θ = mm / profondità_mm.
+
+    È la trasformazione inversa di theta_to_mm. Necessita che depth_mm
+    sia strettamente positiva (non si può dividere per zero).
+    """
+    if depth_mm <= 0:
+        raise ValueError(
+            f"depth_mm deve essere positiva per la conversione "
+            f"inversa (ricevuto {depth_mm})."
+        )
+    return mm / depth_mm
