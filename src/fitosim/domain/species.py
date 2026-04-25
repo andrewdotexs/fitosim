@@ -87,6 +87,15 @@ class Species:
         Coefficiente colturale al termine del ciclo, adimensionale.
     depletion_fraction : float
         Frazione p della TAW tollerata prima dello stress, in (0, 1].
+    initial_stage_days : int
+        Durata in giorni dello stadio iniziale, contati a partire
+        dall'impianto. Tipicamente 20-40 giorni per orticole annuali;
+        per le perenni è puramente convenzionale (sempreverdi).
+    mid_stage_days : int
+        Durata in giorni dello stadio di piena vegetazione, dopo lo
+        stadio iniziale. Per orticole annuali è il periodo di
+        accrescimento attivo + fioritura/fruttificazione (40-90 giorni).
+        Per perenni indica il periodo "di punta" annuale.
     notes : str, opzionale
         Nota libera per documentare fonte dei dati, comportamento tipico,
         ambiente di coltivazione raccomandato.
@@ -98,6 +107,20 @@ class Species:
       evidenti senza escludere casi estremi (es. Kc di colture ad alta
       densità fogliare in specifici microclimi).
     - depletion_fraction deve essere in (0, 1]; valori tipici 0.3-0.7.
+    - initial_stage_days e mid_stage_days devono essere positivi.
+
+    Modello fenologico
+    ------------------
+    Le due durate definiscono implicitamente le tre fasi:
+      [0, initial_stage_days)                       → INITIAL
+      [initial_stage_days, initial+mid_stage_days)  → MID_SEASON
+      [initial+mid_stage_days, +∞)                  → LATE_SEASON
+
+    Per le specie perenni sempreverdi (come il limone) ha senso pensare
+    al ciclo come ricominciante ogni anno: in queste specie le durate
+    sono interpretate come riferimento entro un anno solare e Kc resta
+    sostanzialmente costante tra gli stadi (per indicare appunto la
+    natura sempreverde).
     """
 
     common_name: str
@@ -106,6 +129,8 @@ class Species:
     kc_mid: float
     kc_late: float
     depletion_fraction: float = DEFAULT_DEPLETION_FRACTION
+    initial_stage_days: int = 30
+    mid_stage_days: int = 60
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -126,6 +151,32 @@ class Species:
                 f"Specie '{self.common_name}': depletion_fraction="
                 f"{self.depletion_fraction} deve essere in (0, 1]."
             )
+        if self.initial_stage_days <= 0 or self.mid_stage_days <= 0:
+            raise ValueError(
+                f"Specie '{self.common_name}': initial_stage_days e "
+                f"mid_stage_days devono essere positivi. Ricevuti: "
+                f"{self.initial_stage_days}, {self.mid_stage_days}."
+            )
+
+    def stage_at_day(self, days_since_planting: int) -> "PhenologicalStage":
+        """
+        Calcola lo stadio fenologico in base al numero di giorni
+        trascorsi dall'impianto.
+
+        La logica è la mappatura discreta a tre fasi descritta nella
+        docstring della classe. È un metodo della specie (non una
+        funzione esterna) perché le soglie di transizione sono parte
+        dei suoi dati intrinseci e variano di specie in specie.
+
+        I giorni negativi (impianto futuro?) e i giorni infiniti vengono
+        gestiti dolcemente: prima dell'impianto trattiamo come INITIAL,
+        oltre la fine del ciclo continuiamo a riportare LATE_SEASON.
+        """
+        if days_since_planting < self.initial_stage_days:
+            return PhenologicalStage.INITIAL
+        if days_since_planting < self.initial_stage_days + self.mid_stage_days:
+            return PhenologicalStage.MID_SEASON
+        return PhenologicalStage.LATE_SEASON
 
 
 # =======================================================================
@@ -219,11 +270,14 @@ BASIL = Species(
     kc_mid=1.05,
     kc_late=0.80,
     depletion_fraction=0.40,
+    initial_stage_days=20,
+    mid_stage_days=50,
     notes=(
         "Erba aromatica a foglia larga. Kc da FAO-56 Tab. 12 "
         "(categoria 'Herbs'). Sensibile allo stress idrico, p=0.40: "
         "irrigazioni frequenti in estate. Coltivabile indoor tutto "
-        "l'anno, outdoor da maggio a settembre a latitudini padane."
+        "l'anno, outdoor da maggio a settembre a latitudini padane. "
+        "Ciclo colturale tipico: 20+50+30 giorni dalla semina."
     ),
 )
 
@@ -234,11 +288,13 @@ TOMATO = Species(
     kc_mid=1.15,
     kc_late=0.80,
     depletion_fraction=0.40,
+    initial_stage_days=30,
+    mid_stage_days=60,
     notes=(
         "Orticola da frutto outdoor. Kc_mid=1.15 durante fruttificazione. "
         "Kc_late=0.80 a fine stagione per riduzione del fabbisogno "
         "quando i frutti stanno maturando. Sensibile al marciume apicale "
-        "in caso di irrigazione irregolare."
+        "in caso di irrigazione irregolare. Durate da FAO-56 Tab. 11."
     ),
 )
 
@@ -249,12 +305,14 @@ LETTUCE = Species(
     kc_mid=1.00,
     kc_late=0.95,
     depletion_fraction=0.30,
+    initial_stage_days=15,
+    mid_stage_days=25,
     notes=(
         "Ortaggio a foglia tenera, molto sensibile allo stress idrico. "
         "p=0.30 significa soglia di allerta precoce (appena il 30% della "
         "TAW si è esaurito): richiede monitoraggio frequente in estate. "
-        "Ciclo colturale breve (30-60 giorni), Kc_late alto perché la "
-        "coltura è ancora pienamente verde alla raccolta."
+        "Ciclo colturale breve (15+25+10 ≈ 50 giorni), Kc_late alto "
+        "perché la coltura è ancora pienamente verde alla raccolta."
     ),
 )
 
@@ -265,12 +323,15 @@ CITRUS = Species(
     kc_mid=0.65,
     kc_late=0.70,
     depletion_fraction=0.50,
+    initial_stage_days=60,
+    mid_stage_days=240,
     notes=(
         "Agrume sempreverde coltivato in grandi vasi. Kc relativamente "
         "basso e quasi costante tutto l'anno, tipico dei sempreverdi a "
         "foglie cerose. Tollera meglio lo stress (p=0.50) grazie alla "
         "cuticola spessa che limita la traspirazione. Richiede "
-        "ricovero invernale al riparo dal gelo a latitudini padane."
+        "ricovero invernale al riparo dal gelo a latitudini padane. "
+        "Per le perenni le durate sono convenzionali, riferite all'anno."
     ),
 )
 
@@ -281,6 +342,8 @@ ROSEMARY = Species(
     kc_mid=0.75,
     kc_late=0.65,
     depletion_fraction=0.60,
+    initial_stage_days=45,
+    mid_stage_days=240,
     notes=(
         "Arbusto aromatico mediterraneo, xerofita adattata a climi "
         "aridi estivi. Kc contenuto, tolleranza allo stress elevata "
