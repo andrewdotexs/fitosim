@@ -408,5 +408,333 @@ class TestCredentialsFromEnv(unittest.TestCase):
             self.assertNotIn("TEST_MAC", str(ctx.exception))
 
 
+# =======================================================================
+#  7. Endpoint history — parsing serie temporali
+# =======================================================================
+
+# Path della fixture history (sample compatto del payload reale).
+HISTORY_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "ecowitt_history_sample.json"
+)
+
+
+def _load_history_payload() -> dict:
+    """Carica la fixture history compatta come dict."""
+    with HISTORY_FIXTURE_PATH.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+class TestHistoryParsing(unittest.TestCase):
+    """Verifica del parser dell'endpoint history sulla fixture reale."""
+
+    def setUp(self):
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        self.payload = _load_history_payload()
+        self.series = parse_ecowitt_history_response(self.payload)
+
+    def test_returns_time_series_with_points(self):
+        from fitosim.io.ecowitt import EcowittTimeSeries
+        self.assertIsInstance(self.series, EcowittTimeSeries)
+        self.assertGreater(self.series.n_points, 0)
+
+    def test_points_are_chronologically_sorted(self):
+        # Anche se la fixture ha alcuni timestamp fuori ordine nel JSON
+        # (i quattro punti precedenti l'inizio della finestra in fondo
+        # al dizionario), il parser deve produrre punti ordinati.
+        timestamps = [p.timestamp for p in self.series.points]
+        self.assertEqual(timestamps, sorted(timestamps))
+
+    def test_outdoor_temperature_converted(self):
+        # Almeno uno dei punti deve avere outdoor_temp_c convertito in °C.
+        # Il primo timestamp 1774994400 ha valore "47.7" °F → 8.72 °C.
+        first_with_temp = next(
+            p for p in self.series.points
+            if p.outdoor_temp_c is not None
+        )
+        self.assertAlmostEqual(
+            first_with_temp.outdoor_temp_c, 8.72, places=1,
+        )
+
+    def test_humidity_passthrough(self):
+        # 24% (primo punto outdoor humidity) deve restare 24.0.
+        for p in self.series.points:
+            if p.outdoor_humidity_pct is not None:
+                # I valori nella fixture vanno da 16 a 46.
+                self.assertGreaterEqual(p.outdoor_humidity_pct, 15)
+                self.assertLessEqual(p.outdoor_humidity_pct, 50)
+
+    def test_solar_radiation_present(self):
+        # Almeno un punto della giornata deve avere solar > 0 (le ore
+        # diurne); altri punti di notte avranno solar = 0.
+        max_solar = max(
+            (p.solar_w_m2 for p in self.series.points
+             if p.solar_w_m2 is not None),
+            default=0.0,
+        )
+        self.assertGreater(max_solar, 100.0)
+
+    def test_soil_channels_extracted(self):
+        # Ch1 e Ch3 sono presenti nella fixture; Ch2/4/5 no.
+        any_with_soil = next(
+            (p for p in self.series.points if p.soil_moisture_pct),
+            None,
+        )
+        self.assertIsNotNone(any_with_soil)
+        soil_channels_seen = set()
+        for p in self.series.points:
+            soil_channels_seen.update(p.soil_moisture_pct.keys())
+        self.assertEqual(soil_channels_seen, {1, 3})
+
+    def test_missing_value_dash_is_skipped(self):
+        # Nella fixture il timestamp 1775099000 ha "-" come valore di
+        # soil_ch3.soilmoisture: NON deve essere mai presente nei punti.
+        for p in self.series.points:
+            # Se il timestamp esiste, soil_ch3 non deve avere chiave 3
+            # (perché il "-" è stato saltato dal parser).
+            if int(p.timestamp.timestamp()) == 1775099000:
+                self.assertNotIn(3, p.soil_moisture_pct)
+
+
+class TestHistoryRobustness(unittest.TestCase):
+    """
+    Comportamento del parser su payload history malformati o incompleti.
+    """
+
+    def test_error_code_raises(self):
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        bad = {"code": 40010, "msg": "Invalid api_key", "data": {}}
+        with self.assertRaises(ValueError):
+            parse_ecowitt_history_response(bad)
+
+    def test_missing_data_raises(self):
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        with self.assertRaises(ValueError):
+            parse_ecowitt_history_response({"code": 0})
+
+    def test_empty_data_returns_empty_series(self):
+        # Risposta sintatticamente valida ma senza dati: serie vuota.
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        empty = {"code": 0, "data": {}}
+        series = parse_ecowitt_history_response(empty)
+        self.assertEqual(series.n_points, 0)
+
+    def test_multi_channel_sensors_with_different_timestamps(self):
+        # Sensori che hanno timestamp leggermente diversi (cadenze
+        # asincrone): l'unione dei timestamp deve coprire tutti i punti
+        # e ogni punto contiene solo i sensori realmente osservati.
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        payload = {
+            "code": 0,
+            "data": {
+                "outdoor": {
+                    "temperature": {
+                        "unit": "°C",
+                        "list": {"100": "20.0", "200": "21.0"},
+                    },
+                },
+                "soil_ch1": {
+                    "soilmoisture": {
+                        "unit": "%",
+                        "list": {"100": "45", "150": "44"},
+                    },
+                },
+            },
+        }
+        series = parse_ecowitt_history_response(payload)
+        # Tre timestamp distinti: 100 (entrambi i sensori), 150 (solo
+        # soil), 200 (solo outdoor).
+        self.assertEqual(series.n_points, 3)
+        # Verifica composizione di ciascun punto.
+        ts_to_point = {
+            int(p.timestamp.timestamp()): p for p in series.points
+        }
+        # 100: temperatura e soil entrambi presenti.
+        self.assertEqual(ts_to_point[100].outdoor_temp_c, 20.0)
+        self.assertEqual(ts_to_point[100].soil_moisture_pct, {1: 45.0})
+        # 150: solo soil.
+        self.assertIsNone(ts_to_point[150].outdoor_temp_c)
+        self.assertEqual(ts_to_point[150].soil_moisture_pct, {1: 44.0})
+        # 200: solo temperatura.
+        self.assertEqual(ts_to_point[200].outdoor_temp_c, 21.0)
+        self.assertEqual(ts_to_point[200].soil_moisture_pct, {})
+
+
+class TestHistoryUrlBuilder(unittest.TestCase):
+    """Verifica della costruzione URL per l'endpoint history."""
+
+    def test_url_includes_dates_in_required_format(self):
+        from fitosim.io.ecowitt import _build_history_url
+        from datetime import datetime
+        url = _build_history_url(
+            application_key="APP123",
+            api_key="API456",
+            mac="88:13:BF:CB:5A:AF",
+            start_date=datetime(2026, 4, 1, 0, 0, 0),
+            end_date=datetime(2026, 4, 2, 23, 59, 59),
+        )
+        # L'API si aspetta date URL-encoded ("YYYY-MM-DD HH:MM:SS").
+        # urlencode trasforma lo spazio in '+'; entrambe le forme sono
+        # accettate, quindi controlliamo solo la presenza dei campi.
+        self.assertIn("start_date=2026-04-01", url)
+        self.assertIn("end_date=2026-04-02", url)
+        self.assertIn("cycle_type=auto", url)
+        self.assertIn("call_back=", url)
+        # Il sensore WN31 CH1 e i 5 canali soil principali devono essere
+        # nella callback richiesta.
+        self.assertIn("temp_and_humidity_ch1", url)
+        self.assertIn("soil_ch1", url)
+        self.assertIn("soil_ch5", url)
+
+
+class TestFetchHistory(unittest.TestCase):
+    """Test end-to-end del fetch history con fetcher iniettato."""
+
+    def test_fetch_with_mock_returns_time_series(self):
+        from fitosim.io.ecowitt import EcowittTimeSeries, fetch_history
+        from datetime import datetime
+
+        captured_urls = []
+
+        def mock_fetcher(url):
+            captured_urls.append(url)
+            return _load_history_payload()
+
+        series = fetch_history(
+            application_key="APP123",
+            api_key="API456",
+            mac="88:13:BF:CB:5A:AF",
+            start_date=datetime(2026, 4, 1, 0, 0, 0),
+            end_date=datetime(2026, 4, 2, 23, 59, 59),
+            fetcher=mock_fetcher,
+        )
+
+        self.assertIsInstance(series, EcowittTimeSeries)
+        self.assertEqual(len(captured_urls), 1)
+        self.assertGreater(series.n_points, 0)
+
+    def test_fetch_rejects_inverted_date_range(self):
+        from fitosim.io.ecowitt import fetch_history
+        from datetime import datetime
+        with self.assertRaises(ValueError):
+            fetch_history(
+                application_key="A", api_key="B", mac="C",
+                start_date=datetime(2026, 4, 5),
+                end_date=datetime(2026, 4, 1),
+            )
+
+
+class TestDailyAggregation(unittest.TestCase):
+    """
+    Verifica della funzione che chiude il cerchio sensore-modello:
+    aggregare la serie history in DailyWeather coerenti con il motore.
+    """
+
+    def test_aggregates_temperatures_to_min_max(self):
+        # Costruiamo una serie sintetica con 10 punti in un giorno,
+        # temperature outdoor da 5 °C a 22 °C: min=5, max=22 attesi.
+        from fitosim.io.ecowitt import (
+            EcowittSeriesPoint, EcowittTimeSeries, aggregate_to_daily_weather,
+        )
+        from datetime import datetime, timezone
+        base = datetime(2026, 4, 1, 6, 0, 0, tzinfo=timezone.utc)
+        from datetime import timedelta as td
+        temps = [5.0, 7.5, 11.0, 16.0, 19.0, 22.0, 21.0, 17.0, 12.0, 8.5]
+        points = tuple(
+            EcowittSeriesPoint(
+                timestamp=base + td(hours=i * 1),
+                outdoor_temp_c=t,
+                rainfall_mm=0.0,
+            )
+            for i, t in enumerate(temps)
+        )
+        series = EcowittTimeSeries(
+            points=points, start=points[0].timestamp,
+            end=points[-1].timestamp,
+        )
+        daily = aggregate_to_daily_weather(series)
+        self.assertEqual(len(daily), 1)
+        self.assertAlmostEqual(daily[0].t_min, 5.0)
+        self.assertAlmostEqual(daily[0].t_max, 22.0)
+
+    def test_uses_daily_rain_max_as_total(self):
+        # rainfall_mm in Ecowitt è cumulato giornaliero: max nel giorno
+        # = totale del giorno.
+        from fitosim.io.ecowitt import (
+            EcowittSeriesPoint, EcowittTimeSeries, aggregate_to_daily_weather,
+        )
+        from datetime import datetime, timezone, timedelta
+        base = datetime(2026, 4, 1, 6, 0, 0, tzinfo=timezone.utc)
+        # Pioggia che cresce nel corso della giornata: 0 → 0 → 2.0 → 5.5 →
+        # poi resta stabile (la pioggia si è fermata).
+        rains = [0.0, 0.0, 2.0, 5.5, 5.5, 5.5]
+        # Aggiungiamo anche temperature per superare la soglia min_points.
+        temps = [10.0, 12.0, 14.0, 13.0, 11.0, 9.0]
+        points = tuple(
+            EcowittSeriesPoint(
+                timestamp=base + timedelta(hours=i),
+                outdoor_temp_c=temps[i],
+                rainfall_mm=rains[i],
+            )
+            for i in range(6)
+        )
+        series = EcowittTimeSeries(
+            points=points, start=points[0].timestamp,
+            end=points[-1].timestamp,
+        )
+        daily = aggregate_to_daily_weather(series)
+        self.assertEqual(len(daily), 1)
+        self.assertAlmostEqual(daily[0].precipitation_mm, 5.5)
+
+    def test_skips_days_with_too_few_points(self):
+        # Un giorno con un solo campione viene scartato (sotto la soglia
+        # min_points_per_day=4).
+        from fitosim.io.ecowitt import (
+            EcowittSeriesPoint, EcowittTimeSeries, aggregate_to_daily_weather,
+        )
+        from datetime import datetime, timezone
+        single = EcowittSeriesPoint(
+            timestamp=datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc),
+            outdoor_temp_c=15.0,
+        )
+        series = EcowittTimeSeries(
+            points=(single,), start=single.timestamp, end=single.timestamp,
+        )
+        daily = aggregate_to_daily_weather(series)
+        self.assertEqual(daily, [])
+
+    def test_aggregates_real_fixture_to_one_day(self):
+        # La fixture reale copre due giorni diversi (1 e 2 aprile in
+        # locale), aggreghiamo e verifichiamo plausibilità.
+        from fitosim.io.ecowitt import (
+            aggregate_to_daily_weather, parse_ecowitt_history_response,
+        )
+        series = parse_ecowitt_history_response(_load_history_payload())
+        daily = aggregate_to_daily_weather(series, min_points_per_day=2)
+        # Almeno un giorno aggregato.
+        self.assertGreaterEqual(len(daily), 1)
+        # Ogni giorno deve avere t_min ≤ t_max e pioggia ≥ 0.
+        for d in daily:
+            self.assertLessEqual(d.t_min, d.t_max)
+            self.assertGreaterEqual(d.precipitation_mm, 0.0)
+            # Le temperature devono essere in un range plausibile per
+            # primavera (Milano): tra -5 e 30 °C circa.
+            self.assertGreater(d.t_min, -10.0)
+            self.assertLess(d.t_max, 35.0)
+
+    def test_daily_weather_compatible_with_openmeteo_format(self):
+        # Verifica esplicita che il tipo restituito sia DailyWeather
+        # importato dallo stesso modulo che usa Open-Meteo: questo è
+        # ciò che permette al motore di consumare le due fonti in
+        # modo intercambiabile.
+        from fitosim.io.ecowitt import (
+            aggregate_to_daily_weather, parse_ecowitt_history_response,
+        )
+        from fitosim.io.openmeteo import DailyWeather
+        series = parse_ecowitt_history_response(_load_history_payload())
+        daily = aggregate_to_daily_weather(series, min_points_per_day=2)
+        for d in daily:
+            self.assertIsInstance(d, DailyWeather)
+
+
 if __name__ == "__main__":
     unittest.main()
