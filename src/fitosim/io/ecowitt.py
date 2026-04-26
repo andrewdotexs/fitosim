@@ -555,6 +555,9 @@ def credentials_from_env(test=False) -> tuple[str, str, str]:
     Solleva RuntimeError se una qualsiasi delle variabili manca,
     elencando esplicitamente quali sono assenti per facilitare il
     debugging del setup utente.
+    
+    N.B. test=True, per utilizzato da test_ecowitt.py per eseguire 
+         il test della lettura da .env
     """
     missing = []
     app_key = os.environ.get("TEST_APPLICATION_KEY" if test else "APPLICATION_KEY")
