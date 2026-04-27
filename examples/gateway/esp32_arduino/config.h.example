@@ -1,0 +1,151 @@
+// =====================================================================
+//  config.h.example — Configurazione del gateway ESP32 per fitosim
+// =====================================================================
+//
+// COME USARE QUESTO FILE
+// ----------------------
+//
+// Copia questo file in `config.h` (nella stessa directory) e
+// personalizza i valori con la tua configurazione reale:
+//
+//     cp config.h.example config.h
+//
+// Il file `config.h` deve essere escluso dal version control via
+// `.gitignore` perché contiene la password della tua rete WiFi e
+// l'eventuale bearer token: sono segreti che non vanno mai
+// committati. Il file `config.h.example` invece va committato come
+// documentazione strutturata della configurazione attesa.
+//
+// FILOSOFIA DI QUESTO GATEWAY
+// ---------------------------
+//
+// Questo è un firmware ESP32 di esempio per la tappa 2 della fascia 2
+// di fitosim. Non è un prodotto finito ma un punto di partenza
+// didattico da cui forkare il tuo side project.
+//
+// L'architettura è a tre strati ben separati:
+//
+//   1. Strato Modbus (modbus_layer.h): parla con i sensori ATO 7-in-1
+//      sul bus RS485 via il convertitore MAX485.
+//
+//   2. Strato cache (cache_layer.h): mantiene in RAM le letture più
+//      recenti per ogni canale, con timestamp UTC sincronizzato via
+//      NTP. È la "fonte di verità" da cui le risposte HTTP vengono
+//      servite.
+//
+//   3. Strato HTTP (http_server_layer.h): espone gli endpoint REST
+//      che fitosim consuma. Risponde immediatamente dalla cache senza
+//      bloccare il polling Modbus.
+//
+// La separazione consente al polling Modbus di lavorare al proprio
+// ritmo (più lento, vincolato dalla velocità del bus seriale) mentre
+// le risposte HTTP restano sempre rapide e a bassa latenza.
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// ---------------------------------------------------------------------
+//  Sezione 1 — Configurazione WiFi
+// ---------------------------------------------------------------------
+//
+// Inserisci qui le credenziali della rete WiFi a cui l'ESP32 si
+// collegherà all'avvio. La rete deve essere a 2.4 GHz (l'ESP32
+// originale non supporta 5 GHz).
+
+#define WIFI_SSID       "il-nome-della-tua-rete"
+#define WIFI_PASSWORD   "la-password-della-tua-rete"
+
+
+// ---------------------------------------------------------------------
+//  Sezione 2 — Configurazione del bus Modbus RS485
+// ---------------------------------------------------------------------
+//
+// Configurazione del convertitore MAX485 collegato all'ESP32. I pin
+// di default sono pensati per il cablaggio tipico:
+//
+//     ESP32 GPIO 16 (RX2) ←→ MAX485 RO  (Receiver Output)
+//     ESP32 GPIO 17 (TX2) ←→ MAX485 DI  (Driver Input)
+//     ESP32 GPIO 4         ←→ MAX485 DE+RE (direzione, attiva alto)
+//     ESP32 3.3V          ←→ MAX485 VCC
+//     ESP32 GND           ←→ MAX485 GND
+//     MAX485 A             ←→ Cavo bus → A di tutti i sensori ATO
+//     MAX485 B             ←→ Cavo bus → B di tutti i sensori ATO
+//
+// Resistenze di terminazione da 120 ohm alle due estremità del bus
+// (NON in mezzo): una sul MAX485 vicino all'ESP32, una al sensore
+// fisicamente più lontano.
+
+#define MODBUS_RX_PIN       16
+#define MODBUS_TX_PIN       17
+#define MODBUS_DE_PIN        4
+#define MODBUS_BAUD     9600   // Velocità tipica dei sensori ATO,
+                                 // verifica nel manuale del tuo modello.
+
+// ---------------------------------------------------------------------
+//  Sezione 3 — Mappa dei sensori sul bus
+// ---------------------------------------------------------------------
+//
+// Ogni sensore ATO sul bus deve avere un indirizzo Modbus univoco
+// (1..247). Cambia gli indirizzi di fabbrica con il software di
+// configurazione ATO o con il comando Modbus apposito (vedi manuale
+// del sensore).
+//
+// MAX_CHANNELS è il numero massimo di canali che il gateway gestisce.
+// Aumentalo se hai più sensori; ogni canale occupa qualche decina di
+// byte di RAM nella cache, quindi anche 16 canali sono fattibili
+// senza problemi sull'ESP32 originale.
+
+#define MAX_CHANNELS  4
+
+// Lista degli indirizzi Modbus dei sensori ATO collegati. Modificare
+// questo array per riflettere la tua configurazione reale. Usare 0
+// per i canali non utilizzati.
+//
+// Esempio: hai 3 sensori con indirizzi 1, 2, 3 e MAX_CHANNELS=4
+// (lasci uno slot libero per espansione futura).
+const uint8_t MODBUS_ADDRESSES[MAX_CHANNELS] = {1, 2, 3, 0};
+
+
+// ---------------------------------------------------------------------
+//  Sezione 4 — Polling e cache
+// ---------------------------------------------------------------------
+//
+// Frequenza di polling dei sensori Modbus. 60 secondi è il default
+// raccomandato: protegge i sensori da usura prematura senza rendere
+// i dati di fitosim troppo vecchi.
+
+#define POLLING_INTERVAL_MS   60000UL
+
+
+// ---------------------------------------------------------------------
+//  Sezione 5 — Server HTTP
+// ---------------------------------------------------------------------
+//
+// Porta su cui il server HTTP del gateway sarà in ascolto. 80 è la
+// default HTTP, ma puoi cambiarla se occupata da altro.
+
+#define HTTP_PORT  80
+
+// Bearer token per l'autenticazione opzionale. Se lasci stringa vuota
+// (""), il gateway accetta richieste senza autenticazione (caso d'uso
+// LAN affidabile). Se valorizzi un token, fitosim deve essere
+// configurato per inviarlo nell'header Authorization (vedi
+// FITOSIM_HTTP_GATEWAY_TOKEN nel .env di fitosim).
+
+#define HTTP_BEARER_TOKEN  ""
+
+
+// ---------------------------------------------------------------------
+//  Sezione 6 — Sincronizzazione NTP
+// ---------------------------------------------------------------------
+//
+// Server NTP usato per sincronizzare l'orologio dell'ESP32 ogni ora.
+// I timestamp del JSON V1 saranno emessi in UTC (suffisso "Z"),
+// indipendentemente dal fuso orario locale, secondo la convenzione
+// di fitosim.
+
+#define NTP_SERVER       "pool.ntp.org"
+#define NTP_GMT_OFFSET   0       // UTC sempre, non toccare.
+#define NTP_DST_OFFSET   0       // No DST, sempre UTC.
+
+#endif // CONFIG_H

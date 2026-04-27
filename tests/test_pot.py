@@ -1264,5 +1264,157 @@ class TestSensorUpdateResultProperties(unittest.TestCase):
         self.assertGreater(result.absolute_error_mm, 0)
 
 
+# =======================================================================
+#  update_from_sensor: modalità ricca con SoilReading (tappa 2 fascia 2)
+# =======================================================================
+
+class TestSensorUpdateWithSoilReading(unittest.TestCase):
+    """
+    update_from_sensor accetta alternativamente un SoilReading completo
+    via parametro keyword-only `reading`. Il θ del SoilReading viene
+    usato per chiudere il feedback loop esattamente come la modalità
+    legacy; gli altri campi (T, EC, pH, provider_specific) vengono
+    propagati nel SensorUpdateResult per logging diagnostico.
+    """
+
+    def _make_reading(self, **overrides):
+        """Helper: costruisce un SoilReading di test con default ATO-like."""
+        from datetime import datetime, timezone
+        from fitosim.io.sensors import SoilReading
+        defaults = dict(
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            theta_volumetric=0.32,
+            temperature_c=18.5,
+            ec_mscm=1.85,
+            ph=6.4,
+            provider_specific={"npk_n_estimate_mg_kg": 42},
+        )
+        defaults.update(overrides)
+        return SoilReading(**defaults)
+
+    def test_reading_modality_updates_state_correctly(self):
+        # La modalità ricca aggiorna state_mm allo stesso modo della
+        # modalità legacy: estrae θ dal reading e lo usa per il
+        # feedback loop. Il risultato deve essere numericamente
+        # identico a quello che si otterrebbe passando solo il float.
+        pot_a = _make_simple_pot(state_mm=20.0)
+        pot_b = _make_simple_pot(state_mm=20.0)
+
+        reading = self._make_reading(theta_volumetric=0.25)
+        result_a = pot_a.update_from_sensor(reading=reading)
+        result_b = pot_b.update_from_sensor(theta_observed=0.25)
+
+        # state_mm finale deve essere identico nei due Pot.
+        self.assertAlmostEqual(pot_a.state_mm, pot_b.state_mm, places=6)
+        # Anche le discrepanze devono essere identiche.
+        self.assertAlmostEqual(
+            result_a.discrepancy_mm, result_b.discrepancy_mm, places=6,
+        )
+
+    def test_reading_modality_propagates_extra_fields(self):
+        # I campi extra del SoilReading (T, EC, pH, provider_specific)
+        # vengono valorizzati nel SensorUpdateResult per il logging.
+        pot = _make_simple_pot(state_mm=20.0)
+        reading = self._make_reading(
+            temperature_c=22.0,
+            ec_mscm=2.1,
+            ph=6.8,
+            provider_specific={"custom_key": "custom_value"},
+        )
+        result = pot.update_from_sensor(reading=reading)
+
+        self.assertEqual(result.observed_temperature_c, 22.0)
+        self.assertEqual(result.observed_ec_mscm, 2.1)
+        self.assertEqual(result.observed_ph, 6.8)
+        self.assertEqual(
+            result.provider_specific, {"custom_key": "custom_value"},
+        )
+
+    def test_reading_modality_with_partial_data(self):
+        # Sensore tipo WH51 esposto via Protocol: SoilReading con
+        # solo θ valorizzato, gli altri campi None. I campi extra
+        # nel result restano None coerentemente.
+        from datetime import datetime, timezone
+        from fitosim.io.sensors import SoilReading
+
+        partial_reading = SoilReading(
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            theta_volumetric=0.30,
+            # niente temperature_c, ec_mscm, ph, provider_specific
+        )
+        pot = _make_simple_pot(state_mm=20.0)
+        result = pot.update_from_sensor(reading=partial_reading)
+
+        self.assertIsNone(result.observed_temperature_c)
+        self.assertIsNone(result.observed_ec_mscm)
+        self.assertIsNone(result.observed_ph)
+        self.assertEqual(result.provider_specific, {})
+
+    def test_legacy_modality_unaffected_by_extension(self):
+        # Test critico di retrocompatibilità: chiamare update_from_sensor
+        # con il singolo float (forma legacy) deve produrre i campi
+        # extra del result tutti None, esattamente come prima della
+        # tappa 2.
+        pot = _make_simple_pot(state_mm=20.0)
+        result = pot.update_from_sensor(theta_observed=0.30)
+
+        self.assertIsNone(result.observed_temperature_c)
+        self.assertIsNone(result.observed_ec_mscm)
+        self.assertIsNone(result.observed_ph)
+        self.assertEqual(result.provider_specific, {})
+
+    def test_passing_both_parameters_raises(self):
+        # Mutua esclusività: passare sia theta_observed sia reading
+        # è un errore di programmazione che solleva ValueError con
+        # messaggio diagnostico chiaro.
+        pot = _make_simple_pot(state_mm=20.0)
+        reading = self._make_reading()
+
+        with self.assertRaises(ValueError) as ctx:
+            pot.update_from_sensor(theta_observed=0.30, reading=reading)
+        self.assertIn("entrambi", str(ctx.exception))
+
+    def test_passing_neither_parameter_raises(self):
+        # Anche non passare nulla è un errore: serve specificare
+        # esattamente uno dei due parametri.
+        pot = _make_simple_pot(state_mm=20.0)
+
+        with self.assertRaises(ValueError) as ctx:
+            pot.update_from_sensor()
+        self.assertIn("obbligatorio", str(ctx.exception))
+
+    def test_reading_with_invalid_theta_raises_at_construction(self):
+        # Il SoilReading già valida θ nel suo __post_init__: un θ
+        # fuori range viene intercettato prima ancora di arrivare a
+        # update_from_sensor. Questo è il pattern del sistema di
+        # tipi: gli errori sono catturati al confine (al momento
+        # della costruzione del Reading), non al livello del modello.
+        from datetime import datetime, timezone
+        from fitosim.io.sensors import (
+            SensorDataQualityError, SoilReading,
+        )
+
+        with self.assertRaises(SensorDataQualityError):
+            SoilReading(
+                timestamp=datetime(2026, 5, 1, 12, 0,
+                                    tzinfo=timezone.utc),
+                theta_volumetric=2.5,  # fuori range fisico
+            )
+
+    def test_is_significant_works_with_reading_modality(self):
+        # Le proprietà derivate del SensorUpdateResult (is_significant,
+        # absolute_error_mm) funzionano identicamente nelle due
+        # modalità.
+        pot = _make_simple_pot(state_mm=20.0)
+        predicted = pot.state_theta
+
+        # Discrepanza grande (>0.02): is_significant deve essere True.
+        big_drift_reading = self._make_reading(
+            theta_volumetric=predicted + 0.05,
+        )
+        result = pot.update_from_sensor(reading=big_drift_reading)
+        self.assertTrue(result.is_significant)
+
+
 if __name__ == "__main__":
     unittest.main()

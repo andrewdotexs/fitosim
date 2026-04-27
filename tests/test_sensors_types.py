@@ -296,6 +296,61 @@ class Test_SoilReading_validation:
 
 
 # --------------------------------------------------------------------------
+#  SoilReading: campo provider_specific (aggiunto in tappa 2)
+# --------------------------------------------------------------------------
+
+class Test_SoilReading_provider_specific:
+    """
+    Validazione del campo provider_specific aggiunto in tappa 2.
+
+    È un dict opzionale che ospita dati "di secondo livello" del
+    provider hardware (esempio: NPK derivati dell'ATO 7-in-1) senza
+    inquinare lo stato fisico del modello.
+    """
+
+    def test_default_is_empty_dict(self):
+        """Senza specificarlo, il campo è un dict vuoto. Cruciale per
+        retrocompatibilità: chi non sa nulla del nuovo campo continua
+        a costruire SoilReading come prima."""
+        r = SoilReading(timestamp=utc_now(), theta_volumetric=0.3)
+        assert r.provider_specific == {}
+        assert isinstance(r.provider_specific, dict)
+
+    def test_arbitrary_dict_accepted(self):
+        """Il campo accetta qualsiasi dict: niente validazione su
+        chiavi o valori, perché il suo contenuto dipende dal provider
+        ed è trattato come opaco da fitosim."""
+        npk_data = {
+            "npk_n_estimate_mg_kg": 42.0,
+            "npk_p_estimate_mg_kg": 12.0,
+            "npk_k_estimate_mg_kg": 55.0,
+            "ec_raw_uncompensated_mscm": 1.92,
+        }
+        r = SoilReading(
+            timestamp=utc_now(),
+            theta_volumetric=0.32,
+            ec_mscm=1.85,
+            provider_specific=npk_data,
+        )
+        assert r.provider_specific == npk_data
+        # Le variabili di stato canoniche non sono toccate dal
+        # provider_specific: il modello fisico continua a basarsi
+        # solo sui campi tipizzati.
+        assert r.theta_volumetric == 0.32
+        assert r.ec_mscm == 1.85
+
+    def test_each_reading_has_independent_dict(self):
+        """default_factory garantisce che ogni Reading abbia il
+        proprio dict, non un riferimento condiviso. Importante per
+        evitare bug subdoli da mutazione cross-istanza."""
+        r1 = SoilReading(timestamp=utc_now(), theta_volumetric=0.3)
+        r2 = SoilReading(timestamp=utc_now(), theta_volumetric=0.4)
+        # I due dict sono oggetti distinti (non lo stesso oggetto
+        # condiviso): mutarne uno non influenza l'altro.
+        assert r1.provider_specific is not r2.provider_specific
+
+
+# --------------------------------------------------------------------------
 #  Timestamp: regola UTC aware obbligatoria
 # --------------------------------------------------------------------------
 

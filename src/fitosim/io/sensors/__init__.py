@@ -49,6 +49,10 @@ from fitosim.io.sensors.fixtures import (
     CsvEnvironmentFixture,
     CsvSoilFixture,
 )
+from fitosim.io.sensors.http_json import (
+    HttpJsonSchemaV1,
+    HttpJsonSoilSensor,
+)
 from fitosim.io.sensors.openmeteo import OpenMeteoEnvironmentSensor
 from fitosim.io.sensors.protocols import EnvironmentSensor, SoilSensor
 from fitosim.io.sensors.types import (
@@ -76,6 +80,8 @@ __all__ = [
     "OpenMeteoEnvironmentSensor",
     "EcowittEnvironmentSensor",
     "EcowittWH51SoilSensor",
+    "HttpJsonSoilSensor",
+    "HttpJsonSchemaV1",
     # Fixture per test e backfilling
     "CsvEnvironmentFixture",
     "CsvSoilFixture",

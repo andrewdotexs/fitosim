@@ -183,6 +183,25 @@ class SensorUpdateResult:
     relative_error_pct : float
         (discrepancy_mm / predicted_mm) × 100, con segno. Vale 0 se
         predicted_mm è zero.
+    observed_temperature_c : float | None
+        Temperatura del substrato letta dal sensore, in °C. Aggiunto in
+        tappa 2 della fascia 2: valorizzato solo quando l'aggiornamento
+        viene fatto con un SoilReading "ricco" (es. da ATO 7-in-1 via
+        HttpJsonSoilSensor); None per gli aggiornamenti via float
+        legacy o per sensori che non misurano la temperatura
+        (es. WH51).
+    observed_ec_mscm : float | None
+        Conducibilità elettrica del substrato letta dal sensore, in
+        mS/cm a 25°C. Per ora puramente informativa (logging
+        diagnostico): la fertirrigazione della tappa 3 userà questo
+        campo per aggiornare lo stato `ec_mm` del vaso.
+    observed_ph : float | None
+        Acidità del substrato letta dal sensore, scala 0..14. Per ora
+        informativa; tappa 3 la userà per il coefficiente Kn.
+    provider_specific : dict
+        Dati di "secondo livello" del provider (es. NPK derivati
+        dall'ATO 7-in-1) preservati opachi per logging diagnostico
+        e presentazione nel dashboard. Default dict vuoto.
     """
 
     predicted_theta: float
@@ -192,6 +211,14 @@ class SensorUpdateResult:
     discrepancy_theta: float
     discrepancy_mm: float
     relative_error_pct: float
+    # Campi aggiunti in tappa 2 fascia 2: dati extra dei sensori "ricchi"
+    # come l'ATO 7-in-1. Tutti opzionali con default per retrocompat
+    # totale: chi costruisce SensorUpdateResult senza passarli (es. il
+    # codice della fascia 1) continua a funzionare senza modifiche.
+    observed_temperature_c: Optional[float] = None
+    observed_ec_mscm: Optional[float] = None
+    observed_ph: Optional[float] = None
+    provider_specific: dict = field(default_factory=dict)
 
     @property
     def absolute_error_mm(self) -> float:
@@ -736,7 +763,9 @@ class Pot:
 
     def update_from_sensor(
         self,
-        theta_observed: float,
+        theta_observed: Optional[float] = None,
+        *,
+        reading: Optional["SoilReading"] = None,
     ) -> SensorUpdateResult:
         """
         Allinea lo stato del vaso a una lettura del sensore di umidità,
@@ -749,58 +778,140 @@ class Pot:
         allinearsi al sensore, e si restituisce un SensorUpdateResult
         con tutti i dati raccolti durante l'operazione.
 
+        Due modalità d'uso
+        -------------------
+
+        Il metodo può essere chiamato in due modi alternativi:
+
+          1. **Modalità classica (legacy)**: passando un singolo float
+             come `theta_observed`. È la forma usata dal codice scritto
+             a tappa 6 della fascia 1, quando i sensori esponevano solo
+             θ. Continua a funzionare senza modifiche::
+
+                 result = pot.update_from_sensor(theta_observed=0.32)
+
+          2. **Modalità ricca (tappa 2 fascia 2)**: passando un
+             `SoilReading` completo via il parametro keyword-only
+             `reading`. È la forma da preferire quando il sensore
+             fornisce anche temperatura del substrato, EC, pH,
+             come l'ATO 7-in-1 via HttpJsonSoilSensor::
+
+                 reading = http_sensor.current_state(channel_id="1")
+                 result = pot.update_from_sensor(reading=reading)
+
+        Solo uno dei due parametri va passato. Passare entrambi o
+        nessuno solleva ValueError per evitare ambiguità.
+
         Cosa viene aggiornato e cosa NO
         --------------------------------
-        Il sensore WH51 misura il contenuto idrico medio del bulk del
-        substrato a una certa profondità. NON ha visibilità su:
 
-          - saucer_state_mm (acqua nel sottovaso): variabile latente
-            del modello, non osservabile dal sensore. Resta invariata.
-          - de_mm (cumulative depletion superficiale del dual-Kc):
-            anche questa è una variabile latente del modello che
-            descrive la dinamica dello strato superficiale, non
-            misurabile dal sensore di bulk. Resta invariata.
+        Il sensore misura il contenuto idrico medio del bulk del
+        substrato a una certa profondità. Lo state_mm del vaso viene
+        sovrascritto con il valore desunto dal θ misurato.
 
-        Se il modello ha drift su queste variabili latenti, l'effetto
-        si manifesterà come errori sistematici nelle previsioni
-        successive di state_mm, che le prossime chiamate a
-        update_from_sensor correggeranno progressivamente. È un
-        comportamento robusto ma asintotico, non istantaneo.
+        I campi extra del SoilReading (temperature_c, ec_mscm, ph,
+        provider_specific) NON aggiornano stati del modello in tappa 2
+        perché il modello fisico della fascia 1 non ha ancora le
+        variabili `ec_mm` e `ph_current`. Questi campi vengono
+        comunque conservati nel SensorUpdateResult ritornato per
+        logging diagnostico, presentazione nel dashboard, e per
+        future estensioni.
+
+        Quando arriverà la tappa 3 della fascia 2 (fertirrigazione
+        EC+pH+Kn), il metodo verrà esteso internamente per usare
+        anche EC e pH per aggiornare i nuovi stati. Il codice del
+        chiamante non avrà bisogno di modifiche: continuerà a passare
+        un SoilReading, e gli effetti sul modello diventeranno più
+        ricchi automaticamente.
+
+        Le variabili latenti del modello (saucer_state_mm, de_mm)
+        restano invariate per le ragioni discusse nella fascia 1.
 
         Parametri
         ---------
-        theta_observed : float
-            Lettura del sensore, in [0, 1]. È il contenuto idrico
-            volumetrico medio del bulk del substrato.
+        theta_observed : float | None
+            Forma legacy: lettura del sensore in θ adimensionale [0, 1].
+            Solleva ValueError se passato insieme a `reading`.
+        reading : SoilReading | None
+            Forma ricca: lettura strutturata da un sensore via Protocol.
+            Estraiamo `theta_volumetric` per l'aggiornamento di
+            state_mm, e gli altri campi vengono propagati nel
+            SensorUpdateResult.
 
         Ritorna
         -------
         SensorUpdateResult
             Report strutturato della discrepanza prima dell'aggiornamento.
-            Il chiamante può ispezionare i campi (e le property
-            derivate `absolute_error_mm` e `is_significant`) per
-            decidere se loggare, allertare o ricalibrare.
+            Quando l'aggiornamento è fatto via SoilReading, sono
+            valorizzati anche i campi observed_temperature_c,
+            observed_ec_mscm, observed_ph e provider_specific.
 
         Solleva
         -------
         ValueError
-            Se theta_observed è fuori dal range fisico [0, 1].
+            Se theta_observed è fuori dal range fisico [0, 1], oppure
+            se entrambi o nessuno dei due parametri viene passato.
 
         Esempi
         --------
-        Aggiornamento singolo dopo una lettura del sensore:
+        Aggiornamento singolo dopo una lettura del sensore (legacy):
 
             >>> pot = Pot(...)
-            >>> # ... il modello evolve giornalmente ...
             >>> result = pot.update_from_sensor(theta_observed=0.32)
             >>> if result.is_significant:
-            ...     print(f"Drift di {result.discrepancy_mm:.1f} mm "
-            ...           f"({result.relative_error_pct:+.1f}%)")
+            ...     print(f"Drift di {result.discrepancy_mm:.1f} mm")
+
+        Aggiornamento con SoilReading da HttpJsonSoilSensor:
+
+            >>> from fitosim.io.sensors import HttpJsonSoilSensor
+            >>> sensor = HttpJsonSoilSensor(base_url="http://esp32.local")
+            >>> reading = sensor.current_state(channel_id="1")
+            >>> result = pot.update_from_sensor(reading=reading)
+            >>> # I campi extra sono accessibili nel result:
+            >>> if result.observed_ec_mscm is not None:
+            ...     print(f"EC misurata: {result.observed_ec_mscm} mS/cm")
         """
-        if not 0.0 <= theta_observed <= 1.0:
+        # Validazione mutuamente esclusiva: uno dei due parametri va
+        # passato, mai entrambi e mai nessuno. Un errore qui è di
+        # programmazione, non di runtime: il chiamante ha sbagliato a
+        # invocare il metodo.
+        if theta_observed is not None and reading is not None:
+            raise ValueError(
+                "Passare theta_observed OPPURE reading, non entrambi. "
+                "theta_observed è la forma legacy (un singolo float), "
+                "reading è la forma ricca (un SoilReading completo)."
+            )
+        if theta_observed is None and reading is None:
+            raise ValueError(
+                "Specificare theta_observed (forma legacy) o reading "
+                "(SoilReading da un SoilSensor). Uno dei due è "
+                "obbligatorio."
+            )
+
+        # Estrazione del θ effettivo + dei campi extra dal SoilReading.
+        # Tutti i campi extra default a None: per la modalità legacy
+        # restano None nel SensorUpdateResult finale.
+        observed_temperature_c = None
+        observed_ec_mscm = None
+        observed_ph = None
+        provider_specific_data = {}
+
+        if reading is not None:
+            theta_effective = reading.theta_volumetric
+            observed_temperature_c = reading.temperature_c
+            observed_ec_mscm = reading.ec_mscm
+            observed_ph = reading.ph
+            provider_specific_data = reading.provider_specific
+        else:
+            theta_effective = theta_observed
+
+        # Da qui in poi la logica è identica alla forma legacy: il θ
+        # estratto va validato e usato per aggiornare state_mm,
+        # esattamente come prima della tappa 2.
+        if not 0.0 <= theta_effective <= 1.0:
             raise ValueError(
                 f"theta_observed deve essere in [0, 1] "
-                f"(ricevuto {theta_observed}). Verifica le unità "
+                f"(ricevuto {theta_effective}). Verifica le unità "
                 f"del sensore: WH51 fornisce direttamente θ "
                 f"adimensionale, ma alcuni firmware lo restituiscono "
                 f"in percentuale (0-100) — in quel caso dividi per 100."
@@ -811,11 +922,11 @@ class Pot:
         predicted_mm = self.state_mm
         # Conversione lettura → mm usando la profondità effettiva del
         # substrato (che già tiene conto di active_depth_fraction).
-        observed_mm = theta_observed * self.substrate_depth_mm
+        observed_mm = theta_effective * self.substrate_depth_mm
 
         # Discrepanze con la convenzione "observed - predicted":
         # positivo = sensore vede più acqua del previsto.
-        discrepancy_theta = theta_observed - predicted_theta
+        discrepancy_theta = theta_effective - predicted_theta
         discrepancy_mm = observed_mm - predicted_mm
 
         # Errore relativo (con segno). Caso degenere: state_mm=0
@@ -838,12 +949,17 @@ class Pot:
 
         return SensorUpdateResult(
             predicted_theta=predicted_theta,
-            observed_theta=theta_observed,
+            observed_theta=theta_effective,
             predicted_mm=predicted_mm,
             observed_mm=observed_mm,
             discrepancy_theta=discrepancy_theta,
             discrepancy_mm=discrepancy_mm,
             relative_error_pct=relative_error_pct,
+            # Campi extra dalla modalità ricca (None per la legacy).
+            observed_temperature_c=observed_temperature_c,
+            observed_ec_mscm=observed_ec_mscm,
+            observed_ph=observed_ph,
+            provider_specific=provider_specific_data,
         )
 
     def water_to_field_capacity(self) -> float:

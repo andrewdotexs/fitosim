@@ -261,6 +261,19 @@ class SoilReading:
         chimica dei nutrienti tramite il coefficiente Kn.
     quality : ReadingQuality
         Metadati di qualità della lettura.
+    provider_specific : dict[str, Any]
+        Campo aggiunto in tappa 2 della fascia 2 per ospitare dati
+        "di secondo livello" che non sono variabili di stato del
+        modello ma che il provider hardware può produrre. Esempio
+        canonico: gli NPK derivati dell'ATO 7-in-1, che il firmware
+        del sensore stima dall'EC misurata applicando una correlazione
+        proprietaria. fitosim NON usa questi valori per la simulazione
+        (la fertirrigazione della tappa 3 lavora su EC e pH come
+        variabili primarie), ma li conserva qui per la presentazione
+        nel dashboard del giardiniere e per il logging diagnostico.
+        Default: dict vuoto. Il chiamante può passare un dict arbitrario
+        di chiavi → valori; nessuna validazione viene applicata su
+        questo campo perché il suo contenuto dipende dal provider.
     """
 
     timestamp: datetime
@@ -269,6 +282,7 @@ class SoilReading:
     ec_mscm: Optional[float] = None
     ph: Optional[float] = None
     quality: ReadingQuality = field(default_factory=ReadingQuality)
+    provider_specific: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Timestamp aware obbligatorio (stessa regola di
