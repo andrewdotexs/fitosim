@@ -262,5 +262,264 @@ class TestEquivalenceWithManualFlow(unittest.TestCase):
         self.assertEqual(pot_result.under_alert, manual_result.under_alert)
 
 
+# =======================================================================
+#  Estensione: forme, materiali, colori, esposizione, active_depth
+# =======================================================================
+#
+# Questi test mettono in sicurezza l'estensione "vasi caratterizzati"
+# (Fascia 1 della roadmap). Verificano che:
+#   - i default riproducano esattamente il comportamento precedente
+#     (zero regressioni rispetto ai test classici sopra);
+#   - il dispatch della forma in surface_area_m2 sia corretto;
+#   - il fattore Kp influenzi current_et_c nella direzione giusta;
+#   - la validazione __post_init__ catturi le configurazioni invalide.
+
+class TestPotShape(unittest.TestCase):
+    """Dispatch di surface_area_m2 in funzione di pot_shape."""
+
+    def test_default_is_cylindrical(self):
+        from fitosim.domain.pot import PotShape
+        pot = _make_basil_pot()
+        # Il default deve essere cilindrico (compatibilità retroattiva).
+        self.assertEqual(pot.pot_shape, PotShape.CYLINDRICAL)
+
+    def test_cylindrical_uses_circular_area(self):
+        # Cilindrico: area = π·(d/2)². Con d=18 cm → ~0.0254 m².
+        pot = _make_basil_pot()
+        expected = circular_pot_surface_area_m2(pot.pot_diameter_cm)
+        self.assertAlmostEqual(pot.surface_area_m2, expected, places=10)
+
+    def test_truncated_cone_equivalent_to_cylindrical(self):
+        # Stessa apertura → stessa superficie evaporante.
+        from fitosim.domain.pot import PotShape
+        from dataclasses import replace
+        pot_cyl = _make_basil_pot()
+        pot_tc = replace(pot_cyl, pot_shape=PotShape.TRUNCATED_CONE)
+        self.assertAlmostEqual(
+            pot_cyl.surface_area_m2, pot_tc.surface_area_m2, places=10,
+        )
+
+    def test_rectangular_uses_length_times_width(self):
+        # Cassetta rettangolare 60 × 20 cm.
+        from fitosim.domain.pot import PotShape
+        pot = Pot(
+            label="cassetta",
+            species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=12.0,
+            pot_diameter_cm=60.0,    # qui rappresenta la lunghezza
+            pot_width_cm=20.0,
+            pot_shape=PotShape.RECTANGULAR,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 15),
+        )
+        # 60 cm × 20 cm = 0.12 m².
+        self.assertAlmostEqual(pot.surface_area_m2, 0.12, places=6)
+
+    def test_oval_uses_ellipse_formula(self):
+        # Vaso ovale 30 × 20 cm.
+        from fitosim.domain.pot import PotShape
+        import math
+        pot = Pot(
+            label="ovale",
+            species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=5.0,
+            pot_diameter_cm=30.0,
+            pot_width_cm=20.0,
+            pot_shape=PotShape.OVAL,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 15),
+        )
+        expected = math.pi * 0.15 * 0.10  # π·a·b
+        self.assertAlmostEqual(pot.surface_area_m2, expected, places=6)
+
+    def test_rectangular_without_width_raises(self):
+        # Validazione __post_init__: forma rettangolare senza
+        # pot_width_cm deve essere rifiutata.
+        from fitosim.domain.pot import PotShape
+        with self.assertRaises(ValueError) as ctx:
+            Pot(
+                label="invalida",
+                species=BASIL,
+                substrate=UNIVERSAL_POTTING_SOIL,
+                pot_volume_l=5.0,
+                pot_diameter_cm=20.0,
+                pot_shape=PotShape.RECTANGULAR,
+                # pot_width_cm omesso!
+                location=Location.OUTDOOR,
+                planting_date=date(2026, 4, 15),
+            )
+        self.assertIn("pot_width_cm", str(ctx.exception))
+
+    def test_oval_without_width_raises(self):
+        from fitosim.domain.pot import PotShape
+        with self.assertRaises(ValueError):
+            Pot(
+                label="invalida",
+                species=BASIL,
+                substrate=UNIVERSAL_POTTING_SOIL,
+                pot_volume_l=5.0,
+                pot_diameter_cm=20.0,
+                pot_shape=PotShape.OVAL,
+                location=Location.OUTDOOR,
+                planting_date=date(2026, 4, 15),
+            )
+
+
+class TestPotKp(unittest.TestCase):
+    """
+    Coefficiente di vaso Kp e sua composizione. Verifica che:
+      - i default producano Kp = 1.00 (compatibilità retroattiva);
+      - varianti di material/color/exposure cambino Kp nella
+        direzione fisicamente corretta;
+      - la composizione corrisponda al prodotto dei tre fattori.
+    """
+
+    def test_default_kp_is_one(self):
+        # Default = (PLASTIC, MEDIUM, FULL_SUN) → Kp = 1.00.
+        # Critico per la compatibilità retroattiva del modello.
+        pot = _make_basil_pot()
+        self.assertAlmostEqual(pot.kp, 1.00, places=10)
+
+    def test_kp_increases_with_terracotta(self):
+        from fitosim.science.pot_physics import PotMaterial
+        from dataclasses import replace
+        pot_plastica = _make_basil_pot()
+        pot_terracotta = replace(pot_plastica, pot_material=PotMaterial.TERRACOTTA)
+        self.assertGreater(pot_terracotta.kp, pot_plastica.kp)
+
+    def test_kp_decreases_with_shade(self):
+        from fitosim.science.pot_physics import SunExposure
+        from dataclasses import replace
+        pot_sole = _make_basil_pot()
+        pot_ombra = replace(pot_sole, sun_exposure=SunExposure.SHADE)
+        self.assertLess(pot_ombra.kp, pot_sole.kp)
+
+    def test_kp_matches_pot_correction_factor(self):
+        # La property kp deve essere esattamente pot_correction_factor
+        # dei tre attributi. Verifica della formula completa di
+        # composizione su una configurazione non-default.
+        from fitosim.science.pot_physics import (
+            PotColor, PotMaterial, SunExposure, pot_correction_factor,
+        )
+        from dataclasses import replace
+        pot = replace(
+            _make_basil_pot(),
+            pot_material=PotMaterial.TERRACOTTA,
+            pot_color=PotColor.DARK,
+            sun_exposure=SunExposure.PARTIAL_SHADE,
+        )
+        expected = pot_correction_factor(
+            material=PotMaterial.TERRACOTTA,
+            color=PotColor.DARK,
+            exposure=SunExposure.PARTIAL_SHADE,
+        )
+        self.assertAlmostEqual(pot.kp, expected, places=10)
+
+
+class TestCurrentEtcWithKp(unittest.TestCase):
+    """
+    Effetto di Kp sul calcolo finale di ET_c,act. È il test più
+    importante perché chiude il cerchio: la modifica al modello
+    deve effettivamente cambiare il numero che esce dal motore.
+    """
+
+    def test_default_pot_unchanged_from_baseline(self):
+        # Vaso con tutti i default: current_et_c deve essere identico
+        # a quello che era prima dell'estensione (Kp=1 → moltiplicazione
+        # per 1.0 invariante).
+        pot = _make_basil_pot(state_mm=28.0)  # ben sopra alert
+        # Stadio mid-season: 30 giorni dopo l'impianto.
+        eval_date = pot.planting_date.replace(day=15)
+        et_0 = 5.0
+        et_c = pot.current_et_c(et_0, eval_date)
+        # Calcolo manuale con Kp=1 implicito.
+        manual = actual_et_c(
+            species=BASIL,
+            stage=pot.current_stage(eval_date),
+            et_0=et_0,
+            current_theta=pot.state_theta,
+            substrate=UNIVERSAL_POTTING_SOIL,
+        )
+        self.assertAlmostEqual(et_c, manual, places=6)
+
+    def test_terracotta_consumes_more_than_plastic(self):
+        # Stesso vaso, due materiali diversi: terracotta deve avere
+        # ET_c maggiore di plastica.
+        from fitosim.science.pot_physics import PotMaterial
+        from dataclasses import replace
+        pot_plast = _make_basil_pot(state_mm=28.0)  # ben sopra alert
+        pot_terra = replace(pot_plast, pot_material=PotMaterial.TERRACOTTA)
+        eval_date = pot_plast.planting_date.replace(day=15)
+        et_0 = 5.0
+        self.assertGreater(
+            pot_terra.current_et_c(et_0, eval_date),
+            pot_plast.current_et_c(et_0, eval_date),
+        )
+
+    def test_kp_scales_et_c_proportionally(self):
+        # ET_c con Kp arbitrario deve essere esattamente Kp ×
+        # ET_c con Kp=1. Verifica della linearità del modello.
+        from fitosim.science.pot_physics import (
+            PotColor, PotMaterial, SunExposure,
+        )
+        from dataclasses import replace
+        pot_default = _make_basil_pot(state_mm=28.0)  # ben sopra alert
+        pot_modified = replace(
+            pot_default,
+            pot_material=PotMaterial.TERRACOTTA,
+            pot_color=PotColor.DARK,
+            sun_exposure=SunExposure.PARTIAL_SHADE,
+        )
+        eval_date = pot_default.planting_date.replace(day=15)
+        et_0 = 5.0
+        et_c_default = pot_default.current_et_c(et_0, eval_date)
+        et_c_modified = pot_modified.current_et_c(et_0, eval_date)
+        # Il rapporto tra i due deve essere il Kp del vaso modificato.
+        ratio = et_c_modified / et_c_default
+        self.assertAlmostEqual(ratio, pot_modified.kp, places=6)
+
+
+class TestActiveDepthFraction(unittest.TestCase):
+    """
+    Frazione attiva del substrato (per gestire lo strato drenante in
+    fondo al vaso). Se < 1.0, riduce la profondità effettiva e quindi
+    la riserva idrica disponibile.
+    """
+
+    def test_default_is_one(self):
+        # Default 1.0 = tutto il vaso è attivo (compatibilità retroattiva).
+        pot = _make_basil_pot()
+        self.assertEqual(pot.active_depth_fraction, 1.0)
+
+    def test_reduced_fraction_lowers_fc_mm(self):
+        # active_depth_fraction=0.7 → strato drenante del 30% in fondo.
+        # FC in mm si riduce proporzionalmente perché meno substrato
+        # = meno acqua trattenibile.
+        from dataclasses import replace
+        pot_full = _make_basil_pot()
+        pot_drenante = replace(pot_full, active_depth_fraction=0.7)
+        # FC del vaso con strato drenante è 70% di quello senza.
+        ratio = pot_drenante.fc_mm / pot_full.fc_mm
+        self.assertAlmostEqual(ratio, 0.7, places=6)
+
+    def test_rejects_zero_or_negative_fraction(self):
+        from dataclasses import replace
+        # 0.0 e negativi non hanno senso fisico.
+        pot = _make_basil_pot()
+        with self.assertRaises(ValueError):
+            replace(pot, active_depth_fraction=0.0)
+        with self.assertRaises(ValueError):
+            replace(pot, active_depth_fraction=-0.1)
+
+    def test_rejects_fraction_above_one(self):
+        # > 1.0 non ha senso (non puoi avere più substrato del volume).
+        from dataclasses import replace
+        pot = _make_basil_pot()
+        with self.assertRaises(ValueError):
+            replace(pot, active_depth_fraction=1.2)
+
+
 if __name__ == "__main__":
     unittest.main()

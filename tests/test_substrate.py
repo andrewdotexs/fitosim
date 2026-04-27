@@ -8,6 +8,7 @@ Copertura in tre famiglie di test:
      essere fisicamente consistenti e ordinati in modo ragionevole.
 """
 
+import math
 import unittest
 
 from fitosim.science.substrate import (
@@ -250,6 +251,139 @@ class TestGeometryAndConversion(unittest.TestCase):
         # Divisione per zero deve essere rifiutata esplicitamente.
         with self.assertRaises(ValueError):
             mm_to_theta(50.0, 0.0)
+
+
+# =======================================================================
+#  Forme geometriche aggiuntive: tronco-conico, rettangolare, ovale
+# =======================================================================
+
+class TestTruncatedConePotSurface(unittest.TestCase):
+    """
+    Il vaso tronco-conico è geometricamente un alias del cilindrico per
+    quanto riguarda la superficie evaporante (la sommità è circolare).
+    Testo esplicitamente questa equivalenza, e i casi limite.
+    """
+
+    def test_equivalent_to_circular(self):
+        # truncated_cone(d) deve dare lo stesso risultato di circular(d).
+        from fitosim.science.substrate import (
+            circular_pot_surface_area_m2,
+            truncated_cone_pot_surface_area_m2,
+        )
+        for d in [10.0, 14.0, 22.0, 30.0, 40.0]:
+            with self.subTest(diameter_cm=d):
+                circ = circular_pot_surface_area_m2(d)
+                trunc = truncated_cone_pot_surface_area_m2(d)
+                self.assertAlmostEqual(circ, trunc, places=10)
+
+    def test_canonical_value(self):
+        # Vaso tronco-conico con apertura 20 cm: area = π(0.10)² ≈ 0.0314 m².
+        from fitosim.science.substrate import (
+            truncated_cone_pot_surface_area_m2,
+        )
+        area = truncated_cone_pot_surface_area_m2(20.0)
+        self.assertAlmostEqual(area, math.pi * 0.01, places=6)
+
+    def test_rejects_non_positive_diameter(self):
+        from fitosim.science.substrate import (
+            truncated_cone_pot_surface_area_m2,
+        )
+        with self.assertRaises(ValueError):
+            truncated_cone_pot_surface_area_m2(0.0)
+        with self.assertRaises(ValueError):
+            truncated_cone_pot_surface_area_m2(-5.0)
+
+
+class TestRectangularPotSurface(unittest.TestCase):
+    """
+    Vaso rettangolare (cassetta da balcone, fioriera quadrata).
+    """
+
+    def test_canonical_square(self):
+        # 20 × 20 cm = 400 cm² = 0.04 m².
+        from fitosim.science.substrate import rectangular_pot_surface_area_m2
+        self.assertAlmostEqual(
+            rectangular_pot_surface_area_m2(20.0, 20.0), 0.04, places=6,
+        )
+
+    def test_canonical_rectangle(self):
+        # 60 × 20 cm = 1200 cm² = 0.12 m² (cassetta tipica).
+        from fitosim.science.substrate import rectangular_pot_surface_area_m2
+        self.assertAlmostEqual(
+            rectangular_pot_surface_area_m2(60.0, 20.0), 0.12, places=6,
+        )
+
+    def test_commutativity(self):
+        # length × width = width × length: funzione simmetrica.
+        from fitosim.science.substrate import rectangular_pot_surface_area_m2
+        self.assertAlmostEqual(
+            rectangular_pot_surface_area_m2(35.0, 17.0),
+            rectangular_pot_surface_area_m2(17.0, 35.0),
+            places=10,
+        )
+
+    def test_rejects_non_positive_dimensions(self):
+        from fitosim.science.substrate import rectangular_pot_surface_area_m2
+        with self.assertRaises(ValueError):
+            rectangular_pot_surface_area_m2(0.0, 20.0)
+        with self.assertRaises(ValueError):
+            rectangular_pot_surface_area_m2(20.0, -5.0)
+
+
+class TestOvalPotSurface(unittest.TestCase):
+    """
+    Vaso ovale modellato come ellisse: area = π·a·b dove a e b sono i
+    semiassi.
+    """
+
+    def test_oval_with_equal_axes_equals_circle(self):
+        # Ellisse a semiassi uguali = cerchio. oval(d, d) = circular(d).
+        from fitosim.science.substrate import (
+            circular_pot_surface_area_m2,
+            oval_pot_surface_area_m2,
+        )
+        for d in [12.0, 18.0, 25.0, 35.0]:
+            with self.subTest(diameter_cm=d):
+                self.assertAlmostEqual(
+                    oval_pot_surface_area_m2(d, d),
+                    circular_pot_surface_area_m2(d),
+                    places=10,
+                )
+
+    def test_canonical_oval(self):
+        # 30 × 20 cm: area = π·(0.15)·(0.10) = 0.04712... m².
+        from fitosim.science.substrate import oval_pot_surface_area_m2
+        area = oval_pot_surface_area_m2(30.0, 20.0)
+        self.assertAlmostEqual(area, math.pi * 0.15 * 0.10, places=6)
+
+    def test_oval_smaller_than_bounding_rectangle(self):
+        # L'ellisse inscritta in un rettangolo di lati a, b ha area
+        # π·(a/2)·(b/2) = (π/4)·a·b ≈ 0.785·a·b. Quindi sempre minore
+        # del rettangolo che la contiene.
+        from fitosim.science.substrate import (
+            oval_pot_surface_area_m2,
+            rectangular_pot_surface_area_m2,
+        )
+        rect = rectangular_pot_surface_area_m2(30.0, 20.0)
+        oval = oval_pot_surface_area_m2(30.0, 20.0)
+        self.assertLess(oval, rect)
+        # Più precisamente: rapporto = π/4 ≈ 0.7854.
+        self.assertAlmostEqual(oval / rect, math.pi / 4, places=6)
+
+    def test_commutativity(self):
+        from fitosim.science.substrate import oval_pot_surface_area_m2
+        self.assertAlmostEqual(
+            oval_pot_surface_area_m2(40.0, 25.0),
+            oval_pot_surface_area_m2(25.0, 40.0),
+            places=10,
+        )
+
+    def test_rejects_non_positive_axes(self):
+        from fitosim.science.substrate import oval_pot_surface_area_m2
+        with self.assertRaises(ValueError):
+            oval_pot_surface_area_m2(0.0, 20.0)
+        with self.assertRaises(ValueError):
+            oval_pot_surface_area_m2(30.0, -10.0)
 
 
 if __name__ == "__main__":

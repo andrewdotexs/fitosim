@@ -36,8 +36,10 @@ Esegui con:
 """
 
 from datetime import date, timedelta
+from dataclasses import dataclass
 
 from fitosim.science.balance import (
+    BalanceStepResult,
     water_balance_step_mm,
     water_balance_step_theta,
 )
@@ -87,48 +89,52 @@ DAILY_TEMPERATURES = [
 ]
 
 
-def main() -> None:
-    # -------------------------------------------------------------------
-    #  Preparazione della geometria del vaso
-    # -------------------------------------------------------------------
+@dataclass(frozen=True)
+class DailyRecord:
+    """
+    Stato di un singolo giorno della simulazione.
+
+    Raccoglie i dati di input (meteo, ET calcolata) e il risultato di
+    entrambi i bilanci (in θ e in mm) per il giorno. È la struttura
+    che la funzione `simulate()` restituisce in lista, consumata poi
+    sia dal reporter tabellare sia dagli script di visualizzazione.
+    """
+    day_index: int                  # 1..N_DAYS
+    date: date                      # data effettiva
+    t_min: float                    # °C
+    t_max: float                    # °C
+    et0_mm: float                   # mm/giorno
+    et_c_mm: float                  # mm/giorno, = Kc × ET₀
+    result_theta: BalanceStepResult
+    result_mm: BalanceStepResult
+
+
+def simulate() -> tuple[list[DailyRecord], float]:
+    """
+    Esegue la simulazione di 14 giorni con i parametri di modulo.
+
+    Ritorna
+    -------
+    records : list[DailyRecord]
+        Lista di N_DAYS record, uno per ogni giorno della simulazione.
+    depth_mm : float
+        Profondità effettiva del substrato in mm, utile per conversioni
+        successive a carico del consumer.
+    """
     surface_area = circular_pot_surface_area_m2(POT_DIAMETER_CM)
     depth_mm = pot_substrate_depth_mm(POT_VOLUME_L, surface_area)
 
-    print("Simulazione bilancio idrico — Vaso a Milano, 14 giorni da "
-          f"{START_DATE.isoformat()}")
-    print(f"Vaso: {POT_VOLUME_L} L, diametro {POT_DIAMETER_CM} cm, "
-          f"area {surface_area:.4f} m², profondità effettiva "
-          f"{depth_mm:.1f} mm")
-    print(f"Substrato: {SUBSTRATE.name} "
-          f"(θ_FC={SUBSTRATE.theta_fc}, θ_PWP={SUBSTRATE.theta_pwp})")
-    print(f"Coefficiente colturale Kc = {KC}")
-    print()
-
-    # -------------------------------------------------------------------
-    #  Stato iniziale: appena irrigato, θ = θ_FC
-    # -------------------------------------------------------------------
+    # Stato iniziale: vaso appena irrigato, θ = θ_FC.
     state_theta = SUBSTRATE.theta_fc
     state_mm = theta_to_mm(state_theta, depth_mm)
 
-    # Intestazione della tabella. Stampiamo l'evoluzione giorno per
-    # giorno, con le due rappresentazioni affiancate per confronto
-    # visivo immediato.
-    header = (
-        f"{'Giorno':>6} {'Data':>10} "
-        f"{'T_min':>5} {'T_max':>5} "
-        f"{'ET₀':>5} {'ET_c':>5} "
-        f"{'θ':>6} {'mm':>6} "
-        f"{'θ→mm':>6} {'Alert':>6}"
-    )
-    print(header)
-    print("-" * len(header))
+    records: list[DailyRecord] = []
 
     for day_index in range(N_DAYS):
         current_date = START_DATE + timedelta(days=day_index)
         j = day_of_year(current_date)
         t_min, t_max = DAILY_TEMPERATURES[day_index]
 
-        # ET₀ giornaliera via Hargreaves-Samani.
         et0_mm = et0_hargreaves_samani(
             t_min=t_min, t_max=t_max,
             latitude_deg=LATITUDE_DEG, j=j,
@@ -136,8 +142,6 @@ def main() -> None:
         et_c_mm = KC * et0_mm
         et_c_theta = mm_to_theta(et_c_mm, depth_mm)
 
-        # Aggiornamento del bilancio nelle due unità in parallelo.
-        # Nota: nessuna pioggia in questo scenario → water_input = 0.
         result_theta = water_balance_step_theta(
             current_theta=state_theta,
             water_input_theta=0.0,
@@ -152,22 +156,56 @@ def main() -> None:
             substrate_depth_mm=depth_mm,
         )
 
-        # Per il confronto cross-unit nella tabella, convertiamo lo
-        # stato θ in mm: la colonna "θ→mm" deve coincidere con "mm".
-        theta_converted_to_mm = theta_to_mm(result_theta.new_state, depth_mm)
-        alert_marker = "⚠️" if result_mm.under_alert else ""
+        records.append(DailyRecord(
+            day_index=day_index + 1,
+            date=current_date,
+            t_min=t_min, t_max=t_max,
+            et0_mm=et0_mm, et_c_mm=et_c_mm,
+            result_theta=result_theta,
+            result_mm=result_mm,
+        ))
 
-        print(
-            f"{day_index + 1:>6} {current_date.isoformat():>10} "
-            f"{t_min:>5.1f} {t_max:>5.1f} "
-            f"{et0_mm:>5.2f} {et_c_mm:>5.2f} "
-            f"{result_theta.new_state:>6.3f} {result_mm.new_state:>6.1f} "
-            f"{theta_converted_to_mm:>6.1f} {alert_marker:>6}"
-        )
-
-        # Aggiornamento dello stato per il ciclo successivo.
         state_theta = result_theta.new_state
         state_mm = result_mm.new_state
+
+    return records, depth_mm
+
+
+def main() -> None:
+    records, depth_mm = simulate()
+    surface_area = circular_pot_surface_area_m2(POT_DIAMETER_CM)
+
+    print("Simulazione bilancio idrico — Vaso a Milano, 14 giorni da "
+          f"{START_DATE.isoformat()}")
+    print(f"Vaso: {POT_VOLUME_L} L, diametro {POT_DIAMETER_CM} cm, "
+          f"area {surface_area:.4f} m², profondità effettiva "
+          f"{depth_mm:.1f} mm")
+    print(f"Substrato: {SUBSTRATE.name} "
+          f"(θ_FC={SUBSTRATE.theta_fc}, θ_PWP={SUBSTRATE.theta_pwp})")
+    print(f"Coefficiente colturale Kc = {KC}")
+    print()
+
+    header = (
+        f"{'Giorno':>6} {'Data':>10} "
+        f"{'T_min':>5} {'T_max':>5} "
+        f"{'ET₀':>5} {'ET_c':>5} "
+        f"{'θ':>6} {'mm':>6} "
+        f"{'θ→mm':>6} {'Alert':>6}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for r in records:
+        theta_converted_to_mm = theta_to_mm(r.result_theta.new_state, depth_mm)
+        alert_marker = "⚠️" if r.result_mm.under_alert else ""
+        print(
+            f"{r.day_index:>6} {r.date.isoformat():>10} "
+            f"{r.t_min:>5.1f} {r.t_max:>5.1f} "
+            f"{r.et0_mm:>5.2f} {r.et_c_mm:>5.2f} "
+            f"{r.result_theta.new_state:>6.3f} "
+            f"{r.result_mm.new_state:>6.1f} "
+            f"{theta_converted_to_mm:>6.1f} {alert_marker:>6}"
+        )
 
     print()
     print("Colonne:")

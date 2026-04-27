@@ -124,7 +124,7 @@ def simulate_pot_with_forecast(
         et0_values.append(et0)
         # Calcoliamo ET_c effettiva (con Ks) prima del passo, perché ci
         # serve nel grafico delle barre.
-        et_c = pot.current_et_c(et_0_mm=et0, current_date=w.day)
+        et_c = pot.current_et_c(et0_mm=et0, current_date=w.day)
         et_c_values.append(et_c)
 
         result = pot.apply_balance_step(

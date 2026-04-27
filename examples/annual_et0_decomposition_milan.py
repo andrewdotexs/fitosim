@@ -39,7 +39,7 @@ from fitosim.science.radiation import extraterrestrial_radiation
 
 # Parametri del sito e I/O
 LATITUDE = 45.47  # Milano, gradi decimali
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output" / "plots"
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "plots"
 OUTPUT_PATH = OUTPUT_DIR / "annual_et0_decomposition_milan.png"
 
 

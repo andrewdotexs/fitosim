@@ -323,6 +323,76 @@ def circular_pot_surface_area_m2(diameter_cm: float) -> float:
     return math.pi * radius_m * radius_m
 
 
+def truncated_cone_pot_surface_area_m2(top_diameter_cm: float) -> float:
+    """
+    Area superficiale (sommità) di un vaso tronco-conico.
+
+    Per il bilancio idrico ci interessa solo la superficie *superiore*,
+    da cui avvengono evaporazione del substrato e ricaduta della pioggia.
+    Quella superiore è circolare, quindi questa funzione è semplicemente
+    un alias semantico di `circular_pot_surface_area_m2` applicato al
+    diametro alla sommità — il diametro alla base è irrilevante per il
+    flusso idrico in/out e serve solo come parametro estetico/strutturale.
+
+    L'esistenza di una funzione separata è giustificata dalla chiarezza:
+    quando il codice cliente descrive un vaso "tronco-conico, 22 cm di
+    apertura", chiamare `truncated_cone_pot_surface_area_m2(22)` è più
+    leggibile e meno suscettibile a errori di "ho passato il diametro
+    sbagliato".
+    """
+    return circular_pot_surface_area_m2(top_diameter_cm)
+
+
+def rectangular_pot_surface_area_m2(
+    length_cm: float,
+    width_cm: float,
+) -> float:
+    """
+    Area superficiale di un vaso a base rettangolare (es. cassetta da
+    balcone, fioriera quadrata).
+
+    Parametri
+    ---------
+    length_cm, width_cm : float
+        Lunghezza e larghezza interne della sommità del vaso, in cm.
+        Per un quadrato si passa lo stesso valore due volte.
+
+    Ritorna
+    -------
+    float
+        Area della superficie superiore in m².
+    """
+    if length_cm <= 0 or width_cm <= 0:
+        raise ValueError(
+            f"Le dimensioni del vaso rettangolare devono essere "
+            f"positive (ricevuto length={length_cm}, width={width_cm})."
+        )
+    return (length_cm / 100.0) * (width_cm / 100.0)
+
+
+def oval_pot_surface_area_m2(
+    major_axis_cm: float,
+    minor_axis_cm: float,
+) -> float:
+    """
+    Area superficiale di un vaso a base ovale, modellato come ellisse.
+
+    L'area di un'ellisse di semiassi a e b è π·a·b, dove a e b sono
+    metà degli assi maggiore e minore. Per coerenza con le altre
+    funzioni di questa famiglia, accettiamo gli assi *interi* in cm
+    (i diametri ovvero i due lati della scatola che contiene
+    l'ellisse) e dividiamo internamente.
+    """
+    if major_axis_cm <= 0 or minor_axis_cm <= 0:
+        raise ValueError(
+            f"Gli assi del vaso ovale devono essere positivi "
+            f"(ricevuto major={major_axis_cm}, minor={minor_axis_cm})."
+        )
+    a_m = (major_axis_cm / 100.0) / 2.0
+    b_m = (minor_axis_cm / 100.0) / 2.0
+    return math.pi * a_m * b_m
+
+
 def pot_substrate_depth_mm(
     pot_volume_l: float,
     surface_area_m2: float,
