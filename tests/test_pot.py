@@ -521,5 +521,261 @@ class TestActiveDepthFraction(unittest.TestCase):
             replace(pot, active_depth_fraction=1.2)
 
 
+# =======================================================================
+#  Sottovaso e risalita capillare
+# =======================================================================
+#
+# Il sottovaso introduce un secondo serbatoio idrico accoppiato al
+# substrato del vaso. Verifichiamo che:
+#   - in assenza del sottovoto (default), il comportamento è identico
+#     al modello pre-estensione (regressione zero);
+#   - con il sottovaso, il drenaggio viene catturato invece che perso;
+#   - la risalita capillare nei giorni successivi reidrata il vaso;
+#   - l'evaporazione del piattino svuota gradualmente il sottovaso;
+#   - i campi __post_init__ catturano configurazioni invalide.
+
+class TestSaucerOptional(unittest.TestCase):
+    """Backward compatibility: senza sottovaso tutto è invariato."""
+
+    def test_default_pot_has_no_saucer(self):
+        # Il default è "nessun sottovaso", per zero regressione sui
+        # vasi creati prima dell'estensione.
+        pot = _make_basil_pot()
+        self.assertIsNone(pot.saucer_capacity_mm)
+
+    def test_no_saucer_step_identical_to_baseline(self):
+        # Test critico: un vaso senza sottovoto fa esattamente lo
+        # stesso bilancio di prima dell'estensione. Confrontiamo il
+        # risultato del passo con il calcolo manuale del water_balance.
+        pot = _make_basil_pot(state_mm=25.0)
+        eval_date = pot.planting_date.replace(day=10)
+        result_pot = pot.apply_balance_step(
+            et_0_mm=5.0,
+            water_input_mm=2.0,
+            current_date=eval_date,
+        )
+        # Stato del piattino non deve mai cambiare quando il sottovoto
+        # non è attivo (resta al default 0.0).
+        self.assertEqual(pot.saucer_state_mm, 0.0)
+        # Ricalcolo manuale equivalente.
+        manual = water_balance_step_mm(
+            current_mm=25.0,
+            water_input_mm=2.0,
+            et_c_mm=actual_et_c(
+                species=BASIL,
+                stage=pot.current_stage(eval_date),
+                et_0=5.0,
+                current_theta=25.0 / pot.substrate_depth_mm,
+                substrate=UNIVERSAL_POTTING_SOIL,
+            ),
+            substrate=UNIVERSAL_POTTING_SOIL,
+            substrate_depth_mm=pot.substrate_depth_mm,
+            depletion_fraction=BASIL.depletion_fraction,
+        )
+        self.assertAlmostEqual(result_pot.new_state, manual.new_state, places=6)
+        self.assertAlmostEqual(result_pot.drainage, manual.drainage, places=6)
+
+
+class TestSaucerValidation(unittest.TestCase):
+    """Validazione __post_init__ dei nuovi campi del sottovaso."""
+
+    def test_negative_capacity_rejected(self):
+        with self.assertRaises(ValueError):
+            Pot(
+                label="invalido",
+                species=BASIL,
+                substrate=UNIVERSAL_POTTING_SOIL,
+                pot_volume_l=2.0, pot_diameter_cm=18.0,
+                location=Location.OUTDOOR,
+                planting_date=date(2026, 4, 1),
+                saucer_capacity_mm=-5.0,
+            )
+
+    def test_state_above_capacity_rejected(self):
+        with self.assertRaises(ValueError):
+            Pot(
+                label="invalido",
+                species=BASIL,
+                substrate=UNIVERSAL_POTTING_SOIL,
+                pot_volume_l=2.0, pot_diameter_cm=18.0,
+                location=Location.OUTDOOR,
+                planting_date=date(2026, 4, 1),
+                saucer_capacity_mm=10.0,
+                saucer_state_mm=15.0,  # > capacity
+            )
+
+    def test_negative_state_rejected(self):
+        with self.assertRaises(ValueError):
+            Pot(
+                label="invalido",
+                species=BASIL,
+                substrate=UNIVERSAL_POTTING_SOIL,
+                pot_volume_l=2.0, pot_diameter_cm=18.0,
+                location=Location.OUTDOOR,
+                planting_date=date(2026, 4, 1),
+                saucer_capacity_mm=10.0,
+                saucer_state_mm=-1.0,
+            )
+
+    def test_zero_capacity_rejected(self):
+        # Una capacità di zero significa "nessun sottovoto"; in tal caso
+        # la convenzione è impostare saucer_capacity_mm=None, non zero.
+        with self.assertRaises(ValueError):
+            Pot(
+                label="invalido",
+                species=BASIL,
+                substrate=UNIVERSAL_POTTING_SOIL,
+                pot_volume_l=2.0, pot_diameter_cm=18.0,
+                location=Location.OUTDOOR,
+                planting_date=date(2026, 4, 1),
+                saucer_capacity_mm=0.0,
+            )
+
+    def test_negative_capillary_rate_rejected(self):
+        with self.assertRaises(ValueError):
+            Pot(
+                label="invalido",
+                species=BASIL,
+                substrate=UNIVERSAL_POTTING_SOIL,
+                pot_volume_l=2.0, pot_diameter_cm=18.0,
+                location=Location.OUTDOOR,
+                planting_date=date(2026, 4, 1),
+                saucer_capacity_mm=10.0,
+                saucer_capillary_rate=-0.1,
+            )
+
+
+def _make_pot_with_saucer(
+    saucer_state_mm: float = 0.0,
+    state_mm: float = -1.0,
+) -> Pot:
+    """Helper: vaso di basilico con sottovoto da 10 mm."""
+    return Pot(
+        label="basil-saucer",
+        species=BASIL,
+        substrate=UNIVERSAL_POTTING_SOIL,
+        pot_volume_l=2.0,
+        pot_diameter_cm=18.0,
+        location=Location.OUTDOOR,
+        planting_date=date(2026, 4, 1),
+        state_mm=state_mm,
+        saucer_capacity_mm=10.0,
+        saucer_state_mm=saucer_state_mm,
+    )
+
+
+class TestSaucerCapturesDrainage(unittest.TestCase):
+    """
+    Effetto chiave del sottovaso: cattura il drenaggio invece di
+    perderlo definitivamente.
+    """
+
+    def test_overflow_irrigation_fills_saucer(self):
+        # Vaso a FC; aggiungo 8 mm di pioggia: tutto va a drenaggio
+        # (perché sopra FC); il drenaggio viene catturato dal sottovoto.
+        pot = _make_pot_with_saucer()
+        # Stato iniziale: vaso a FC (default), sottovoto vuoto.
+        initial_fc = pot.fc_mm
+        eval_date = date(2026, 4, 15)
+        # Saturo il vaso con un input molto grande.
+        result = pot.apply_balance_step(
+            et_0_mm=0.0, water_input_mm=8.0, current_date=eval_date,
+        )
+        # Il vaso resta a FC (il surplus va a drenaggio).
+        self.assertAlmostEqual(pot.state_mm, initial_fc, places=2)
+        self.assertGreater(result.drainage, 0.0)
+        # Il sottovoto ora ha acqua, fino al limite della sua capacità.
+        self.assertGreater(pot.saucer_state_mm, 0.0)
+        self.assertLessEqual(pot.saucer_state_mm, pot.saucer_capacity_mm)
+
+    def test_overflow_above_saucer_capacity_is_lost(self):
+        # Drenaggio enorme: il sottovaso si riempie fino al massimo,
+        # l'eccedenza è persa (non c'è ritorno nel modello).
+        pot = _make_pot_with_saucer(saucer_state_mm=8.0)  # già quasi pieno
+        eval_date = date(2026, 4, 15)
+        # Forza un drenaggio enorme.
+        pot.apply_balance_step(
+            et_0_mm=0.0, water_input_mm=20.0, current_date=eval_date,
+        )
+        # Il sottovaso è a capacità (10 mm), non oltre.
+        self.assertEqual(pot.saucer_state_mm, 10.0)
+
+
+class TestCapillaryRise(unittest.TestCase):
+    """
+    Effetto della risalita capillare: il sottovaso reidrata il
+    substrato nei giorni successivi.
+    """
+
+    def test_dry_pot_with_full_saucer_recovers(self):
+        # Vaso secco (state_mm bassa) e sottovaso pieno: il giorno
+        # dopo, anche senza pioggia o irrigazione, lo stato del vaso
+        # cresce per risalita capillare. È l'effetto fisico cardine.
+        pot = _make_pot_with_saucer(saucer_state_mm=10.0, state_mm=15.0)
+        # Per evitare che ET₀ confonda il test (con et_0=5 il vaso
+        # consuma di più del sottovaso che gli porta), uso et_0=0.
+        eval_date = date(2026, 4, 15)
+        state_before = pot.state_mm
+        saucer_before = pot.saucer_state_mm
+        pot.apply_balance_step(
+            et_0_mm=0.0, water_input_mm=0.0, current_date=eval_date,
+        )
+        # Il vaso si è idratato.
+        self.assertGreater(pot.state_mm, state_before)
+        # Il sottovaso è diminuito.
+        self.assertLess(pot.saucer_state_mm, saucer_before)
+        # Conservazione: l'aumento del vaso corrisponde alla diminuzione
+        # del sottovaso (meno l'evaporazione del piattino, qui zero
+        # perché et_0=0).
+        delta_pot = pot.state_mm - state_before
+        delta_saucer = saucer_before - pot.saucer_state_mm
+        self.assertAlmostEqual(delta_pot, delta_saucer, places=6)
+
+    def test_saturated_pot_does_not_capillary_rise(self):
+        # Vaso a FC e sottovaso pieno: nessun trasferimento (deficit=0).
+        pot = _make_pot_with_saucer(saucer_state_mm=10.0)  # vaso a FC default
+        eval_date = date(2026, 4, 15)
+        saucer_before = pot.saucer_state_mm
+        pot.apply_balance_step(
+            et_0_mm=0.0, water_input_mm=0.0, current_date=eval_date,
+        )
+        # Il sottovaso non perde acqua per capillarità (et_0=0 anche),
+        # ma neanche per evaporazione perché coef × et_0 = 0.
+        self.assertAlmostEqual(pot.saucer_state_mm, saucer_before, places=6)
+
+
+class TestSaucerVsNoSaucer(unittest.TestCase):
+    """
+    Test integrato: simulazione comparata di due vasi identici, uno
+    con e uno senza sottovaso. Quello con sottovaso deve richiedere
+    meno irrigazioni nel tempo.
+    """
+
+    def test_saucer_extends_autonomy(self):
+        from dataclasses import replace
+
+        # Setup: due vasi identici, uno senza sottovaso e uno con
+        # sottovaso da 10 mm. Stato iniziale: entrambi a FC.
+        pot_no = _make_basil_pot()
+        pot_yes = replace(
+            pot_no,
+            label="con-sottovoto",
+            saucer_capacity_mm=10.0,
+            saucer_state_mm=10.0,  # piattino già pieno (post-irrigazione)
+        )
+
+        # Simulo 14 giorni di asciugatura senza pioggia né irrigazione.
+        # Dopo questo periodo, il vaso con sottovoto deve avere uno
+        # stato idrico maggiore (è stato "rifornito" dal piattino).
+        et_0_daily = 4.0
+        for d in range(14):
+            current_date = date(2026, 4, 15) + __import__("datetime").timedelta(days=d)
+            pot_no.apply_balance_step(et_0_daily, 0.0, current_date)
+            pot_yes.apply_balance_step(et_0_daily, 0.0, current_date)
+
+        # Il vaso con sottovaso ha più acqua residua.
+        self.assertGreater(pot_yes.state_mm, pot_no.state_mm)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,10 @@ from fitosim.science.pot_physics import (
     SunExposure,
     pot_correction_factor,
 )
+from fitosim.science.saucer import (
+    capillary_transfer,
+    saucer_evaporation,
+)
 from fitosim.science.substrate import (
     Substrate,
     circular_pot_surface_area_m2,
@@ -209,6 +213,16 @@ class Pot:
     pot_color: PotColor = PotColor.MEDIUM
     sun_exposure: SunExposure = SunExposure.FULL_SUN
     active_depth_fraction: float = 1.0
+    # ----- Sottovaso (opzionale) -----
+    # Se saucer_capacity_mm è None, il vaso non ha sottovaso e si
+    # comporta esattamente come prima dell'estensione (compatibilità
+    # retroattiva totale). Se ha un valore, il sottovaso è attivo e
+    # i metodi del bilancio orchestrano il trasferimento capillare e
+    # l'evaporazione del piattino.
+    saucer_capacity_mm: Optional[float] = None
+    saucer_state_mm: float = 0.0
+    saucer_capillary_rate: float = 0.4
+    saucer_evap_coef: float = 0.4
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -234,6 +248,37 @@ class Pot:
                     f"Vaso '{self.label}': forma {self.pot_shape.value} "
                     f"richiede pot_width_cm positivo "
                     f"(ricevuto {self.pot_width_cm})."
+                )
+        # Validazione del sottovaso: se la capacità è specificata, deve
+        # essere positiva, e lo stato iniziale non deve eccederla.
+        if self.saucer_capacity_mm is not None:
+            if self.saucer_capacity_mm <= 0:
+                raise ValueError(
+                    f"Vaso '{self.label}': saucer_capacity_mm deve "
+                    f"essere positivo se specificato "
+                    f"(ricevuto {self.saucer_capacity_mm})."
+                )
+            if self.saucer_state_mm < 0:
+                raise ValueError(
+                    f"Vaso '{self.label}': saucer_state_mm non può "
+                    f"essere negativo (ricevuto {self.saucer_state_mm})."
+                )
+            if self.saucer_state_mm > self.saucer_capacity_mm:
+                raise ValueError(
+                    f"Vaso '{self.label}': saucer_state_mm "
+                    f"({self.saucer_state_mm}) eccede "
+                    f"saucer_capacity_mm ({self.saucer_capacity_mm})."
+                )
+            if self.saucer_capillary_rate <= 0:
+                raise ValueError(
+                    f"Vaso '{self.label}': saucer_capillary_rate deve "
+                    f"essere positivo "
+                    f"(ricevuto {self.saucer_capillary_rate})."
+                )
+            if self.saucer_evap_coef < 0:
+                raise ValueError(
+                    f"Vaso '{self.label}': saucer_evap_coef deve "
+                    f"essere ≥ 0 (ricevuto {self.saucer_evap_coef})."
                 )
         # Inizializzazione automatica dello stato a capacità di campo
         # se l'utente non ha fornito un valore esplicito (sentinella -1).
@@ -397,10 +442,30 @@ class Pot:
         """
         Esegue un passo di bilancio idrico (giornaliero) sul vaso.
 
-        Aggiorna `state_mm` in-place e restituisce il `BalanceStepResult`
+        Aggiorna `state_mm` (e, se il sottovaso è presente,
+        `saucer_state_mm`) in-place e restituisce il `BalanceStepResult`
         del passo. La progettazione "side-effect + return" è
         deliberatamente esplicita: il caller vede il risultato (per
         notifiche, log, allerte) e sa che lo stato del vaso è cambiato.
+
+        Sequenza giornaliera con sottovaso
+        ----------------------------------
+
+        Se il vaso ha un sottovaso attivo (`saucer_capacity_mm` non None),
+        la sequenza dei sottopassi giornalieri è:
+
+          1. Il sottovaso perde acqua per evaporazione del piattino,
+             proporzionale a ET₀.
+          2. Il vaso riceve acqua per risalita capillare dal sottovaso,
+             proporzionale al deficit del substrato rispetto a FC.
+          3. Si calcola il bilancio idrico standard del vaso (input
+             meteo + irrigazione → ET_c → drenaggio).
+          4. Il drenaggio del vaso entra nel sottovaso.
+          5. Se il sottovaso eccede la capacità, l'eccesso è overflow
+             definitivamente perso.
+
+        Se il vaso non ha sottovaso, la sequenza si riduce al solo
+        passo 3 — comportamento identico a prima dell'estensione.
 
         Parametri
         ---------
@@ -412,17 +477,65 @@ class Pot:
             efficace), in mm. Non negativo.
         current_date : date
             Data corrente, usata per determinare lo stadio fenologico.
+
+        Ritorna
+        -------
+        BalanceStepResult
+            Il risultato del bilancio del *vaso* (substrato). Lo stato
+            del sottovaso è disponibile direttamente in
+            self.saucer_state_mm dopo la chiamata.
         """
+        has_saucer = self.saucer_capacity_mm is not None
+
+        # === Passi 1-2: dinamica del sottovaso PRIMA del bilancio ===
+        # L'evaporazione e la risalita capillare avvengono "durante la
+        # giornata", e il loro effetto sull'acqua disponibile per la
+        # pianta è già visibile al momento del bilancio. Modellando
+        # questi due flussi prima del bilancio, la pianta "beneficia"
+        # dell'acqua risalita anche nel giorno corrente.
+        capillary_in = 0.0
+        if has_saucer:
+            # Passo 1: il sottovaso evapora.
+            evap = saucer_evaporation(
+                saucer_water_mm=self.saucer_state_mm,
+                et_0_mm=et_0_mm,
+                coef=self.saucer_evap_coef,
+            )
+            self.saucer_state_mm -= evap
+
+            # Passo 2: risalita capillare dal sottovaso al substrato.
+            deficit = max(0.0, self.fc_mm - self.state_mm)
+            capillary_in = capillary_transfer(
+                saucer_water_mm=self.saucer_state_mm,
+                deficit_mm=deficit,
+                rate=self.saucer_capillary_rate,
+            )
+            self.saucer_state_mm -= capillary_in
+
+        # === Passo 3: bilancio standard del vaso ===
+        # L'input d'acqua del vaso include la pioggia/irrigazione
+        # esterna più ciò che è risalito per capillarità dal sottovaso.
         et_c_mm = self.current_et_c(et_0_mm, current_date)
         result = water_balance_step_mm(
             current_mm=self.state_mm,
-            water_input_mm=water_input_mm,
+            water_input_mm=water_input_mm + capillary_in,
             et_c_mm=et_c_mm,
             substrate=self.substrate,
             substrate_depth_mm=self.substrate_depth_mm,
             depletion_fraction=self.species.depletion_fraction,
         )
         self.state_mm = result.new_state
+
+        # === Passi 4-5: il drenaggio finisce nel sottovaso ===
+        if has_saucer:
+            # Il drenaggio in eccesso entra nel piattino, fino al limite
+            # di capacità. L'eccesso oltre capacità trabocca ed è
+            # perso definitivamente (non torna nel modello).
+            self.saucer_state_mm = min(
+                self.saucer_capacity_mm,  # type: ignore[type-var]
+                self.saucer_state_mm + result.drainage,
+            )
+
         return result
 
     def water_to_field_capacity(self) -> float:
