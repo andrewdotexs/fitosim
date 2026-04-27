@@ -206,4 +206,15 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Segreti / variabili d'ambiente
+# Il .env contiene le credenziali API personali (Ecowitt, ecc.) e
+# NON deve mai finire in git: una volta committato resterebbe nello
+# storico per sempre. Il .env.example è invece committato come
+# documentazione strutturata delle variabili attese.
+.env
+.env.local
+.env.*.local
+*.pem
+secrets/
+
 output/
