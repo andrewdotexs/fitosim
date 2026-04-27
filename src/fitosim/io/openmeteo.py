@@ -1,6 +1,21 @@
 """
 Client per l'API Open-Meteo: dati meteorologici reali per fitosim.
 
+NOTA SULLA NUOVA ASTRAZIONE DELLA FASCIA 2
+------------------------------------------
+
+Questo modulo continua a funzionare come prima ed è completamente
+backward-compatible. Per nuovo codice si consiglia tuttavia di
+usare l'adapter ``OpenMeteoEnvironmentSensor`` esposto da
+``fitosim.io.sensors``, che implementa il Protocol uniforme
+``EnvironmentSensor`` insieme agli altri adapter (Ecowitt,
+fixture CSV, e futuri sensori). Quel livello di astrazione
+permette di scrivere codice che funziona con qualsiasi sorgente
+di dati meteo senza dover conoscere i dettagli del singolo
+provider. Le funzioni esposte qui sono comunque la base su cui
+``OpenMeteoEnvironmentSensor`` si appoggia internamente, quindi
+non c'è duplicazione: continueranno a essere mantenute.
+
 Questo è il primo modulo del livello `io/`: il punto in cui fitosim
 smette di operare con dati sintetici inventati e comincia a parlare con
 una fonte meteorologica reale. Open-Meteo (https://open-meteo.com) è un

@@ -1,6 +1,26 @@
 """
 Client per la stazione meteo Ecowitt — letture in tempo reale.
 
+NOTA SULLA NUOVA ASTRAZIONE DELLA FASCIA 2
+------------------------------------------
+
+Questo modulo continua a funzionare come prima ed è completamente
+backward-compatible, incluse le funzioni ``fetch_real_time``,
+``fetch_history`` e ``credentials_from_env``. Per nuovo codice si
+consiglia tuttavia di usare gli adapter esposti da
+``fitosim.io.sensors``: ``EcowittEnvironmentSensor`` per i dati
+meteorologici e ``EcowittWH51SoilSensor`` per le letture θ dei
+sensori di umidità del substrato. Quegli adapter implementano
+i Protocol uniformi ``EnvironmentSensor`` e ``SoilSensor``, che
+permettono di scrivere codice agnostico rispetto al provider.
+
+Le credenziali sono ora lette dalle variabili d'ambiente
+``FITOSIM_ECOWITT_APPLICATION_KEY``, ``FITOSIM_ECOWITT_API_KEY``,
+``FITOSIM_ECOWITT_MAC`` (i nomi senza prefisso ``FITOSIM_``
+continuano a funzionare come fallback con DeprecationWarning).
+Le funzioni esposte qui sono la base su cui i nuovi adapter si
+appoggiano internamente, quindi continueranno a essere mantenute.
+
 Diversamente da Open-Meteo che fornisce dati grigliati su scala
 chilometrica, Ecowitt restituisce le letture *fisiche* della stazione
 installata dall'utente: temperatura, umidità, vento, radiazione solare
@@ -540,14 +560,14 @@ ENV_API_KEY = "ECOWITT_API_KEY"
 ENV_MAC = "ECOWITT_MAC"
 
 
-def credentials_from_env(test=False) -> tuple[str, str, str]:
+def credentials_from_env() -> tuple[str, str, str]:
     """
     Legge le credenziali Ecowitt dalle variabili d'ambiente.
 
     Variabili attese:
-        APPLICATION_KEY
-        API_KEY
-        MAC
+        ECOWITT_APPLICATION_KEY
+        ECOWITT_API_KEY
+        ECOWITT_MAC
 
     Ritorna una tupla `(application_key, api_key, mac)` direttamente
     passabile a `fetch_real_time()` come **kwargs.
@@ -557,9 +577,9 @@ def credentials_from_env(test=False) -> tuple[str, str, str]:
     debugging del setup utente.
     """
     missing = []
-    app_key = os.environ.get("TEST_APPLICATION_KEY" if test else "APPLICATION_KEY")
-    api_key = os.environ.get("TEST_API_KEY" if test else "API_KEY")
-    mac = os.environ.get("TEST_MAC" if test else "MAC")
+    app_key = os.environ.get(ENV_APPLICATION_KEY)
+    api_key = os.environ.get(ENV_API_KEY)
+    mac = os.environ.get(ENV_MAC)
 
     if not app_key:
         missing.append(ENV_APPLICATION_KEY)
