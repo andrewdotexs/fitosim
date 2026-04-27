@@ -47,6 +47,12 @@ from fitosim.science.balance import (
     BalanceStepResult,
     water_balance_step_mm,
 )
+from fitosim.science.dual_kc import (
+    DEFAULT_FEW,
+    evaporation_reduction_coefficient,
+    soil_evaporation_coefficient,
+    update_de,
+)
 from fitosim.science.pot_physics import (
     PotColor,
     PotMaterial,
@@ -223,6 +229,14 @@ class Pot:
     saucer_state_mm: float = 0.0
     saucer_capillary_rate: float = 0.4
     saucer_evap_coef: float = 0.4
+    # ----- Stato del dual-Kc (FAO-56 cap. 7) -----
+    # Cumulative depletion dello strato superficiale del substrato in mm.
+    # Cresce giorno per giorno con l'evaporazione superficiale e si
+    # riduce con gli input idrici. È usato solo quando la specie e il
+    # substrato supportano entrambi il dual-Kc; in caso contrario il
+    # campo è presente ma inerte. Default 0.0 = "substrato appena
+    # bagnato", coerente con l'inizializzazione di state_mm a FC.
+    de_mm: float = 0.0
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -408,22 +422,102 @@ class Pot:
             self.days_since_planting(current_date)
         )
 
+    @property
+    def supports_dual_kc(self) -> bool:
+        """
+        True se il vaso ha tutti i parametri necessari per il modello
+        dual-Kc di FAO-56 cap. 7, ovvero la specie ha i Kcb valorizzati
+        e il substrato ha REW e TEW. Quando questo è vero, current_et_c
+        e apply_balance_step usano il dual-Kc; altrimenti ricadono sul
+        single Kc tradizionale.
+        """
+        return (
+            self.species.supports_dual_kc
+            and self.substrate.rew_mm is not None
+            and self.substrate.tew_mm is not None
+        )
+
+    def _current_et_c_dual_kc(
+        self,
+        et_0_mm: float,
+        current_date: date,
+    ) -> tuple[float, float]:
+        """
+        Calcolo del dual-Kc per il giorno corrente.
+
+        Restituisce una tupla (et_c_total, soil_evaporation), entrambi
+        in mm/giorno. La separazione è utile per chi orchestra
+        apply_balance_step, che ha bisogno di sapere quanta acqua è
+        evaporata dalla superficie per aggiornare De.
+
+        La formula completa è:
+
+            ET_c,act = Kp × (Ks × Kcb + Ke) × ET_0
+            E_actual = Kp × Ke × ET_0  (quota di evaporazione superf.)
+
+        dove Ks modula solo Kcb (traspirazione, dipende dall'umidità
+        del bulk), mentre Ke ha già Kr che modula la disponibilità
+        della superficie.
+        """
+        from fitosim.science.balance import stress_coefficient_ks
+        stage = self.current_stage(current_date)
+        # Recupero Kcb per lo stadio corrente.
+        kcb_map = {
+            PhenologicalStage.INITIAL: self.species.kcb_initial,
+            PhenologicalStage.MID_SEASON: self.species.kcb_mid,
+            PhenologicalStage.LATE_SEASON: self.species.kcb_late,
+        }
+        kcb = kcb_map[stage]
+        # Stress coefficient per la traspirazione (modula solo Kcb).
+        ks = stress_coefficient_ks(
+            current_theta=self.state_theta,
+            substrate=self.substrate,
+            depletion_fraction=self.species.depletion_fraction,
+        )
+        # Coefficiente di riduzione superficiale: dipende da De
+        # corrente e dai parametri REW/TEW del substrato.
+        kr = evaporation_reduction_coefficient(
+            de_mm=self.de_mm,
+            rew_mm=self.substrate.rew_mm,
+            tew_mm=self.substrate.tew_mm,
+        )
+        # Coefficiente di evaporazione superficiale.
+        ke = soil_evaporation_coefficient(kcb=kcb, kr=kr)
+        # ET totale e sua decomposizione.
+        et_c_total = self.kp * (ks * kcb + ke) * et_0_mm
+        soil_evap = self.kp * ke * et_0_mm
+        return et_c_total, soil_evap
+
     def current_et_c(self, et_0_mm: float, current_date: date) -> float:
         """
         Evapotraspirazione reale della coltura nel vaso, in mm/giorno.
 
-        Combina ET₀ del giorno con tutti i moltiplicatori in cascata:
+        Combina ET₀ del giorno con tutti i moltiplicatori in cascata,
+        scegliendo automaticamente tra modello single Kc (default,
+        tradizionale FAO-56 cap. 6) e dual-Kc (FAO-56 cap. 7) in base
+        ai parametri disponibili.
+
+        Single Kc (specie/substrato non supportano dual-Kc):
 
             ET_c,act = Kp × Ks × Kc × ET_0
 
-        dove:
-          Kc viene da `species.kc_for_stage` (biologia della pianta);
-          Ks viene da `actual_et_c` via stress_coefficient_ks (stato idrico);
-          Kp è il coefficiente di vaso (materiale/colore/esposizione).
+        Dual-Kc (specie ha Kcb e substrato ha REW/TEW):
 
-        È la forma "pulita" della chiamata: l'esterno fornisce solo il
-        meteo, tutto il resto è già nel vaso.
+            ET_c,act = Kp × (Ks × Kcb + Ke) × ET_0
+
+        dove:
+          Kc/Kcb vengono dalla biologia della pianta (Species);
+          Ke è dinamico nel tempo (dipende da De e dai parametri del
+            substrato, calcolato via il modulo science/dual_kc.py);
+          Ks viene dallo stato idrico del bulk substrato;
+          Kp è il coefficiente di vaso (materiale/colore/esposizione).
         """
+        if self.supports_dual_kc:
+            et_c_total, _soil_evap = self._current_et_c_dual_kc(
+                et_0_mm=et_0_mm, current_date=current_date,
+            )
+            return et_c_total
+        # Cammino tradizionale single Kc.
         et_c_base = actual_et_c(
             species=self.species,
             stage=self.current_stage(current_date),
@@ -515,7 +609,18 @@ class Pot:
         # === Passo 3: bilancio standard del vaso ===
         # L'input d'acqua del vaso include la pioggia/irrigazione
         # esterna più ciò che è risalito per capillarità dal sottovaso.
-        et_c_mm = self.current_et_c(et_0_mm, current_date)
+        # Per il dual-Kc abbiamo bisogno anche della componente di
+        # evaporazione superficiale, che useremo dopo per aggiornare
+        # de_mm. Quando il dual-Kc non è attivo questa componente non
+        # serve e il cammino è quello tradizionale.
+        if self.supports_dual_kc:
+            et_c_mm, soil_evap_mm = self._current_et_c_dual_kc(
+                et_0_mm=et_0_mm, current_date=current_date,
+            )
+        else:
+            et_c_mm = self.current_et_c(et_0_mm, current_date)
+            soil_evap_mm = 0.0  # non usato nel cammino single Kc
+
         result = water_balance_step_mm(
             current_mm=self.state_mm,
             water_input_mm=water_input_mm + capillary_in,
@@ -534,6 +639,21 @@ class Pot:
             self.saucer_state_mm = min(
                 self.saucer_capacity_mm,  # type: ignore[type-var]
                 self.saucer_state_mm + result.drainage,
+            )
+
+        # === Passo 6: aggiornamento di De per il dual-Kc ===
+        # Se il dual-Kc è attivo, aggiorniamo la cumulative depletion
+        # dello strato superficiale. Solo l'input esterno (water_input_mm
+        # = pioggia + irrigazione) ricarica la superficie; la risalita
+        # capillare entra dal basso e va al bulk substrato, non alla
+        # superficie. È una semplificazione ragionevole per i vasi
+        # domestici.
+        if self.supports_dual_kc:
+            self.de_mm = update_de(
+                de_mm_previous=self.de_mm,
+                evaporation_mm=soil_evap_mm,
+                water_input_mm=water_input_mm,
+                tew_mm=self.substrate.tew_mm,  # type: ignore[arg-type]
             )
 
         return result

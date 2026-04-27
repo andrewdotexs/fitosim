@@ -720,5 +720,64 @@ class TestBaseMaterialCatalog(unittest.TestCase):
                 self.assertGreater(len(mat.description), 30)
 
 
+# =======================================================================
+#  Substrate con parametri dual-Kc (REW e TEW)
+# =======================================================================
+#
+# I parametri REW (readily evaporable water) e TEW (total evaporable
+# water) sono opzionali sul Substrate. Quando entrambi sono valorizzati,
+# il substrato supporta il modello dual-Kc di FAO-56 cap. 7. Quando
+# entrambi sono None, il substrato funziona come prima (single Kc).
+
+class TestSubstrateDualKcParameters(unittest.TestCase):
+    """Validazione dei parametri opzionali REW e TEW."""
+
+    def test_substrate_without_dual_kc_params(self):
+        # Il default è "nessun supporto dual-Kc": entrambi i parametri
+        # sono None. Tutti i substrati del catalogo esistente sono
+        # in questo stato per backward compatibility.
+        s = Substrate(name="test", theta_fc=0.40, theta_pwp=0.10)
+        self.assertIsNone(s.rew_mm)
+        self.assertIsNone(s.tew_mm)
+
+    def test_substrate_with_dual_kc_params(self):
+        # Substrato che supporta esplicitamente il dual-Kc.
+        s = Substrate(name="con_dual_kc", theta_fc=0.40,
+                      theta_pwp=0.10, rew_mm=9.0, tew_mm=22.0)
+        self.assertEqual(s.rew_mm, 9.0)
+        self.assertEqual(s.tew_mm, 22.0)
+
+    def test_only_rew_specified_rejected(self):
+        # Mismatching: solo REW senza TEW non ha senso.
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      rew_mm=9.0)
+
+    def test_only_tew_specified_rejected(self):
+        # Mismatching: solo TEW senza REW non ha senso.
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      tew_mm=22.0)
+
+    def test_rew_must_be_less_than_tew(self):
+        # Vincolo fisico: la fase 1 di asciugamento (REW) deve essere
+        # uno strato più sottile della totale evaporabile (TEW).
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      rew_mm=22.0, tew_mm=9.0)
+
+    def test_rew_equal_to_tew_rejected(self):
+        # Anche l'uguaglianza è rifiutata: significherebbe assenza di
+        # fase 2 di asciugamento, fisicamente non sensato.
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      rew_mm=15.0, tew_mm=15.0)
+
+    def test_negative_rew_rejected(self):
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      rew_mm=-1.0, tew_mm=22.0)
+
+
 if __name__ == "__main__":
     unittest.main()

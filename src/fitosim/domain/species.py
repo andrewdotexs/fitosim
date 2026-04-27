@@ -132,6 +132,15 @@ class Species:
     initial_stage_days: int = 30
     mid_stage_days: int = 60
     notes: str = ""
+    # ----- Coefficienti basali per il modello dual-Kc -----
+    # Quando sono None la specie usa il single Kc tradizionale; quando
+    # sono valorizzati il motore (in presenza anche di REW/TEW sul
+    # substrato) usa il modello dual-Kc di FAO-56 cap. 7. I Kcb sono
+    # tipicamente 0.10-0.25 più bassi dei corrispondenti Kc, perché
+    # tolgono la componente di evaporazione superficiale.
+    kcb_initial: float | None = None
+    kcb_mid: float | None = None
+    kcb_late: float | None = None
 
     def __post_init__(self) -> None:
         # Validazione dei Kc: scorriamo la terna con zip per un
@@ -157,6 +166,48 @@ class Species:
                 f"mid_stage_days devono essere positivi. Ricevuti: "
                 f"{self.initial_stage_days}, {self.mid_stage_days}."
             )
+        # Validazione dei Kcb: o sono tutti None (single Kc), o tutti
+        # valorizzati e fisicamente sensati (positivi, sotto i Kc).
+        kcb_values = (self.kcb_initial, self.kcb_mid, self.kcb_late)
+        kcb_present = sum(1 for k in kcb_values if k is not None)
+        if 0 < kcb_present < 3:
+            raise ValueError(
+                f"Specie '{self.common_name}': i Kcb devono essere "
+                f"specificati tutti e tre o nessuno. Ricevuti: "
+                f"kcb_initial={self.kcb_initial}, "
+                f"kcb_mid={self.kcb_mid}, kcb_late={self.kcb_late}."
+            )
+        if kcb_present == 3:
+            for name, kcb_value, kc_value in (
+                ("kcb_initial", self.kcb_initial, self.kc_initial),
+                ("kcb_mid", self.kcb_mid, self.kc_mid),
+                ("kcb_late", self.kcb_late, self.kc_late),
+            ):
+                if not 0.0 < kcb_value < 2.0:
+                    raise ValueError(
+                        f"Specie '{self.common_name}': {name}={kcb_value} "
+                        f"è fuori range plausibile (0, 2)."
+                    )
+                if kcb_value > kc_value:
+                    raise ValueError(
+                        f"Specie '{self.common_name}': {name}={kcb_value} "
+                        f"non può eccedere il corrispondente Kc="
+                        f"{kc_value} (il basale è la sola traspirazione, "
+                        f"deve essere ≤ del Kc totale)."
+                    )
+
+    @property
+    def supports_dual_kc(self) -> bool:
+        """
+        True se la specie ha tutti i Kcb valorizzati e supporta quindi
+        il modello dual-Kc. Usato dal motore per decidere quale
+        cammino di calcolo seguire.
+        """
+        return (
+            self.kcb_initial is not None
+            and self.kcb_mid is not None
+            and self.kcb_late is not None
+        )
 
     def stage_at_day(self, days_since_planting: int) -> "PhenologicalStage":
         """

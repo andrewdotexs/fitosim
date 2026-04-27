@@ -82,6 +82,13 @@ class Substrate:
     theta_fc: float
     theta_pwp: float
     description: str = ""
+    # ----- Parametri per il modello dual-Kc (FAO-56 cap. 7) -----
+    # Sono opzionali: quando entrambi sono None, il substrato non
+    # supporta il dual-Kc e il motore ricade sul single Kc tradizionale.
+    # Quando entrambi sono valorizzati, la dinamica di evaporazione
+    # superficiale viene tracciata esplicitamente.
+    rew_mm: float | None = None  # readily evaporable water (mm)
+    tew_mm: float | None = None  # total evaporable water (mm)
 
     def __post_init__(self) -> None:
         # Controllo di consistenza fisica sui due parametri idrici.
@@ -94,6 +101,20 @@ class Substrate:
                 f"θ_FC ({self.theta_fc}) ≤ 1. "
                 f"Controlla i parametri."
             )
+        # Validazione dei parametri dual-Kc: o sono entrambi None
+        # (single Kc), o entrambi presenti con REW < TEW e positivi.
+        if (self.rew_mm is None) != (self.tew_mm is None):
+            raise ValueError(
+                f"Substrato '{self.name}': REW e TEW devono essere "
+                f"specificati entrambi o nessuno. Ricevuti: "
+                f"REW={self.rew_mm}, TEW={self.tew_mm}."
+            )
+        if self.rew_mm is not None and self.tew_mm is not None:
+            if not 0.0 < self.rew_mm < self.tew_mm:
+                raise ValueError(
+                    f"Substrato '{self.name}': vincolo violato "
+                    f"0 < REW ({self.rew_mm}) < TEW ({self.tew_mm})."
+                )
 
 
 # =======================================================================

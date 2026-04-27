@@ -248,5 +248,84 @@ class TestCatalogIntegrity(unittest.TestCase):
         self.assertGreaterEqual(ROSEMARY.depletion_fraction, 0.55)
 
 
+# =======================================================================
+#  Species con parametri dual-Kc (Kcb)
+# =======================================================================
+#
+# I coefficienti basali Kcb sono opzionali: quando tutti e tre sono
+# valorizzati, la specie supporta il modello dual-Kc che separa
+# traspirazione (Kcb) ed evaporazione superficiale (Ke). Quando sono
+# None, la specie usa il single Kc tradizionale.
+
+class TestSpeciesDualKcParameters(unittest.TestCase):
+    """Validazione dei parametri opzionali Kcb."""
+
+    def test_species_without_kcb_does_not_support_dual_kc(self):
+        # Default: tutti i Kcb sono None, supports_dual_kc è False.
+        # Tutte le specie del catalogo esistente sono in questo stato.
+        s = Species(
+            common_name="test",
+            scientific_name="Test species",
+            kc_initial=0.5, kc_mid=1.0, kc_late=0.7,
+        )
+        self.assertIsNone(s.kcb_initial)
+        self.assertFalse(s.supports_dual_kc)
+
+    def test_species_with_all_kcb_supports_dual_kc(self):
+        # Specie con tutti i Kcb valorizzati: supports_dual_kc è True.
+        s = Species(
+            common_name="test",
+            scientific_name="Test species",
+            kc_initial=0.5, kc_mid=1.0, kc_late=0.7,
+            kcb_initial=0.3, kcb_mid=0.85, kcb_late=0.55,
+        )
+        self.assertTrue(s.supports_dual_kc)
+
+    def test_partial_kcb_rejected(self):
+        # Specificare solo alcuni Kcb senza gli altri non ha senso:
+        # il modello dual-Kc richiede tutti e tre gli stadi coperti.
+        with self.assertRaises(ValueError):
+            Species(
+                common_name="test",
+                scientific_name="Test",
+                kc_initial=0.5, kc_mid=1.0, kc_late=0.7,
+                kcb_initial=0.3,  # mancano kcb_mid e kcb_late
+            )
+
+    def test_kcb_above_kc_rejected(self):
+        # Vincolo fisico: Kcb (sola traspirazione) deve essere ≤ Kc
+        # (totale: traspirazione + evaporazione media).
+        with self.assertRaises(ValueError):
+            Species(
+                common_name="test",
+                scientific_name="Test",
+                kc_initial=0.5, kc_mid=1.0, kc_late=0.7,
+                kcb_initial=0.6,  # > kc_initial!
+                kcb_mid=0.85, kcb_late=0.55,
+            )
+
+    def test_kcb_out_of_range_rejected(self):
+        # Anche Kcb deve essere in (0, 2).
+        with self.assertRaises(ValueError):
+            Species(
+                common_name="test",
+                scientific_name="Test",
+                kc_initial=0.5, kc_mid=1.0, kc_late=0.7,
+                kcb_initial=0.0,  # zero non è valido
+                kcb_mid=0.85, kcb_late=0.55,
+            )
+
+    def test_kcb_typical_values_accepted(self):
+        # Valori tipici per il basilico: Kcb ~0.10 più bassi dei Kc
+        # per ortive in vaso secondo FAO-56 cap. 7.
+        s = Species(
+            common_name="basilico",
+            scientific_name="Ocimum basilicum",
+            kc_initial=0.50, kc_mid=1.10, kc_late=0.85,
+            kcb_initial=0.35, kcb_mid=1.00, kcb_late=0.75,
+        )
+        self.assertTrue(s.supports_dual_kc)
+
+
 if __name__ == "__main__":
     unittest.main()

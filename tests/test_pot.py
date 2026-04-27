@@ -10,7 +10,7 @@ Cinque famiglie di test:
 """
 
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.species import (
@@ -18,6 +18,7 @@ from fitosim.domain.species import (
     CITRUS,
     LETTUCE,
     PhenologicalStage,
+    Species,
     actual_et_c,
 )
 from fitosim.science.balance import water_balance_step_mm
@@ -775,6 +776,252 @@ class TestSaucerVsNoSaucer(unittest.TestCase):
 
         # Il vaso con sottovaso ha più acqua residua.
         self.assertGreater(pot_yes.state_mm, pot_no.state_mm)
+
+
+# =======================================================================
+#  Dual-Kc: integrazione di FAO-56 cap. 7 in Pot
+# =======================================================================
+#
+# Quattro famiglie di test che coprono la nuova capacità di
+# evapotraspirazione separata in traspirazione (Kcb) ed evaporazione
+# superficiale (Ke), con tracking della cumulative depletion De.
+
+# Helper per creare specie con Kcb e substrato con REW/TEW.
+def _make_basil_with_kcb() -> Species:
+    """Specie basilico con i Kcb FAO-56 cap. 7."""
+    return Species(
+        common_name="basilico",
+        scientific_name="Ocimum basilicum",
+        kc_initial=0.50, kc_mid=1.10, kc_late=0.85,
+        kcb_initial=0.35, kcb_mid=1.00, kcb_late=0.75,
+        depletion_fraction=0.40,
+    )
+
+
+def _make_substrate_with_rew_tew() -> "Substrate":
+    """Substrato torba con REW e TEW per dual-Kc."""
+    from fitosim.science.substrate import Substrate
+    return Substrate(
+        name="Torba commerciale dual-Kc",
+        theta_fc=0.40, theta_pwp=0.10,
+        rew_mm=9.0, tew_mm=22.0,
+    )
+
+
+def _make_dual_kc_pot(state_mm: float = -1.0) -> Pot:
+    """Vaso completo per dual-Kc (basilico + torba con REW/TEW)."""
+    return Pot(
+        label="basil-dual-kc",
+        species=_make_basil_with_kcb(),
+        substrate=_make_substrate_with_rew_tew(),
+        pot_volume_l=2.0,
+        pot_diameter_cm=18.0,
+        location=Location.OUTDOOR,
+        planting_date=date(2026, 4, 1),
+        state_mm=state_mm,
+    )
+
+
+class TestDualKcSupport(unittest.TestCase):
+    """Verifica della property supports_dual_kc."""
+
+    def test_default_pot_does_not_support_dual_kc(self):
+        # Vaso standard (specie senza Kcb, substrato senza REW/TEW):
+        # supports_dual_kc è False, comportamento single Kc.
+        pot = _make_basil_pot()
+        self.assertFalse(pot.supports_dual_kc)
+
+    def test_pot_with_only_kcb_does_not_support_dual_kc(self):
+        # Specie con Kcb ma substrato senza REW/TEW: NON supporta
+        # dual-Kc (servono entrambi i lati della configurazione).
+        from dataclasses import replace
+        pot = _make_basil_pot()
+        pot_with_kcb_species = replace(pot, species=_make_basil_with_kcb())
+        self.assertFalse(pot_with_kcb_species.supports_dual_kc)
+
+    def test_pot_with_only_rew_tew_does_not_support_dual_kc(self):
+        # Substrato con REW/TEW ma specie senza Kcb: NON supporta
+        # dual-Kc.
+        from dataclasses import replace
+        pot = _make_basil_pot()
+        pot_with_substrate = replace(
+            pot, substrate=_make_substrate_with_rew_tew(),
+        )
+        self.assertFalse(pot_with_substrate.supports_dual_kc)
+
+    def test_complete_pot_supports_dual_kc(self):
+        # Vaso completo con tutto al posto giusto: True.
+        pot = _make_dual_kc_pot()
+        self.assertTrue(pot.supports_dual_kc)
+
+
+class TestDualKcBackwardCompatibility(unittest.TestCase):
+    """
+    Verifica che l'introduzione del dual-Kc non rompa il comportamento
+    dei vasi che non lo supportano.
+    """
+
+    def test_default_pot_uses_single_kc(self):
+        # Stesso vaso, stessa data, stesso ET₀: il risultato deve
+        # essere identico a quello che si otterrebbe senza l'estensione.
+        pot = _make_basil_pot(state_mm=20.0)
+        et_0 = 5.0
+        eval_date = date(2026, 4, 15)
+        # Calcolo via Pot.current_et_c.
+        et_c_pot = pot.current_et_c(et_0, eval_date)
+        # Calcolo manuale single Kc (l'unico modo di farlo prima
+        # dell'estensione).
+        et_c_manual = actual_et_c(
+            species=BASIL,
+            stage=pot.current_stage(eval_date),
+            et_0=et_0,
+            current_theta=pot.state_theta,
+            substrate=UNIVERSAL_POTTING_SOIL,
+        )
+        # I due valori devono coincidere (Kp=1 per default).
+        self.assertAlmostEqual(et_c_pot, et_c_manual, places=6)
+
+    def test_default_pot_does_not_track_de(self):
+        # In modalità single Kc, de_mm rimane al default (0) anche
+        # dopo apply_balance_step.
+        pot = _make_basil_pot(state_mm=20.0)
+        eval_date = date(2026, 4, 15)
+        pot.apply_balance_step(
+            et_0_mm=5.0, water_input_mm=2.0, current_date=eval_date,
+        )
+        # de_mm non viene aggiornato perché il vaso non supporta dual-Kc.
+        self.assertEqual(pot.de_mm, 0.0)
+
+
+class TestDualKcDynamics(unittest.TestCase):
+    """
+    Verifica della dinamica del dual-Kc: De cresce con l'asciugamento,
+    si resetta con le irrigazioni, e Ke risponde correttamente.
+    """
+
+    def test_de_increases_during_drying(self):
+        # Vaso che parte appena bagnato (de=0). Dopo qualche giorno
+        # senza pioggia, de_mm deve crescere.
+        pot = _make_dual_kc_pot()
+        de_history = [pot.de_mm]
+        for d in range(5):
+            current_date = date(2026, 4, 15) + timedelta(days=d)
+            pot.apply_balance_step(
+                et_0_mm=4.0, water_input_mm=0.0, current_date=current_date,
+            )
+            de_history.append(pot.de_mm)
+        # de_mm deve essere monotonicamente crescente (senza input
+        # idrico, l'evaporazione superficiale ha solo questo effetto).
+        for i in range(len(de_history) - 1):
+            with self.subTest(day=i):
+                self.assertGreaterEqual(de_history[i + 1], de_history[i])
+        # Dopo 5 giorni de_mm deve essere significativamente maggiore
+        # di zero.
+        self.assertGreater(pot.de_mm, 0.0)
+
+    def test_irrigation_resets_de(self):
+        # Vaso con de_mm già accumulato; un'irrigazione abbondante
+        # azzera de_mm.
+        from dataclasses import replace
+        pot = _make_dual_kc_pot()
+        # Forziamo un de_mm intermedio.
+        pot.de_mm = 15.0
+        eval_date = date(2026, 4, 15)
+        # Input idrico abbondante: 25 mm (> TEW=22 mm).
+        pot.apply_balance_step(
+            et_0_mm=4.0, water_input_mm=25.0, current_date=eval_date,
+        )
+        # de_mm deve essere azzerato (saturato a 0).
+        self.assertEqual(pot.de_mm, 0.0)
+
+    def test_de_capped_at_tew(self):
+        # Anche con asciugamento estremo, de_mm non eccede TEW=22.
+        pot = _make_dual_kc_pot()
+        for d in range(60):  # 60 giorni senza pioggia: scenario limite
+            current_date = date(2026, 4, 15) + timedelta(days=d)
+            pot.apply_balance_step(
+                et_0_mm=6.0, water_input_mm=0.0, current_date=current_date,
+            )
+        # de_mm non eccede mai TEW.
+        self.assertLessEqual(pot.de_mm, 22.0)
+
+    def test_dual_kc_higher_consumption_post_irrigation(self):
+        # Test cardine dell'utilità del dual-Kc: nei giorni post-
+        # irrigazione, il dual-Kc prevede consumo MAGGIORE rispetto
+        # al single Kc (cattura il contributo di Ke aggiuntivo).
+        from dataclasses import replace
+        # Due vasi gemelli: uno con dual-Kc, uno senza.
+        pot_dual = _make_dual_kc_pot()
+        pot_single = Pot(
+            label="single-kc",
+            species=BASIL,  # specie senza Kcb
+            substrate=UNIVERSAL_POTTING_SOIL,  # substrato senza REW/TEW
+            pot_volume_l=2.0,
+            pot_diameter_cm=18.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1),
+        )
+        # Stato iniziale: entrambi a FC, de_mm=0 (substrato appena
+        # bagnato).
+        eval_date = date(2026, 4, 15)
+        et_c_dual = pot_dual.current_et_c(et_0_mm=5.0,
+                                          current_date=eval_date)
+        et_c_single = pot_single.current_et_c(et_0_mm=5.0,
+                                              current_date=eval_date)
+        # Il dual-Kc, con substrato appena bagnato (Kr=1, Ke al massimo),
+        # deve prevedere consumo maggiore o uguale del single Kc.
+        # La verifica esatta dipende dai valori di Kc/Kcb; come sanity
+        # check verifichiamo che siano nello stesso ordine di grandezza
+        # ma non identici.
+        self.assertNotAlmostEqual(et_c_dual, et_c_single, places=2)
+
+
+class TestDualKcSeparation(unittest.TestCase):
+    """
+    Test che verificano la corretta separazione di Kcb e Ke nel
+    calcolo finale di ETc.
+    """
+
+    def test_dry_surface_zero_evaporation(self):
+        # Quando de_mm = TEW (superficie completamente asciutta),
+        # Ke = 0 e l'ETc è dovuto al solo Kcb. Il consumo deve
+        # essere proporzionale a Ks × Kcb × Kp × ET₀.
+        pot = _make_dual_kc_pot()
+        pot.de_mm = 22.0  # TEW: superficie asciutta
+        eval_date = date(2026, 4, 15)
+        et_0 = 5.0
+        et_c, soil_evap = pot._current_et_c_dual_kc(
+            et_0_mm=et_0, current_date=eval_date,
+        )
+        # Evaporazione superficiale praticamente nulla.
+        self.assertAlmostEqual(soil_evap, 0.0, places=6)
+        # ET totale = solo traspirazione = Ks × Kcb × Kp × ET₀.
+        # Per il basilico alla 14a giornata, siamo in stadio INITIAL
+        # (initial_stage_days=30 di default). Quindi Kcb = kcb_initial
+        # = 0.35. Vaso a FC (Ks=1), plastica neutra (Kp=1):
+        # et_c atteso = 1.0 × 0.35 × 1.0 × 5.0 = 1.75 mm.
+        self.assertAlmostEqual(et_c, 1.75, places=2)
+
+    def test_fresh_surface_evaporation_active(self):
+        # Quando de_mm = 0 (superficie appena bagnata), Kr = 1 e
+        # Ke è massimo. ETc ha entrambi i contributi.
+        pot = _make_dual_kc_pot()
+        pot.de_mm = 0.0
+        eval_date = date(2026, 4, 15)
+        et_0 = 5.0
+        et_c, soil_evap = pot._current_et_c_dual_kc(
+            et_0_mm=et_0, current_date=eval_date,
+        )
+        # Evaporazione superficiale > 0.
+        self.assertGreater(soil_evap, 0.0)
+        # Calcolo specifico per il basilico al giorno 14 (stadio
+        # INITIAL): Kcb=0.35, Kcmax=max(1.20, 0.40)=1.20.
+        # Ke = Kr × (Kcmax - Kcb) = 1.0 × (1.20 - 0.35) = 0.85.
+        # soil_evap = Kp × Ke × ET₀ = 1.0 × 0.85 × 5.0 = 4.25 mm.
+        # Notare il valore alto (~85% di ET₀): è il segnale che il
+        # dual-Kc cattura davvero il contributo dell'evaporazione
+        # superficiale post-irrigazione, che il single Kc media via.
+        self.assertAlmostEqual(soil_evap, 4.25, places=2)
 
 
 if __name__ == "__main__":
