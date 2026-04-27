@@ -134,6 +134,82 @@ class PotShape(Enum):
     """Vaso a base ellittica (planter ovali, terrine)."""
 
 
+@dataclass(frozen=True)
+class SensorUpdateResult:
+    """
+    Risultato strutturato dell'aggiornamento del vaso da una lettura
+    del sensore di umidità.
+
+    Quando si chiama `Pot.update_from_sensor(theta_observed)`, il vaso
+    confronta la propria previsione corrente con l'osservazione del
+    sensore, calcola la discrepanza, e si aggiorna per allinearsi alla
+    realtà. Questo oggetto raccoglie tutti i dati prodotti durante
+    quell'operazione, in modo che il chiamante possa fare logging,
+    detezione di drift, allerta automatica, o qualunque altra azione.
+
+    Convenzione del segno della discrepanza
+    ----------------------------------------
+    `discrepancy_theta = observed - predicted` (e analogamente per mm).
+
+      Valore POSITIVO: il sensore vede più acqua del previsto. Possibili
+        cause: il modello ha sovrastimato il consumo, c'è stato un
+        evento di bagnatura non registrato (pioggia improvvisa, vicino
+        che ha innaffiato, etc.), oppure il θ_FC effettivo è superiore
+        a quello che il modello sta usando.
+
+      Valore NEGATIVO: il sensore vede meno acqua del previsto. Possibili
+        cause: il modello ha sottostimato il consumo (giornata più
+        calda/ventosa di quanto ET₀ catturasse), oppure il θ_FC
+        effettivo è inferiore a quello che il modello sta usando.
+
+    Una serie storica di queste discrepanze è il segnale principale
+    per detectare la necessità di una ricalibrazione dei parametri
+    del substrato.
+
+    Attributi
+    ---------
+    predicted_theta : float
+        Stato θ del vaso secondo il modello, prima dell'aggiornamento.
+    observed_theta : float
+        Lettura del sensore, in θ.
+    predicted_mm : float
+        Stesso predicted_theta ma espresso in mm di colonna d'acqua.
+    observed_mm : float
+        Stesso observed_theta ma espresso in mm di colonna d'acqua.
+    discrepancy_theta : float
+        observed_theta - predicted_theta (con segno).
+    discrepancy_mm : float
+        observed_mm - predicted_mm (con segno).
+    relative_error_pct : float
+        (discrepancy_mm / predicted_mm) × 100, con segno. Vale 0 se
+        predicted_mm è zero.
+    """
+
+    predicted_theta: float
+    observed_theta: float
+    predicted_mm: float
+    observed_mm: float
+    discrepancy_theta: float
+    discrepancy_mm: float
+    relative_error_pct: float
+
+    @property
+    def absolute_error_mm(self) -> float:
+        """Errore assoluto in mm, sempre non-negativo."""
+        return abs(self.discrepancy_mm)
+
+    @property
+    def is_significant(self) -> bool:
+        """
+        True se la discrepanza supera la soglia tipica del rumore del
+        sensore. Usa una soglia di 0.02 in θ (corrisponde a ~2 deviazioni
+        standard del rumore tipico del WH51 dopo aggregazione giornaliera).
+        Discrepanze inferiori sono compatibili col rumore e non vanno
+        considerate "vere" deviazioni.
+        """
+        return abs(self.discrepancy_theta) > 0.02
+
+
 @dataclass
 class Pot:
     """
@@ -657,6 +733,118 @@ class Pot:
             )
 
         return result
+
+    def update_from_sensor(
+        self,
+        theta_observed: float,
+    ) -> SensorUpdateResult:
+        """
+        Allinea lo stato del vaso a una lettura del sensore di umidità,
+        producendo un report diagnostico della discrepanza.
+
+        Il flusso operativo è il seguente: si registra la previsione
+        corrente del modello (state_mm e state_theta), si confronta
+        con la lettura del sensore, si calcola la discrepanza con
+        segno (observed - predicted), si aggiorna state_mm per
+        allinearsi al sensore, e si restituisce un SensorUpdateResult
+        con tutti i dati raccolti durante l'operazione.
+
+        Cosa viene aggiornato e cosa NO
+        --------------------------------
+        Il sensore WH51 misura il contenuto idrico medio del bulk del
+        substrato a una certa profondità. NON ha visibilità su:
+
+          - saucer_state_mm (acqua nel sottovaso): variabile latente
+            del modello, non osservabile dal sensore. Resta invariata.
+          - de_mm (cumulative depletion superficiale del dual-Kc):
+            anche questa è una variabile latente del modello che
+            descrive la dinamica dello strato superficiale, non
+            misurabile dal sensore di bulk. Resta invariata.
+
+        Se il modello ha drift su queste variabili latenti, l'effetto
+        si manifesterà come errori sistematici nelle previsioni
+        successive di state_mm, che le prossime chiamate a
+        update_from_sensor correggeranno progressivamente. È un
+        comportamento robusto ma asintotico, non istantaneo.
+
+        Parametri
+        ---------
+        theta_observed : float
+            Lettura del sensore, in [0, 1]. È il contenuto idrico
+            volumetrico medio del bulk del substrato.
+
+        Ritorna
+        -------
+        SensorUpdateResult
+            Report strutturato della discrepanza prima dell'aggiornamento.
+            Il chiamante può ispezionare i campi (e le property
+            derivate `absolute_error_mm` e `is_significant`) per
+            decidere se loggare, allertare o ricalibrare.
+
+        Solleva
+        -------
+        ValueError
+            Se theta_observed è fuori dal range fisico [0, 1].
+
+        Esempi
+        --------
+        Aggiornamento singolo dopo una lettura del sensore:
+
+            >>> pot = Pot(...)
+            >>> # ... il modello evolve giornalmente ...
+            >>> result = pot.update_from_sensor(theta_observed=0.32)
+            >>> if result.is_significant:
+            ...     print(f"Drift di {result.discrepancy_mm:.1f} mm "
+            ...           f"({result.relative_error_pct:+.1f}%)")
+        """
+        if not 0.0 <= theta_observed <= 1.0:
+            raise ValueError(
+                f"theta_observed deve essere in [0, 1] "
+                f"(ricevuto {theta_observed}). Verifica le unità "
+                f"del sensore: WH51 fornisce direttamente θ "
+                f"adimensionale, ma alcuni firmware lo restituiscono "
+                f"in percentuale (0-100) — in quel caso dividi per 100."
+            )
+
+        # Snapshot della previsione del modello, prima dell'aggiornamento.
+        predicted_theta = self.state_theta
+        predicted_mm = self.state_mm
+        # Conversione lettura → mm usando la profondità effettiva del
+        # substrato (che già tiene conto di active_depth_fraction).
+        observed_mm = theta_observed * self.substrate_depth_mm
+
+        # Discrepanze con la convenzione "observed - predicted":
+        # positivo = sensore vede più acqua del previsto.
+        discrepancy_theta = theta_observed - predicted_theta
+        discrepancy_mm = observed_mm - predicted_mm
+
+        # Errore relativo (con segno). Caso degenere: state_mm=0
+        # (vaso completamente asciutto secondo il modello). In quel
+        # caso il rapporto non è ben definito; ritorniamo 0% come
+        # convenzione, il chiamante può usare absolute_error_mm
+        # invece se lo trova più informativo.
+        if predicted_mm > 0:
+            relative_error_pct = discrepancy_mm / predicted_mm * 100.0
+        else:
+            relative_error_pct = 0.0
+
+        # Aggiornamento dello stato: lo state_mm del vaso viene
+        # sovrascritto con il valore desunto dalla lettura del sensore.
+        # È un overwrite "duro" non una media pesata: assumiamo che
+        # il sensore sia più affidabile della previsione del modello,
+        # che è l'ipotesi naturale per un sensore di buona qualità
+        # come il WH51.
+        self.state_mm = observed_mm
+
+        return SensorUpdateResult(
+            predicted_theta=predicted_theta,
+            observed_theta=theta_observed,
+            predicted_mm=predicted_mm,
+            observed_mm=observed_mm,
+            discrepancy_theta=discrepancy_theta,
+            discrepancy_mm=discrepancy_mm,
+            relative_error_pct=relative_error_pct,
+        )
 
     def water_to_field_capacity(self) -> float:
         """

@@ -1024,5 +1024,245 @@ class TestDualKcSeparation(unittest.TestCase):
         self.assertAlmostEqual(soil_evap, 4.25, places=2)
 
 
+# =======================================================================
+#  update_from_sensor: chiusura del feedback loop sensore-modello
+# =======================================================================
+#
+# Cinque famiglie di test che coprono il nuovo metodo:
+#   1. Comportamento di base (state_mm cambia, valori tornano).
+#   2. Convenzione dei segni (observed - predicted).
+#   3. Interazione con altre parti dello stato (saucer, de_mm).
+#   4. Validazione degli input.
+#   5. Property derivate del SensorUpdateResult.
+
+from fitosim.domain.pot import SensorUpdateResult
+
+
+def _make_simple_pot(state_mm: float = 30.0) -> Pot:
+    """Vaso semplice di basilico per i test del sensore."""
+    return Pot(
+        label="sensor-test",
+        species=BASIL,
+        substrate=UNIVERSAL_POTTING_SOIL,
+        pot_volume_l=2.0,
+        pot_diameter_cm=18.0,
+        location=Location.OUTDOOR,
+        planting_date=date(2026, 4, 1),
+        state_mm=state_mm,
+    )
+
+
+class TestSensorUpdateBasicBehavior(unittest.TestCase):
+    """Comportamento di base dell'aggiornamento da sensore."""
+
+    def test_state_mm_aligned_to_observation(self):
+        # Dopo un update, state_mm deve essere theta_observed × depth.
+        pot = _make_simple_pot(state_mm=30.0)
+        depth = pot.substrate_depth_mm
+        result = pot.update_from_sensor(theta_observed=0.25)
+        # Lo state_mm è stato aggiornato a 0.25 × depth.
+        expected_mm = 0.25 * depth
+        self.assertAlmostEqual(pot.state_mm, expected_mm, places=6)
+
+    def test_returns_well_formed_result(self):
+        # Verifica che il risultato sia un SensorUpdateResult con
+        # tutti i campi popolati.
+        pot = _make_simple_pot(state_mm=30.0)
+        result = pot.update_from_sensor(theta_observed=0.25)
+        self.assertIsInstance(result, SensorUpdateResult)
+        self.assertGreater(result.predicted_theta, 0)
+        self.assertEqual(result.observed_theta, 0.25)
+        self.assertGreater(result.predicted_mm, 0)
+        self.assertGreater(result.observed_mm, 0)
+
+    def test_zero_discrepancy_when_match(self):
+        # Se il sensore conferma esattamente la previsione del modello,
+        # la discrepanza è zero.
+        pot = _make_simple_pot(state_mm=30.0)
+        observed = pot.state_theta  # uso il theta corrente come osservazione
+        result = pot.update_from_sensor(theta_observed=observed)
+        self.assertAlmostEqual(result.discrepancy_theta, 0.0, places=10)
+        self.assertAlmostEqual(result.discrepancy_mm, 0.0, places=10)
+        self.assertAlmostEqual(result.relative_error_pct, 0.0, places=10)
+
+    def test_multiple_updates_in_sequence(self):
+        # Aggiornamenti successivi devono comporsi correttamente: ogni
+        # aggiornamento parte dallo stato già aggiornato dal precedente.
+        pot = _make_simple_pot(state_mm=30.0)
+        depth = pot.substrate_depth_mm
+        # Prima lettura: 0.30
+        r1 = pot.update_from_sensor(theta_observed=0.30)
+        self.assertAlmostEqual(pot.state_mm, 0.30 * depth, places=6)
+        # Seconda lettura: 0.20. Il "previsto" del secondo update deve
+        # essere 0.30 (lo stato lasciato dal primo), non lo stato
+        # iniziale.
+        r2 = pot.update_from_sensor(theta_observed=0.20)
+        self.assertAlmostEqual(r2.predicted_theta, 0.30, places=6)
+        self.assertAlmostEqual(pot.state_mm, 0.20 * depth, places=6)
+
+
+class TestSensorUpdateSignConventions(unittest.TestCase):
+    """Convenzione dei segni: discrepancy = observed - predicted."""
+
+    def test_positive_discrepancy_when_sensor_wetter(self):
+        # Sensore vede più acqua del modello: discrepanza positiva.
+        pot = _make_simple_pot(state_mm=10.0)  # vaso piuttosto secco
+        result = pot.update_from_sensor(theta_observed=0.40)  # sensore wetter
+        self.assertGreater(result.discrepancy_theta, 0)
+        self.assertGreater(result.discrepancy_mm, 0)
+        self.assertGreater(result.relative_error_pct, 0)
+
+    def test_negative_discrepancy_when_sensor_drier(self):
+        # Sensore vede meno acqua del modello: discrepanza negativa.
+        # Setup: vaso a stato alto, lettura bassa.
+        pot = _make_simple_pot(state_mm=50.0)
+        result = pot.update_from_sensor(theta_observed=0.10)
+        self.assertLess(result.discrepancy_theta, 0)
+        self.assertLess(result.discrepancy_mm, 0)
+        self.assertLess(result.relative_error_pct, 0)
+
+    def test_discrepancy_magnitude_correct(self):
+        # Verifica numerica diretta della discrepanza in mm.
+        pot = _make_simple_pot(state_mm=30.0)
+        depth = pot.substrate_depth_mm
+        predicted_theta = pot.state_theta
+        observed_theta = predicted_theta + 0.05  # +0.05 di discrepanza
+        result = pot.update_from_sensor(theta_observed=observed_theta)
+        # discrepancy_theta deve essere esattamente +0.05.
+        self.assertAlmostEqual(result.discrepancy_theta, 0.05, places=10)
+        # discrepancy_mm deve essere 0.05 × depth.
+        self.assertAlmostEqual(result.discrepancy_mm, 0.05 * depth,
+                               places=6)
+
+
+class TestSensorUpdateStateIsolation(unittest.TestCase):
+    """
+    Verifica che update_from_sensor tocchi SOLO state_mm e lasci
+    invariate le altre componenti dello stato (sottovaso, de_mm).
+    """
+
+    def test_saucer_state_not_touched(self):
+        # Vaso con sottovaso popolato. L'update non deve toccare
+        # saucer_state_mm.
+        pot = Pot(
+            label="con-sottovaso",
+            species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0,
+            pot_diameter_cm=18.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1),
+            saucer_capacity_mm=20.0,
+            saucer_state_mm=15.0,  # sottovaso parzialmente pieno
+        )
+        saucer_before = pot.saucer_state_mm
+        pot.update_from_sensor(theta_observed=0.25)
+        # Il sottovaso non è stato toccato.
+        self.assertEqual(pot.saucer_state_mm, saucer_before)
+
+    def test_de_mm_not_touched(self):
+        # Vaso con dual-Kc attivo e de_mm popolato. L'update non deve
+        # toccare de_mm.
+        pot = _make_dual_kc_pot()
+        pot.de_mm = 10.0  # imposta una depletion intermedia
+        de_before = pot.de_mm
+        pot.update_from_sensor(theta_observed=0.30)
+        # de_mm non è stato toccato.
+        self.assertEqual(pot.de_mm, de_before)
+
+
+class TestSensorUpdateValidation(unittest.TestCase):
+    """Validazione dell'input theta_observed."""
+
+    def test_rejects_theta_above_one(self):
+        pot = _make_simple_pot()
+        with self.assertRaises(ValueError):
+            pot.update_from_sensor(theta_observed=1.5)
+
+    def test_rejects_negative_theta(self):
+        pot = _make_simple_pot()
+        with self.assertRaises(ValueError):
+            pot.update_from_sensor(theta_observed=-0.05)
+
+    def test_accepts_zero(self):
+        # θ=0 (vaso completamente asciutto) è fisicamente plausibile.
+        pot = _make_simple_pot()
+        result = pot.update_from_sensor(theta_observed=0.0)
+        self.assertEqual(pot.state_mm, 0.0)
+
+    def test_accepts_one(self):
+        # θ=1 (vaso completamente saturo, caso limite) è accettato.
+        pot = _make_simple_pot()
+        result = pot.update_from_sensor(theta_observed=1.0)
+        self.assertAlmostEqual(
+            pot.state_mm, pot.substrate_depth_mm, places=6,
+        )
+
+
+class TestSensorUpdateResultProperties(unittest.TestCase):
+    """Property derivate di SensorUpdateResult."""
+
+    def test_absolute_error_always_non_negative(self):
+        # absolute_error_mm è sempre >= 0, indipendentemente dal segno
+        # della discrepanza.
+        pot = _make_simple_pot(state_mm=10.0)
+        # Caso 1: sensore wetter (discrepanza positiva).
+        result_pos = pot.update_from_sensor(theta_observed=0.40)
+        self.assertGreaterEqual(result_pos.absolute_error_mm, 0)
+        self.assertEqual(result_pos.absolute_error_mm,
+                         abs(result_pos.discrepancy_mm))
+        # Caso 2: sensore drier (discrepanza negativa).
+        pot2 = _make_simple_pot(state_mm=50.0)
+        result_neg = pot2.update_from_sensor(theta_observed=0.05)
+        self.assertGreaterEqual(result_neg.absolute_error_mm, 0)
+        self.assertEqual(result_neg.absolute_error_mm,
+                         abs(result_neg.discrepancy_mm))
+
+    def test_is_significant_threshold(self):
+        # is_significant è True solo se |discrepancy_theta| > 0.02.
+        # Test su valori chiaramente sotto e chiaramente sopra soglia,
+        # evitando il confine esatto a 0.02 che è instabile in floating
+        # point: l'aritmetica IEEE 754 fa sì che (predicted + 0.02) -
+        # predicted non sia esattamente 0.02 in tutti i casi, e questo
+        # fragilizza i test di uguaglianza al confine. La semantica
+        # pratica di is_significant è "chiaramente sopra il rumore vs
+        # chiaramente sotto", non l'uguaglianza al picosecondo.
+
+        # Caso chiaramente sotto soglia: |0.010| < 0.02 → False.
+        pot1 = _make_simple_pot(state_mm=30.0)
+        predicted = pot1.state_theta
+        r1 = pot1.update_from_sensor(theta_observed=predicted + 0.010)
+        self.assertFalse(r1.is_significant)
+
+        # Caso vicino al confine ma sotto: |0.019| < 0.02 → False.
+        pot2 = _make_simple_pot(state_mm=30.0)
+        predicted2 = pot2.state_theta
+        r2 = pot2.update_from_sensor(theta_observed=predicted2 + 0.019)
+        self.assertFalse(r2.is_significant)
+
+        # Caso vicino al confine ma sopra: |0.021| > 0.02 → True.
+        pot3 = _make_simple_pot(state_mm=30.0)
+        predicted3 = pot3.state_theta
+        r3 = pot3.update_from_sensor(theta_observed=predicted3 + 0.021)
+        self.assertTrue(r3.is_significant)
+
+        # Caso chiaramente sopra soglia: |0.05| > 0.02 → True.
+        pot4 = _make_simple_pot(state_mm=30.0)
+        predicted4 = pot4.state_theta
+        r4 = pot4.update_from_sensor(theta_observed=predicted4 + 0.05)
+        self.assertTrue(r4.is_significant)
+
+    def test_relative_error_zero_for_zero_state(self):
+        # Edge case: vaso completamente asciutto (state_mm=0 → divisione
+        # per zero). La convenzione è che relative_error_pct vale 0 in
+        # questo caso (non NaN o errore).
+        pot = _make_simple_pot(state_mm=0.0)
+        result = pot.update_from_sensor(theta_observed=0.10)
+        # relative_error_pct deve essere finito (0.0 per convenzione).
+        self.assertEqual(result.relative_error_pct, 0.0)
+        # Ma absolute_error_mm è > 0 perché c'è davvero discrepanza.
+        self.assertGreater(result.absolute_error_mm, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
