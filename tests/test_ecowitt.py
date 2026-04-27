@@ -386,11 +386,11 @@ class TestFetchRealTime(unittest.TestCase):
 class TestCredentialsFromEnv(unittest.TestCase):
     def test_reads_all_three_from_env(self):
         with patch.dict(os.environ, {
-            "TEST_APPLICATION_KEY": "app-x",
-            "TEST_API_KEY": "api-y",
-            "TEST_MAC": "AA:BB:CC:DD:EE:FF",
+            "ECOWITT_APPLICATION_KEY": "app-x",
+            "ECOWITT_API_KEY": "api-y",
+            "ECOWITT_MAC": "AA:BB:CC:DD:EE:FF",
         }, clear=False):
-            app, api, mac = credentials_from_env(test=True)
+            app, api, mac = credentials_from_env()
             self.assertEqual(app, "app-x")
             self.assertEqual(api, "api-y")
             self.assertEqual(mac, "AA:BB:CC:DD:EE:FF")
@@ -398,14 +398,14 @@ class TestCredentialsFromEnv(unittest.TestCase):
     def test_missing_variable_raises_with_explicit_message(self):
         # Ripuliamo le tre variabili e poi mettiamo solo due.
         env = {
-            "TEST_APPLICATION_KEY": "app-x",
-            "TEST_API_KEY": "api-y",
-            # TEST_MAC mancante apposta
+            "ECOWITT_APPLICATION_KEY": "app-x",
+            "ECOWITT_API_KEY": "api-y",
+            # ECOWITT_MAC mancante apposta
         }
         with patch.dict(os.environ, env, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
-                credentials_from_env(test=True)
-            self.assertNotIn("TEST_MAC", str(ctx.exception))
+                credentials_from_env()
+            self.assertIn("ECOWITT_MAC", str(ctx.exception))
 
 
 # =======================================================================

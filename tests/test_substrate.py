@@ -386,5 +386,339 @@ class TestOvalPotSurface(unittest.TestCase):
             oval_pot_surface_area_m2(30.0, -10.0)
 
 
+# =======================================================================
+#  Fabbrica di substrati: composizione di materiali base
+# =======================================================================
+#
+# Quattro famiglie di test che coprono il nuovo sistema di composizione
+# di mix personalizzati a partire da materiali base:
+#
+#   1. Validazione dei BaseMaterial (vincoli fisici sui parametri).
+#   2. Validazione dei MixComponent (frazione nel range corretto).
+#   3. Calcolo del compose_substrate su mix noti, con verifica dei
+#      valori prodotti contro la formula della media pesata.
+#   4. Catalogo degli 8 materiali base: integrità, ordinamento,
+#      copertura dei casi d'uso domestici e bonsaistici.
+
+class TestBaseMaterialValidation(unittest.TestCase):
+    """
+    Vincoli fisici sui parametri di un BaseMaterial. Sono gli stessi
+    vincoli che valgono per Substrate (θ_PWP < θ_FC, entrambi in [0,1]),
+    ma li replichiamo qui perché BaseMaterial è un tipo distinto.
+    """
+
+    def test_valid_material_constructs_correctly(self):
+        # Caso normale: parametri ben formati, non solleva eccezioni.
+        from fitosim.science.substrate import BaseMaterial
+        mat = BaseMaterial(
+            name="test",
+            theta_fc=0.40,
+            theta_pwp=0.10,
+        )
+        self.assertEqual(mat.name, "test")
+        self.assertEqual(mat.theta_fc, 0.40)
+        self.assertEqual(mat.theta_pwp, 0.10)
+
+    def test_pwp_must_be_less_than_fc(self):
+        # Vincolo fisico fondamentale: il punto di appassimento deve
+        # essere sotto la capacità di campo. Configurazioni invertite
+        # non hanno senso fisico.
+        from fitosim.science.substrate import BaseMaterial
+        with self.assertRaises(ValueError):
+            BaseMaterial(name="invertito",
+                         theta_fc=0.10, theta_pwp=0.40)
+
+    def test_pwp_equal_to_fc_rejected(self):
+        # Anche l'uguaglianza è rifiutata: significherebbe un materiale
+        # senza acqua disponibile per la pianta (TAW = 0).
+        from fitosim.science.substrate import BaseMaterial
+        with self.assertRaises(ValueError):
+            BaseMaterial(name="degenere",
+                         theta_fc=0.30, theta_pwp=0.30)
+
+    def test_fc_above_one_rejected(self):
+        from fitosim.science.substrate import BaseMaterial
+        with self.assertRaises(ValueError):
+            BaseMaterial(name="sovrasaturo",
+                         theta_fc=1.10, theta_pwp=0.10)
+
+    def test_pwp_below_zero_rejected(self):
+        from fitosim.science.substrate import BaseMaterial
+        with self.assertRaises(ValueError):
+            BaseMaterial(name="impossibile",
+                         theta_fc=0.30, theta_pwp=-0.05)
+
+
+class TestMixComponentValidation(unittest.TestCase):
+    """Vincoli sulla frazione di un componente di mix."""
+
+    def test_valid_fraction(self):
+        from fitosim.science.substrate import MixComponent, BIONDA_PEAT
+        comp = MixComponent(material=BIONDA_PEAT, fraction=0.5)
+        self.assertEqual(comp.fraction, 0.5)
+
+    def test_fraction_zero_accepted(self):
+        # 0.0 è accettato (componente "presente in ricetta ma con peso
+        # zero"): il caso d'uso è di chi vuole tenere uno scaffolding
+        # con tutti i materiali e poi attivarne solo alcuni.
+        from fitosim.science.substrate import MixComponent, PERLITE
+        comp = MixComponent(material=PERLITE, fraction=0.0)
+        self.assertEqual(comp.fraction, 0.0)
+
+    def test_fraction_one_accepted(self):
+        # 1.0 è accettato: significa "100% di questo materiale". È un
+        # mix degenere ma sintatticamente legittimo.
+        from fitosim.science.substrate import MixComponent, BIONDA_PEAT
+        comp = MixComponent(material=BIONDA_PEAT, fraction=1.0)
+        self.assertEqual(comp.fraction, 1.0)
+
+    def test_negative_fraction_rejected(self):
+        from fitosim.science.substrate import MixComponent, BIONDA_PEAT
+        with self.assertRaises(ValueError):
+            MixComponent(material=BIONDA_PEAT, fraction=-0.1)
+
+    def test_fraction_above_one_rejected(self):
+        from fitosim.science.substrate import MixComponent, BIONDA_PEAT
+        with self.assertRaises(ValueError):
+            MixComponent(material=BIONDA_PEAT, fraction=1.5)
+
+
+class TestComposeSubstrate(unittest.TestCase):
+    """
+    Calcolo della media pesata in compose_substrate. Test diretti su
+    mix con valori facilmente verificabili a mano.
+    """
+
+    def test_pure_material_yields_same_parameters(self):
+        # 100% di un singolo materiale: il substrato risultante deve
+        # avere esattamente gli stessi θ del materiale.
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, MixComponent, compose_substrate,
+        )
+        result = compose_substrate(
+            components=[MixComponent(BIONDA_PEAT, 1.0)],
+            name="solo torba bionda",
+        )
+        self.assertAlmostEqual(result.theta_fc, BIONDA_PEAT.theta_fc,
+                               places=10)
+        self.assertAlmostEqual(result.theta_pwp, BIONDA_PEAT.theta_pwp,
+                               places=10)
+
+    def test_50_50_mix_produces_arithmetic_mean(self):
+        # 50% A + 50% B: media aritmetica esatta. Caso più semplice
+        # per verificare la formula.
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, PERLITE, MixComponent, compose_substrate,
+        )
+        result = compose_substrate(
+            components=[
+                MixComponent(BIONDA_PEAT, 0.5),
+                MixComponent(PERLITE, 0.5),
+            ],
+            name="50/50",
+        )
+        expected_fc = (BIONDA_PEAT.theta_fc + PERLITE.theta_fc) / 2
+        expected_pwp = (BIONDA_PEAT.theta_pwp + PERLITE.theta_pwp) / 2
+        self.assertAlmostEqual(result.theta_fc, expected_fc, places=10)
+        self.assertAlmostEqual(result.theta_pwp, expected_pwp, places=10)
+
+    def test_70_30_mix_weighted_correctly(self):
+        # 70% torba bionda + 30% perlite: media pesata.
+        # θ_FC atteso: 0.70 × 0.58 + 0.30 × 0.08 = 0.406 + 0.024 = 0.430
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, PERLITE, MixComponent, compose_substrate,
+        )
+        result = compose_substrate(
+            components=[
+                MixComponent(BIONDA_PEAT, 0.70),
+                MixComponent(PERLITE, 0.30),
+            ],
+            name="mix professionale",
+        )
+        expected_fc = 0.70 * BIONDA_PEAT.theta_fc + 0.30 * PERLITE.theta_fc
+        self.assertAlmostEqual(result.theta_fc, expected_fc, places=10)
+
+    def test_three_component_mix_works(self):
+        # Mix bonsai italiano classico 40/30/30. Verifica che la media
+        # pesata funzioni con più di due ingredienti.
+        from fitosim.science.substrate import (
+            AKADAMA, POMICE, LAPILLO, MixComponent, compose_substrate,
+        )
+        result = compose_substrate(
+            components=[
+                MixComponent(AKADAMA, 0.40),
+                MixComponent(POMICE, 0.30),
+                MixComponent(LAPILLO, 0.30),
+            ],
+            name="mix bonsai standard",
+        )
+        expected_fc = (
+            0.40 * AKADAMA.theta_fc
+            + 0.30 * POMICE.theta_fc
+            + 0.30 * LAPILLO.theta_fc
+        )
+        expected_pwp = (
+            0.40 * AKADAMA.theta_pwp
+            + 0.30 * POMICE.theta_pwp
+            + 0.30 * LAPILLO.theta_pwp
+        )
+        self.assertAlmostEqual(result.theta_fc, expected_fc, places=10)
+        self.assertAlmostEqual(result.theta_pwp, expected_pwp, places=10)
+
+    def test_returns_substrate_instance(self):
+        # Il tipo restituito è proprio un Substrate utilizzabile dal
+        # resto del sistema senza adattatori.
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, PERLITE, MixComponent, Substrate, compose_substrate,
+        )
+        result = compose_substrate(
+            components=[
+                MixComponent(BIONDA_PEAT, 0.6),
+                MixComponent(PERLITE, 0.4),
+            ],
+            name="test",
+        )
+        self.assertIsInstance(result, Substrate)
+        self.assertEqual(result.name, "test")
+
+    def test_default_name_when_omitted(self):
+        # Il default "custom mix" è applicato quando il nome non
+        # viene specificato.
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, MixComponent, compose_substrate,
+        )
+        result = compose_substrate(
+            components=[MixComponent(BIONDA_PEAT, 1.0)],
+        )
+        self.assertEqual(result.name, "custom mix")
+
+
+class TestComposeSubstrateValidation(unittest.TestCase):
+    """Validazione delle ricette di mix."""
+
+    def test_empty_components_rejected(self):
+        from fitosim.science.substrate import compose_substrate
+        with self.assertRaises(ValueError):
+            compose_substrate(components=[])
+
+    def test_fractions_must_sum_to_one(self):
+        # Somma 0.7 (mancano il 30%): rifiutata.
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, PERLITE, MixComponent, compose_substrate,
+        )
+        with self.assertRaises(ValueError):
+            compose_substrate(components=[
+                MixComponent(BIONDA_PEAT, 0.4),
+                MixComponent(PERLITE, 0.3),
+            ])
+
+    def test_fractions_summing_above_one_rejected(self):
+        # Somma 1.2 (eccesso del 20%): rifiutata.
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, PERLITE, MixComponent, compose_substrate,
+        )
+        with self.assertRaises(ValueError):
+            compose_substrate(components=[
+                MixComponent(BIONDA_PEAT, 0.7),
+                MixComponent(PERLITE, 0.5),
+            ])
+
+    def test_small_rounding_errors_tolerated(self):
+        # Somma 0.9995 (errore di arrotondamento microscopico, tipico
+        # quando si scrivono percentuali con poche cifre decimali):
+        # accettato entro la tolleranza di default 0.001.
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, PERLITE, MixComponent, compose_substrate,
+        )
+        result = compose_substrate(components=[
+            MixComponent(BIONDA_PEAT, 0.7000),
+            MixComponent(PERLITE, 0.2995),  # somma 0.9995
+        ])
+        # Non solleva eccezioni: il risultato è prodotto.
+        from fitosim.science.substrate import Substrate
+        self.assertIsInstance(result, Substrate)
+
+    def test_custom_tolerance_accepted(self):
+        # Il chiamante può ammorbidire la tolleranza in casi specifici.
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, PERLITE, MixComponent, compose_substrate,
+        )
+        # Somma 0.95: rifiutata con default, accettata con tolleranza 0.1.
+        with self.assertRaises(ValueError):
+            compose_substrate(components=[
+                MixComponent(BIONDA_PEAT, 0.5),
+                MixComponent(PERLITE, 0.45),
+            ])
+        # Stessa ricetta con tolleranza più larga: passa.
+        result = compose_substrate(
+            components=[
+                MixComponent(BIONDA_PEAT, 0.5),
+                MixComponent(PERLITE, 0.45),
+            ],
+            fraction_tolerance=0.1,
+        )
+        from fitosim.science.substrate import Substrate
+        self.assertIsInstance(result, Substrate)
+
+
+class TestBaseMaterialCatalog(unittest.TestCase):
+    """Integrità del catalogo degli 8 materiali base."""
+
+    def test_all_materials_in_catalog(self):
+        # Verifica che ALL_BASE_MATERIALS contenga effettivamente
+        # tutti gli 8 materiali esposti dal modulo.
+        from fitosim.science.substrate import (
+            ALL_BASE_MATERIALS,
+            BIONDA_PEAT, BRUNA_PEAT, PERLITE, VERMICULITE,
+            COCO_FIBER, POMICE, SAND, AKADAMA, LAPILLO,
+        )
+        expected = {
+            BIONDA_PEAT, BRUNA_PEAT, PERLITE, VERMICULITE,
+            COCO_FIBER, POMICE, SAND, AKADAMA, LAPILLO,
+        }
+        self.assertEqual(set(ALL_BASE_MATERIALS), expected)
+        # Sono effettivamente nove (avevamo detto otto, ma includendo
+        # entrambe le torbe sono nove).
+        self.assertEqual(len(ALL_BASE_MATERIALS), 9)
+
+    def test_all_materials_have_valid_parameters(self):
+        # Tutti i materiali del catalogo hanno parametri fisici validi:
+        # è la stessa garanzia che vale per il catalogo Substrate.
+        from fitosim.science.substrate import ALL_BASE_MATERIALS
+        for mat in ALL_BASE_MATERIALS:
+            with self.subTest(material=mat.name):
+                self.assertGreater(mat.theta_fc, mat.theta_pwp)
+                self.assertGreaterEqual(mat.theta_pwp, 0.0)
+                self.assertLessEqual(mat.theta_fc, 1.0)
+
+    def test_drainage_materials_have_low_fc(self):
+        # I materiali drenanti (perlite, pomice, sabbia, lapillo) devono
+        # avere θ_FC bassa (<0.25). Questo è il loro ruolo.
+        from fitosim.science.substrate import (
+            PERLITE, POMICE, SAND, LAPILLO,
+        )
+        for mat in (PERLITE, POMICE, SAND, LAPILLO):
+            with self.subTest(material=mat.name):
+                self.assertLess(mat.theta_fc, 0.25)
+
+    def test_water_retentive_materials_have_high_fc(self):
+        # I materiali ritentivi (torba bionda, torba bruna, fibra di
+        # cocco) devono avere θ_FC alta (>0.45).
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, BRUNA_PEAT, COCO_FIBER,
+        )
+        for mat in (BIONDA_PEAT, BRUNA_PEAT, COCO_FIBER):
+            with self.subTest(material=mat.name):
+                self.assertGreater(mat.theta_fc, 0.45)
+
+    def test_all_materials_have_descriptions(self):
+        # La description è pensata per essere consultata; vogliamo
+        # che ogni materiale ne abbia una, non quella vuota di default.
+        from fitosim.science.substrate import ALL_BASE_MATERIALS
+        for mat in ALL_BASE_MATERIALS:
+            with self.subTest(material=mat.name):
+                self.assertGreater(len(mat.description), 30)
+
+
 if __name__ == "__main__":
     unittest.main()

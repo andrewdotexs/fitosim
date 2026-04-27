@@ -453,3 +453,329 @@ def mm_to_theta(mm: float, depth_mm: float) -> float:
             f"inversa (ricevuto {depth_mm})."
         )
     return mm / depth_mm
+
+
+# =======================================================================
+#  Fabbrica di substrati: composizione di materiali base
+# =======================================================================
+#
+# Le dataclass Substrate del catalogo (UNIVERSAL_POTTING_SOIL, COCO_COIR,
+# etc.) descrivono substrati "pronti all'uso": miscele commerciali
+# tipiche di cui conosciamo i parametri idraulici aggregati. Ma molti
+# giardinieri (e specialmente i bonsaisti) preparano i propri substrati
+# mischiando materiali base in proporzioni personalizzate. Per loro
+# serve una via per costruire un Substrate a partire da una "ricetta".
+#
+# Il modello che adottiamo è il più semplice tra quelli sensati: media
+# pesata sui volumi delle frazioni di ciascun materiale. È un'approssi-
+# mazione del 5-10% rispetto a misure dirette in laboratorio, perché
+# trascura due effetti del secondo ordine:
+#
+#   1. Packing: quando si mescolano materiali con granulometrie diverse,
+#      le particelle fini si infilano negli interstizi delle grosse,
+#      modificando leggermente la porosità totale e quindi θ_FC.
+#
+#   2. Curva di ritenzione non lineare: i punti θ_FC e θ_PWP sono
+#      definiti dal potenziale matricco di equilibrio (-10 kPa per
+#      substrati di vaso, -1500 kPa per il PWP), non dalla composizione
+#      diretta. Mischiando due materiali con curve diverse, il punto
+#      di equilibrio della miscela non è esattamente la media pesata
+#      dei due punti separati.
+#
+# Per il dominio del giardinaggio domestico l'approssimazione lineare
+# è adeguata. Se in futuro servirà più precisione, la strada giusta
+# non è raffinare il modello teorico ma calibrare empiricamente i
+# parametri dai sensori WH51, che è la prima estensione futura della
+# roadmap.
+
+@dataclass(frozen=True)
+class BaseMaterial:
+    """
+    Materiale puro che entra come ingrediente in una miscela.
+
+    Si distingue da `Substrate` perché un BaseMaterial tipicamente
+    NON è un substrato pronto all'uso: pomice o sabbia pure non
+    forniscono la ritenzione e il nutrimento sufficienti per le piante
+    da giardinaggio. Sono ingredienti, non ricette finite.
+
+    Attributi
+    ---------
+    name : str
+        Nome leggibile per i report e i log.
+    theta_fc : float
+        Capacità di campo del materiale puro (θ a -10 kPa per
+        convenzione vivaistica), adimensionale, [0, 1].
+    theta_pwp : float
+        Punto di appassimento permanente (θ a -1500 kPa),
+        adimensionale, [0, 1]. Deve essere < theta_fc.
+    description : str
+        Note descrittive: provenienza, granulometria tipica, range
+        di valori in letteratura.
+    """
+
+    name: str
+    theta_fc: float
+    theta_pwp: float
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.theta_pwp < self.theta_fc <= 1.0:
+            raise ValueError(
+                f"BaseMaterial '{self.name}': vincolo violato "
+                f"0 ≤ θ_PWP={self.theta_pwp} < θ_FC={self.theta_fc} ≤ 1."
+            )
+
+
+# -----------------------------------------------------------------------
+#  Catalogo dei materiali base
+# -----------------------------------------------------------------------
+#
+# Valori di θ_FC e θ_PWP in letteratura agronomica vivaistica e
+# bonsaistica, mediane di range pubblicati. Coperture per ciascun
+# materiale documentate nelle stringhe `description`.
+#
+# Riferimenti principali:
+#   - Beeson (2007), HortScience 42(7)
+#   - Bilderback et al. (2005), Best Management Practices: Guide for
+#     Producing Container-Grown Plants
+#   - Wageningen UR, Substrate Hydraulic Properties Database
+#   - Letteratura italo-giapponese su substrati bonsaistici
+
+BIONDA_PEAT = BaseMaterial(
+    name="Torba bionda",
+    theta_fc=0.58,
+    theta_pwp=0.10,
+    description=(
+        "Torba di sfagno poco decomposta (H1-H3 sulla scala von Post). "
+        "Range pubblicato: θ_FC 0.50-0.65, θ_PWP 0.08-0.13. "
+        "Alta porosità, ottima ritenzione idrica, povera di nutrienti."
+    ),
+)
+
+BRUNA_PEAT = BaseMaterial(
+    name="Torba bruna",
+    theta_fc=0.52,
+    theta_pwp=0.15,
+    description=(
+        "Torba più decomposta (H4-H7), particelle più fini. "
+        "Range pubblicato: θ_FC 0.45-0.58, θ_PWP 0.12-0.18. "
+        "Maggiore ritenzione di nutrienti rispetto alla bionda, "
+        "drenaggio più lento."
+    ),
+)
+
+PERLITE = BaseMaterial(
+    name="Perlite",
+    theta_fc=0.08,
+    theta_pwp=0.02,
+    description=(
+        "Vetro vulcanico espanso, granulometria 2-5 mm tipica per "
+        "giardinaggio. Range pubblicato: θ_FC 0.05-0.12, θ_PWP "
+        "0.01-0.03. Funzione primaria: drenaggio e aerazione, "
+        "pochissimo contributo idrico."
+    ),
+)
+
+VERMICULITE = BaseMaterial(
+    name="Vermiculite",
+    theta_fc=0.42,
+    theta_pwp=0.08,
+    description=(
+        "Mica espansa termicamente, struttura lamellare che trattiene "
+        "acqua tra i fogli. Range pubblicato: θ_FC 0.35-0.50, θ_PWP "
+        "0.05-0.12. Buona ritenzione idrica e di nutrienti, alternativa "
+        "alla perlite quando serve più capacità d'acqua."
+    ),
+)
+
+COCO_FIBER = BaseMaterial(
+    name="Fibra di cocco",
+    theta_fc=0.55,
+    theta_pwp=0.12,
+    description=(
+        "Fibra dal mesocarpo della noce di cocco, prodotto rinnovabile. "
+        "Range pubblicato: θ_FC 0.48-0.62, θ_PWP 0.08-0.15. Comportamento "
+        "idrico simile alla torba bionda, alternativa sostenibile."
+    ),
+)
+
+POMICE = BaseMaterial(
+    name="Pomice",
+    theta_fc=0.18,
+    theta_pwp=0.05,
+    description=(
+        "Roccia vulcanica porosa, granulometria 3-8 mm. Range pubblicato: "
+        "θ_FC 0.12-0.25, θ_PWP 0.03-0.08. Drenaggio eccellente, "
+        "stabilità strutturale alta. Base per molti mix bonsai."
+    ),
+)
+
+SAND = BaseMaterial(
+    name="Sabbia",
+    theta_fc=0.12,
+    theta_pwp=0.03,
+    description=(
+        "Sabbia di fiume lavata, granulometria 0.5-2 mm. Range pubblicato: "
+        "θ_FC 0.08-0.18, θ_PWP 0.02-0.05. Drenaggio rapido, peso "
+        "specifico alto (utile per stabilizzare vasi in terrazzi ventosi)."
+    ),
+)
+
+AKADAMA = BaseMaterial(
+    name="Akadama",
+    theta_fc=0.45,
+    theta_pwp=0.10,
+    description=(
+        "Argilla giapponese a grani granulari (kiryu), trattamento "
+        "termico. Range pubblicato: θ_FC 0.40-0.50, θ_PWP 0.08-0.13. "
+        "Materiale base classico dei mix bonsai, buona ritenzione idrica "
+        "e capacità di scambio cationico. Si decompone in 2-3 anni."
+    ),
+)
+
+LAPILLO = BaseMaterial(
+    name="Lapillo",
+    theta_fc=0.20,
+    theta_pwp=0.06,
+    description=(
+        "Lapilli vulcanici (scoria), granulometria 3-8 mm. Range "
+        "pubblicato: θ_FC 0.15-0.25, θ_PWP 0.04-0.08. Comportamento "
+        "intermedio tra pomice e perlite, peso più alto. Comune nei "
+        "mix bonsai italiani come alternativa a kiryu."
+    ),
+)
+
+
+# Tutti i materiali base raccolti per iterabilità.
+ALL_BASE_MATERIALS: tuple[BaseMaterial, ...] = (
+    BIONDA_PEAT,
+    BRUNA_PEAT,
+    PERLITE,
+    VERMICULITE,
+    COCO_FIBER,
+    POMICE,
+    SAND,
+    AKADAMA,
+    LAPILLO,
+)
+
+
+# -----------------------------------------------------------------------
+#  Composizione di una ricetta
+# -----------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class MixComponent:
+    """
+    Una porzione di materiale base in una miscela: il "verso x parti
+    di Y" di una ricetta.
+
+    Attributi
+    ---------
+    material : BaseMaterial
+        L'ingrediente.
+    fraction : float
+        Frazione volumetrica nella miscela finale, in [0, 1]. La somma
+        di tutte le frazioni in un mix deve essere 1.0 (validato in
+        compose_substrate).
+    """
+
+    material: BaseMaterial
+    fraction: float
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.fraction <= 1.0:
+            raise ValueError(
+                f"MixComponent: fraction deve essere in [0, 1] "
+                f"(ricevuto {self.fraction} per "
+                f"'{self.material.name}')."
+            )
+
+
+def compose_substrate(
+    components: list[MixComponent],
+    name: str = "custom mix",
+    depletion_fraction: float | None = None,
+    fraction_tolerance: float = 0.001,
+) -> Substrate:
+    """
+    Costruisce un Substrate a partire da una ricetta di materiali base.
+
+    Calcola θ_FC e θ_PWP del mix come **media pesata sui volumi** delle
+    frazioni dei singoli ingredienti. È un'approssimazione del 5-10%
+    rispetto a misure dirette in laboratorio, adeguata per il dominio
+    del giardinaggio domestico.
+
+    Parametri
+    ---------
+    components : list[MixComponent]
+        Ricetta del mix. La somma delle fractions deve essere 1.0
+        (entro `fraction_tolerance`). Almeno un componente richiesto.
+    name : str, opzionale
+        Nome del Substrate risultante. Se non specificato, viene usato
+        "custom mix".
+    depletion_fraction : float, opzionale
+        Frazione di depletion per il Substrate risultante. Se omesso,
+        usa il default del catalogo (DEFAULT_DEPLETION_FRACTION).
+    fraction_tolerance : float, opzionale
+        Tolleranza sulla somma delle frazioni. Default 0.001 (0.1%).
+
+    Ritorna
+    -------
+    Substrate
+        Il substrato composto, con θ_FC e θ_PWP calcolati come media
+        pesata.
+
+    Esempi
+    ------
+    Mix professionale 70% torba bionda + 30% perlite:
+
+        mix = compose_substrate(
+            components=[
+                MixComponent(BIONDA_PEAT, 0.70),
+                MixComponent(PERLITE, 0.30),
+            ],
+            name="Mix professionale 70/30",
+        )
+
+    Mix bonsai italiano classico 40/30/30 di akadama, pomice, lapillo:
+
+        mix_bonsai = compose_substrate(
+            components=[
+                MixComponent(AKADAMA, 0.40),
+                MixComponent(POMICE, 0.30),
+                MixComponent(LAPILLO, 0.30),
+            ],
+            name="Mix bonsai standard",
+        )
+    """
+    if not components:
+        raise ValueError(
+            "compose_substrate richiede almeno un componente "
+            "(ricevuta lista vuota)."
+        )
+
+    total_fraction = sum(c.fraction for c in components)
+    if abs(total_fraction - 1.0) > fraction_tolerance:
+        raise ValueError(
+            f"La somma delle frazioni deve essere 1.0 entro "
+            f"{fraction_tolerance} (ricevuto {total_fraction:.4f}). "
+            f"Verifica che le tue percentuali sommino al 100%."
+        )
+
+    theta_fc = sum(c.fraction * c.material.theta_fc for c in components)
+    theta_pwp = sum(c.fraction * c.material.theta_pwp for c in components)
+
+    # Costruisce il Substrate. depletion_fraction usa il default del
+    # catalogo se non specificato — è un parametro del modello FAO-56
+    # legato alla specie più che al substrato, quindi mantenere il
+    # default è la scelta più sicura.
+    kwargs = {
+        "name": name,
+        "theta_fc": theta_fc,
+        "theta_pwp": theta_pwp,
+    }
+    if depletion_fraction is not None:
+        kwargs["depletion_fraction"] = depletion_fraction
+    return Substrate(**kwargs)
+
