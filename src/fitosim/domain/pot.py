@@ -340,6 +340,32 @@ class Pot:
     # campo è presente ma inerte. Default 0.0 = "substrato appena
     # bagnato", coerente con l'inizializzazione di state_mm a FC.
     de_mm: float = 0.0
+    # ----- Stato chimico del substrato (tappa 3 fascia 2) -----
+    # Massa salina totale presente nel vaso, in milli-equivalenti. È
+    # lo stato canonico della "salinità" del substrato: cresce con le
+    # fertirrigazioni ed è (leggermente) diminuita dal drenaggio quando
+    # un'aggiunta idrica supera la capacità di campo. L'EC corrente
+    # (in mS/cm) è una grandezza derivata, calcolata come property dal
+    # rapporto salt_mass_meq / volume_acqua_corrente, e in questo modo
+    # cattura automaticamente il fenomeno della concentrazione per
+    # evapotraspirazione.
+    #
+    # Default 0.0: il vaso "appena rinvasato in terriccio fresco" non
+    # ha praticamente sali. Per inizializzare un vaso preesistente con
+    # storia di fertilizzazione, il chiamante passa il valore esplicito
+    # (può stimarlo dalla lettura di un sensore EC del substrato).
+    salt_mass_meq: float = 0.0
+    # pH del substrato corrente, scala 0-14. È stato mutabile ed evolve
+    # nel tempo per fertirrigazioni e piogge secondo il modello di
+    # buffering modulato dalla CEC del substrato (sotto-tappa C).
+    #
+    # Sentinel -1.0: il campo non è stato specificato dal chiamante e
+    # __post_init__ risolverà la gerarchia "esplicito > substrato > 7.0"
+    # (vedi sotto). Quando il chiamante passa un valore esplicito (per
+    # esempio perché ha appena letto il sensore ATO) quello ha la
+    # precedenza; quando lascia il default si usa il ph_typical del
+    # Substrate; in ultima istanza si ricade sul neutro 7.0.
+    ph_substrate: float = -1.0
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -404,6 +430,36 @@ class Pot:
         # branching su None in tutti i metodi.
         if self.state_mm < 0:
             self.state_mm = self.fc_mm
+
+        # Inizializzazione del pH del substrato secondo la gerarchia
+        # "esplicito > substrato.ph_typical > neutro 7.0". La sentinella
+        # -1.0 ESATTA indica che il chiamante non ha specificato un
+        # valore esplicito, quindi consultiamo il substrato. Stesso
+        # pattern di state_mm sopra, ma con check stretto invece che
+        # "negativo": questo protegge contro errori del chiamante che
+        # passa per sbaglio un pH negativo (per esempio per un bug nel
+        # calcolo a monte) — un negativo non-sentinel cadrà nel check
+        # di range fisico subito sotto e solleverà ValueError.
+        if self.ph_substrate == -1.0:
+            self.ph_substrate = self.substrate.effective_ph_typical
+
+        # Validazione dello stato chimico finale. ph_substrate deve
+        # essere nella scala chimica [0, 14]; salt_mass_meq deve essere
+        # non-negativa (zero è il caso "vaso appena rinvasato" perfetta-
+        # mente legittimo).
+        if not 0.0 < self.ph_substrate < 14.0:
+            raise ValueError(
+                f"Vaso '{self.label}': ph_substrate="
+                f"{self.ph_substrate} è fuori scala chimica (0, 14). "
+                f"Verifica il valore passato al costruttore o il "
+                f"ph_typical del substrato '{self.substrate.name}'."
+            )
+        if self.salt_mass_meq < 0:
+            raise ValueError(
+                f"Vaso '{self.label}': salt_mass_meq="
+                f"{self.salt_mass_meq} non può essere negativo. "
+                f"Default 0.0 per vaso appena rinvasato."
+            )
 
     # -------------------------------------------------------------------
     #  Proprietà geometriche derivate
@@ -485,6 +541,53 @@ class Pot:
     def state_theta(self) -> float:
         """Stato corrente espresso come θ adimensionale."""
         return mm_to_theta(self.state_mm, self.substrate_depth_mm)
+
+    @property
+    def water_volume_liters(self) -> float:
+        """
+        Volume corrente di acqua nel substrato, in litri.
+
+        Aggiunto in tappa 3 della fascia 2: serve come denominatore nel
+        calcolo dell'EC e in generale in tutti i bilanci di massa
+        chimici dove "concentrazione" significa "massa per unità di
+        volume di acqua". Lo state_mm è già una colonna d'acqua espressa
+        in millimetri sopra la superficie del vaso, e moltiplicandolo
+        per l'area in m² (e convertendo l'unità: mm × m² = L) si ottiene
+        direttamente il volume.
+        """
+        return self.state_mm * self.surface_area_m2
+
+    @property
+    def ec_substrate_mscm(self) -> float:
+        """
+        Conducibilità elettrica della soluzione interstiziale del
+        substrato, in mS/cm a 25°C.
+
+        Aggiunto in tappa 3 della fascia 2 come grandezza DERIVATA
+        dallo stato canonico (salt_mass_meq, state_mm). NON è un campo
+        memorizzato — è ricalcolata ad ogni accesso dalla relazione:
+
+            EC [mS/cm]  =  (salt_mass [meq] / water_volume [L]) / 10
+
+        Il fattore 10 è la costante chimica di conversione tra
+        concentrazione equivalente molare e EC, valida per soluzioni
+        "tipiche" di terreno con cationi misti (calcio, magnesio,
+        potassio dominanti). Ha errore approssimativo del 10-15%
+        rispetto al calcolo ionico esatto, completamente accettabile
+        per i nostri scopi visto che il sensore ATO ha lui stesso
+        errori dello stesso ordine.
+
+        Caso degenere: se water_volume_liters è zero (vaso totalmente
+        asciutto secondo il modello, situazione patologica di simulazione
+        senza calibrazione da sensore), ritorniamo 0.0 per non sollevare
+        ZeroDivisionError. È convenzione, non fisica: se davvero il vaso
+        fosse a zero acqua i sali sarebbero cristallizzati e l'EC della
+        "soluzione" è indefinita.
+        """
+        if self.water_volume_liters <= 0:
+            return 0.0
+        meq_per_liter = self.salt_mass_meq / self.water_volume_liters
+        return meq_per_liter / 10.0
 
     @property
     def kp(self) -> float:

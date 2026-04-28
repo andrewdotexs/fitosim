@@ -99,6 +99,21 @@ class Species:
     notes : str, opzionale
         Nota libera per documentare fonte dei dati, comportamento tipico,
         ambiente di coltivazione raccomandato.
+    kcb_initial, kcb_mid, kcb_late : float | None, opzionali
+        Coefficienti basali per il modello dual-Kc (FAO-56 cap. 7).
+        Tutti e tre o nessuno; quando valorizzati il motore usa il
+        modello dual-Kc se anche il substrato è caratterizzato.
+    ec_optimal_min_mscm, ec_optimal_max_mscm : float | None, opzionali
+        Range ottimale di conducibilità elettrica del substrato per la
+        specie, in mS/cm a 25 °C. Aggiunto in tappa 3 della fascia 2.
+        Quando l'EC del substrato cade dentro questo intervallo, il
+        coefficiente nutrizionale Kn vale 1.0 dal lato della salinità;
+        scende sotto 1.0 quando si esce dal range. Tutti e quattro i
+        parametri chimici (i due EC e i due pH) devono essere
+        specificati insieme o nessuno.
+    ph_optimal_min, ph_optimal_max : float | None, opzionali
+        Range ottimale di pH del substrato per la specie. Stessa
+        logica del range EC, applicato al fattore pH-dipendente di Kn.
 
     Vincoli
     -------
@@ -141,6 +156,24 @@ class Species:
     kcb_initial: float | None = None
     kcb_mid: float | None = None
     kcb_late: float | None = None
+    # ----- Range ottimali di EC e pH (tappa 3 fascia 2) -----
+    # Questi quattro parametri descrivono le esigenze nutrizionali della
+    # specie e alimentano il calcolo del coefficiente Kn (sotto-tappa D).
+    # Quando sono tutti None la specie non supporta il modello chimico
+    # e il motore ignora le considerazioni nutrizionali (Kn=1 sempre).
+    # Quando sono tutti valorizzati, il modello sa giudicare se le
+    # condizioni del substrato sono ottimali, accettabili o stressanti
+    # per la pianta.
+    #
+    # Valori indicativi per alcune specie comuni:
+    #   - basilico:  EC 1.0-1.6, pH 6.0-7.0
+    #   - pomodoro:  EC 2.0-3.5, pH 6.0-6.8
+    #   - mirtillo:  EC 0.8-1.4, pH 4.5-5.5 (specie acidofila)
+    #   - lattuga:   EC 1.2-1.8, pH 6.0-7.0
+    ec_optimal_min_mscm: float | None = None
+    ec_optimal_max_mscm: float | None = None
+    ph_optimal_min: float | None = None
+    ph_optimal_max: float | None = None
 
     def __post_init__(self) -> None:
         # Validazione dei Kc: scorriamo la terna con zip per un
@@ -196,6 +229,47 @@ class Species:
                         f"deve essere ≤ del Kc totale)."
                     )
 
+        # Validazione del modello chimico (tappa 3 fascia 2): i quattro
+        # parametri EC/pH devono essere tutti None o tutti valorizzati.
+        # Una specie con tre su quattro sarebbe in uno stato indefinito
+        # in cui il motore non saprebbe se applicare o no il calcolo
+        # del Kn nutrizionale.
+        chemistry_values = (
+            self.ec_optimal_min_mscm,
+            self.ec_optimal_max_mscm,
+            self.ph_optimal_min,
+            self.ph_optimal_max,
+        )
+        chemistry_present = sum(1 for v in chemistry_values if v is not None)
+        if 0 < chemistry_present < 4:
+            raise ValueError(
+                f"Specie '{self.common_name}': i quattro parametri "
+                f"chimici (ec_optimal_min_mscm, ec_optimal_max_mscm, "
+                f"ph_optimal_min, ph_optimal_max) devono essere "
+                f"specificati tutti o nessuno. "
+                f"Ricevuti: ec=({self.ec_optimal_min_mscm}, "
+                f"{self.ec_optimal_max_mscm}), pH=("
+                f"{self.ph_optimal_min}, {self.ph_optimal_max})."
+            )
+        if chemistry_present == 4:
+            # Range EC: deve essere ordinato e dentro i limiti fisici
+            # tipici del substrato (EC > 8 mS/cm sono già condizioni
+            # di stress salino acuto; il range di OPTIMA non può
+            # arrivare là).
+            if not 0.0 < self.ec_optimal_min_mscm < self.ec_optimal_max_mscm <= 8.0:
+                raise ValueError(
+                    f"Specie '{self.common_name}': il range ottimale di EC "
+                    f"deve soddisfare 0 < min ({self.ec_optimal_min_mscm}) "
+                    f"< max ({self.ec_optimal_max_mscm}) ≤ 8 mS/cm."
+                )
+            # Range pH: ordinato e dentro la scala chimica.
+            if not 0.0 < self.ph_optimal_min < self.ph_optimal_max <= 14.0:
+                raise ValueError(
+                    f"Specie '{self.common_name}': il range ottimale di pH "
+                    f"deve soddisfare 0 < min ({self.ph_optimal_min}) "
+                    f"< max ({self.ph_optimal_max}) ≤ 14."
+                )
+
     @property
     def supports_dual_kc(self) -> bool:
         """
@@ -207,6 +281,25 @@ class Species:
             self.kcb_initial is not None
             and self.kcb_mid is not None
             and self.kcb_late is not None
+        )
+
+    @property
+    def supports_chemistry_model(self) -> bool:
+        """
+        True se la specie ha tutti i quattro parametri chimici
+        valorizzati e supporta quindi il modello nutrizionale (Kn,
+        valutazione delle condizioni di EC e pH del substrato).
+
+        Aggiunto in tappa 3 della fascia 2. Usato dal motore di
+        fertirrigazione per decidere se calcolare Kn dinamicamente
+        o ricadere su Kn=1 quando la specie non è caratterizzata sul
+        piano chimico.
+        """
+        return (
+            self.ec_optimal_min_mscm is not None
+            and self.ec_optimal_max_mscm is not None
+            and self.ph_optimal_min is not None
+            and self.ph_optimal_max is not None
         )
 
     def stage_at_day(self, days_since_planting: int) -> "PhenologicalStage":

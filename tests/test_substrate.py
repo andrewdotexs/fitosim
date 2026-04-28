@@ -779,5 +779,136 @@ class TestSubstrateDualKcParameters(unittest.TestCase):
                       rew_mm=-1.0, tew_mm=22.0)
 
 
+# =======================================================================
+#  Estensione tappa 3 fascia 2: capacità di scambio cationico
+# =======================================================================
+
+class TestSubstrateCEC(unittest.TestCase):
+    """
+    Validazione del campo cec_meq_per_100g aggiunto in tappa 3 della
+    fascia 2. Documenta la capacità di scambio cationico del substrato
+    e modula lo smorzamento del pH durante la fertirrigazione.
+    """
+
+    def test_default_cec_is_none(self):
+        # Senza specificarlo, il campo è None (retrocompatibilità totale
+        # con tutto il codice scritto prima della tappa 3).
+        s = Substrate(name="generico", theta_fc=0.40, theta_pwp=0.10)
+        self.assertIsNone(s.cec_meq_per_100g)
+
+    def test_effective_cec_falls_back_to_default(self):
+        # effective_cec_meq_per_100g restituisce un default ragionevole
+        # (50, terriccio universale tipico) quando non specificato.
+        s = Substrate(name="generico", theta_fc=0.40, theta_pwp=0.10)
+        self.assertEqual(s.effective_cec_meq_per_100g, 50.0)
+
+    def test_explicit_cec_used_when_specified(self):
+        # Quando specificato, il valore esplicito ha la precedenza sul
+        # default. Una torba acida ha CEC alta, intorno a 120.
+        s = Substrate(name="torba acida", theta_fc=0.50, theta_pwp=0.05,
+                      cec_meq_per_100g=120.0)
+        self.assertEqual(s.cec_meq_per_100g, 120.0)
+        self.assertEqual(s.effective_cec_meq_per_100g, 120.0)
+
+    def test_zero_cec_rejected(self):
+        # CEC=0 sarebbe un substrato chimicamente inerte: è fisicamente
+        # impossibile (anche la sabbia ha qualche meq/100g residui).
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      cec_meq_per_100g=0.0)
+
+    def test_negative_cec_rejected(self):
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      cec_meq_per_100g=-5.0)
+
+    def test_excessive_cec_rejected(self):
+        # CEC > 300 è quasi certamente un errore di trascrizione delle
+        # unità (es. valori espressi in cmol/kg moltiplicati per 100).
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      cec_meq_per_100g=500.0)
+
+    def test_cec_realistic_low_value_accepted(self):
+        # Sabbia silicea: CEC molto bassa ma non nulla.
+        s = Substrate(name="sabbia", theta_fc=0.30, theta_pwp=0.05,
+                      cec_meq_per_100g=8.0)
+        self.assertEqual(s.cec_meq_per_100g, 8.0)
+
+    def test_cec_realistic_high_value_accepted(self):
+        # Torba acida pura, CEC molto alta.
+        s = Substrate(name="torba pura", theta_fc=0.55, theta_pwp=0.05,
+                      cec_meq_per_100g=200.0)
+        self.assertEqual(s.cec_meq_per_100g, 200.0)
+
+    def test_substrate_immutability_with_cec(self):
+        # frozen=True deve continuare a valere anche con il nuovo campo.
+        s = Substrate(name="test", theta_fc=0.40, theta_pwp=0.10,
+                      cec_meq_per_100g=50.0)
+        with self.assertRaises(Exception):  # FrozenInstanceError
+            s.cec_meq_per_100g = 80.0
+
+
+# =======================================================================
+#  Estensione tappa 3 fascia 2: pH tipico del substrato
+# =======================================================================
+
+class TestSubstratePhTypical(unittest.TestCase):
+    """
+    Validazione del campo ph_typical aggiunto in tappa 3 della fascia 2.
+    Documenta il pH "di natura" del substrato e supporta l'inizializzazione
+    corretta del Pot.ph_substrate per substrati acidi/calcarei.
+    """
+
+    def test_default_ph_typical_is_none(self):
+        # Senza specificarlo, il campo è None (retrocompatibilità totale).
+        s = Substrate(name="generico", theta_fc=0.40, theta_pwp=0.10)
+        self.assertIsNone(s.ph_typical)
+
+    def test_effective_ph_falls_back_to_neutral(self):
+        # effective_ph_typical ritorna 7.0 quando non specificato.
+        s = Substrate(name="generico", theta_fc=0.40, theta_pwp=0.10)
+        self.assertEqual(s.effective_ph_typical, 7.0)
+
+    def test_acidic_substrate_for_azaleas(self):
+        # Terriccio per acidofile ha pH tipico 5.0.
+        s = Substrate(name="acidofile", theta_fc=0.45, theta_pwp=0.08,
+                      ph_typical=5.0)
+        self.assertEqual(s.ph_typical, 5.0)
+        self.assertEqual(s.effective_ph_typical, 5.0)
+
+    def test_alkaline_substrate(self):
+        # Substrati calcarei o con tufo dolomitico raggiungono 7.5-8.0.
+        s = Substrate(name="calcareo", theta_fc=0.35, theta_pwp=0.08,
+                      ph_typical=7.8)
+        self.assertEqual(s.effective_ph_typical, 7.8)
+
+    def test_zero_ph_rejected(self):
+        # pH = 0 è chimicamente impossibile per un substrato (sarebbe
+        # acido cloridrico concentrato).
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      ph_typical=0.0)
+
+    def test_ph_above_14_rejected(self):
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      ph_typical=14.5)
+
+    def test_negative_ph_rejected(self):
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      ph_typical=-1.0)
+
+    def test_cec_and_ph_independent(self):
+        # I due campi chimici sono indipendenti: si possono specificare
+        # entrambi, uno solo, o nessuno.
+        s = Substrate(name="acidofile premium", theta_fc=0.50,
+                      theta_pwp=0.05, cec_meq_per_100g=140.0,
+                      ph_typical=4.8)
+        self.assertEqual(s.cec_meq_per_100g, 140.0)
+        self.assertEqual(s.ph_typical, 4.8)
+
+
 if __name__ == "__main__":
     unittest.main()

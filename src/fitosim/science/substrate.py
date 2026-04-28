@@ -67,6 +67,37 @@ class Substrate:
         permanente, adimensionale, nell'intervallo [0, theta_fc).
     description : str, opzionale
         Nota libera per documentare composizione o comportamento tipico.
+    rew_mm, tew_mm : float | None, opzionali
+        Parametri del modello dual-Kc (FAO-56 cap. 7). Vedi sezione
+        dedicata sotto.
+    cec_meq_per_100g : float | None, opzionale
+        Capacità di scambio cationico, in milli-equivalenti per 100 g
+        di sostanza secca. Aggiunto in tappa 3 della fascia 2 per
+        modellare lo smorzamento delle variazioni di pH durante la
+        fertirrigazione. Valori tipici:
+
+          - sabbia silicea, lapillo, pomice : 5-15 (CEC bassa, niente
+            buffering, le variazioni di pH si propagano inalterate)
+          - terriccio universale commerciale : 30-60 (CEC media,
+            buffering moderato)
+          - miscele basate su torba acida : 100-150 (CEC alta, le
+            variazioni di pH vengono smorzate significativamente)
+
+        Quando lasciato None, il modello chimico della tappa 3 usa un
+        default ragionevole (vedi `effective_cec_meq_per_100g`).
+    ph_typical : float | None, opzionale
+        pH "di natura" del substrato, cioè il pH atteso di un campione
+        appena confezionato prima dell'uso. Aggiunto in tappa 3 della
+        fascia 2 per supportare l'inizializzazione corretta del pH dei
+        vasi: un'azalea piantata in terriccio per acidofile parte da
+        pH 5 circa, non da pH neutro 7. Valori tipici:
+
+          - terriccio per acidofile (rododendri, mirtilli, azalee) : 4.5-5.5
+          - terriccio universale commerciale standard : 6.0-7.0
+          - terriccio "calcareo" o miscele con tufo dolomitico : 7.5-8.0
+
+        Quando lasciato None, il pH iniziale del Pot ricade sul valore
+        neutro 7.0 (vedi gerarchia di inizializzazione in `Pot.__init__`).
 
     Vincoli
     -------
@@ -89,6 +120,17 @@ class Substrate:
     # superficiale viene tracciata esplicitamente.
     rew_mm: float | None = None  # readily evaporable water (mm)
     tew_mm: float | None = None  # total evaporable water (mm)
+    # ----- Parametro chimico per la fertirrigazione (tappa 3 fascia 2) -----
+    # Capacità di scambio cationico, in meq/100g di sostanza secca.
+    # Modula lo smorzamento del pH durante la fertirrigazione: substrato
+    # con CEC alta resiste alle variazioni di pH, substrato con CEC bassa
+    # le subisce praticamente intatte.
+    cec_meq_per_100g: float | None = None
+    # pH "di natura" del substrato, cioè il pH atteso di un campione
+    # appena confezionato. Quando il giardiniere lo specifica, il Pot
+    # lo usa come default per l'inizializzazione del ph_substrate
+    # invece del neutro 7.0.
+    ph_typical: float | None = None
 
     def __post_init__(self) -> None:
         # Controllo di consistenza fisica sui due parametri idrici.
@@ -115,6 +157,81 @@ class Substrate:
                     f"Substrato '{self.name}': vincolo violato "
                     f"0 < REW ({self.rew_mm}) < TEW ({self.tew_mm})."
                 )
+        # Validazione della CEC: deve essere positiva quando specificata.
+        # Il limite superiore di 300 cattura errori di trascrizione
+        # evidenti (es. valori espressi in unità sbagliate) senza
+        # escludere torbe acide pure che possono arrivare a 200.
+        if self.cec_meq_per_100g is not None:
+            if not 0.0 < self.cec_meq_per_100g <= 300.0:
+                raise ValueError(
+                    f"Substrato '{self.name}': cec_meq_per_100g="
+                    f"{self.cec_meq_per_100g} è fuori range plausibile "
+                    f"(0, 300]. Verifica le unità: la CEC va in "
+                    f"meq/100g di sostanza secca. Valori tipici: "
+                    f"5-15 sabbia, 30-60 terriccio universale, "
+                    f"100-150 torba acida."
+                )
+
+        # Validazione del pH tipico: range fisico [0, 14] della scala.
+        # In pratica i substrati reali stanno in [3, 9]; mettendo i
+        # limiti chimici puri (0-14) catturiamo errori di trascrizione
+        # evidenti senza escludere casi limite legittimi come i terricci
+        # per acidofile più estremi (pH 4-4.5).
+        if self.ph_typical is not None:
+            if not 0.0 < self.ph_typical < 14.0:
+                raise ValueError(
+                    f"Substrato '{self.name}': ph_typical="
+                    f"{self.ph_typical} è fuori scala chimica (0, 14). "
+                    f"I substrati reali tipicamente stanno in [3, 9]. "
+                    f"Verifica il valore."
+                )
+
+    @property
+    def effective_cec_meq_per_100g(self) -> float:
+        """
+        CEC effettiva da usare nel modello chimico, con fallback
+        ragionevole quando non è specificata.
+
+        Aggiunto in tappa 3 della fascia 2: rende esplicito il default
+        quando il giardiniere non ha caratterizzato il substrato sul
+        piano chimico. Il valore 50 corrisponde a un terriccio
+        universale tipico ed è un compromesso che produce un buffering
+        moderato del pH, non così assertivo da nascondere errori di
+        fertirrigazione né così debole da rendere il substrato
+        completamente succube delle variazioni in ingresso.
+
+        Quando il giardiniere conosce la composizione esatta del suo
+        substrato (es. perché ha letto il sacchetto o perché usa una
+        miscela autoprodotta documentata) può specificare
+        `cec_meq_per_100g` esplicitamente al costruttore di Substrate.
+        """
+        if self.cec_meq_per_100g is None:
+            return 50.0
+        return self.cec_meq_per_100g
+
+    @property
+    def effective_ph_typical(self) -> float:
+        """
+        pH tipico effettivo da usare per inizializzare il pH del
+        substrato di un Pot, con fallback al neutro quando non è
+        specificato.
+
+        Aggiunto in tappa 3 della fascia 2 per supportare la gerarchia
+        di inizializzazione "esplicito > substrato > neutro": quando
+        il chiamante costruisce un Pot senza specificare `ph_substrate`,
+        il valore iniziale viene preso da questa property, che a sua
+        volta ricade sul neutro 7.0 se il substrato non documenta il
+        suo pH naturale.
+
+        Per i casi pratici è importante che il giardiniere specifichi
+        `ph_typical` quando conosce la natura del substrato (es. ha
+        comprato terriccio per acidofile per le sue azalee): la
+        differenza tra "azalea che parte da pH 5 vs pH 7" è
+        significativa per il modello chimico.
+        """
+        if self.ph_typical is None:
+            return 7.0
+        return self.ph_typical
 
 
 # =======================================================================

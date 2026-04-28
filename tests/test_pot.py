@@ -23,6 +23,7 @@ from fitosim.domain.species import (
 )
 from fitosim.science.balance import water_balance_step_mm
 from fitosim.science.substrate import (
+    Substrate,
     UNIVERSAL_POTTING_SOIL,
     circular_pot_surface_area_m2,
     pot_substrate_depth_mm,
@@ -1414,6 +1415,202 @@ class TestSensorUpdateWithSoilReading(unittest.TestCase):
         )
         result = pot.update_from_sensor(reading=big_drift_reading)
         self.assertTrue(result.is_significant)
+
+
+# =======================================================================
+#  Sotto-tappa B fascia 2: stati chimici del Pot (salt_mass_meq, ph_substrate)
+# =======================================================================
+
+class TestPotChemistryState(unittest.TestCase):
+    """
+    Validazione dei due nuovi stati chimici del Pot aggiunti in sotto-
+    tappa B della tappa 3 fascia 2: `salt_mass_meq` (massa salina totale
+    in milli-equivalenti) e `ph_substrate` (pH del substrato).
+
+    Copre cinque aspetti distinti:
+      1. Default e gerarchia di inizializzazione del ph_substrate.
+      2. Default zero del salt_mass_meq e accettazione di valori espliciti.
+      3. Property derivata `ec_substrate_mscm` con la conversione
+         meq/L → mS/cm.
+      4. Fenomeno della concentrazione per evapotraspirazione.
+      5. Validazione fisica degli input.
+    """
+
+    def _make_chemistry_substrate(
+        self, ph_typical=None, cec=None,
+    ) -> Substrate:
+        """Helper: substrato configurabile per i test chimici."""
+        return Substrate(
+            name="test", theta_fc=0.40, theta_pwp=0.10,
+            ph_typical=ph_typical,
+            cec_meq_per_100g=cec,
+        )
+
+    def _make_chemistry_pot(self, **overrides) -> Pot:
+        """Helper: vaso configurabile per i test chimici."""
+        defaults = dict(
+            label="chem-test",
+            species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0,
+            pot_diameter_cm=18.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1),
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    # ----- Inizializzazione del ph_substrate -----
+
+    def test_ph_default_falls_back_to_neutral_for_legacy_substrate(self):
+        # UNIVERSAL_POTTING_SOIL non ha ph_typical configurato (legacy):
+        # il pH iniziale ricade sul neutro 7.0.
+        pot = self._make_chemistry_pot()
+        self.assertEqual(pot.ph_substrate, 7.0)
+
+    def test_ph_inherits_from_substrate_when_typical_specified(self):
+        # Substrato per acidofile: il pH iniziale è quello del substrato.
+        acidic = self._make_chemistry_substrate(ph_typical=5.0)
+        pot = self._make_chemistry_pot(substrate=acidic)
+        self.assertEqual(pot.ph_substrate, 5.0)
+
+    def test_ph_explicit_overrides_substrate(self):
+        # Quando il chiamante passa ph_substrate esplicitamente, ha la
+        # precedenza anche su substrato con ph_typical configurato.
+        # Caso d'uso: il giardiniere ha appena letto il sensore ATO e
+        # vuole agganciare il Pot allo stato reale.
+        acidic = self._make_chemistry_substrate(ph_typical=5.0)
+        pot = self._make_chemistry_pot(
+            substrate=acidic, ph_substrate=6.2,
+        )
+        self.assertEqual(pot.ph_substrate, 6.2)
+
+    def test_ph_alkaline_substrate(self):
+        # Substrato calcareo: pH iniziale alcalino.
+        alkaline = self._make_chemistry_substrate(ph_typical=7.8)
+        pot = self._make_chemistry_pot(substrate=alkaline)
+        self.assertEqual(pot.ph_substrate, 7.8)
+
+    # ----- salt_mass_meq -----
+
+    def test_salt_mass_default_is_zero(self):
+        # Default zero: vaso "appena rinvasato in terriccio fresco".
+        pot = self._make_chemistry_pot()
+        self.assertEqual(pot.salt_mass_meq, 0.0)
+
+    def test_salt_mass_explicit_accepted(self):
+        # Caso "vaso preesistente con storia di fertilizzazione": il
+        # giardiniere passa il valore esplicito.
+        pot = self._make_chemistry_pot(salt_mass_meq=15.0)
+        self.assertEqual(pot.salt_mass_meq, 15.0)
+
+    # ----- Property derivata ec_substrate_mscm -----
+
+    def test_ec_zero_when_no_salts(self):
+        # Vaso senza sali: EC=0 indipendentemente dall'acqua.
+        pot = self._make_chemistry_pot(salt_mass_meq=0.0)
+        self.assertEqual(pot.ec_substrate_mscm, 0.0)
+
+    def test_ec_calculation_basic(self):
+        # Conversione canonica: 10 meq/L equivalgono a 1.0 mS/cm.
+        # Costruiamo un caso aritmetico semplice: 1L d'acqua nel vaso
+        # con 10 meq di sali → EC=1.0.
+        pot = self._make_chemistry_pot(
+            pot_volume_l=2.0, pot_diameter_cm=18.0,
+        )
+        # L'area è π·r² = π·(0.09)² ≈ 0.0254 m²; per avere 1L=1mm·m²·1000
+        # impostiamo state_mm in modo che state_mm × area = 1.0 L.
+        # state_mm = 1.0 / 0.0254 ≈ 39.3 mm.
+        target_water_l = 1.0
+        pot.state_mm = target_water_l / pot.surface_area_m2
+        pot.salt_mass_meq = 10.0
+        # Adesso water_volume_liters ≈ 1.0 e salt_mass = 10 meq.
+        # Quindi EC = 10/1/10 = 1.0 mS/cm.
+        self.assertAlmostEqual(pot.water_volume_liters, 1.0, places=5)
+        self.assertAlmostEqual(pot.ec_substrate_mscm, 1.0, places=5)
+
+    def test_ec_zero_when_no_water(self):
+        # Caso degenere: zero acqua → EC=0 per convenzione (non
+        # ZeroDivisionError).
+        pot = self._make_chemistry_pot(state_mm=0.0, salt_mass_meq=15.0)
+        self.assertEqual(pot.ec_substrate_mscm, 0.0)
+
+    def test_ec_increases_when_water_decreases(self):
+        # IL FENOMENO DELLA CONCENTRAZIONE PER EVAPOTRASPIRAZIONE.
+        # Questo è il test che ha motivato la scelta della versione
+        # fedele del modello. Quando il vaso si asciuga, la massa
+        # salina resta costante ma il volume di acqua diminuisce, e
+        # l'EC sale automaticamente. È esattamente quello che si vede
+        # sui sensori reali.
+        pot = self._make_chemistry_pot(state_mm=40.0, salt_mass_meq=20.0)
+        ec_iniziale = pot.ec_substrate_mscm
+
+        # Simuliamo evapotraspirazione: lo state_mm si dimezza, ma i
+        # sali NON vengono toccati (stati indipendenti).
+        pot.state_mm = 20.0
+        ec_finale = pot.ec_substrate_mscm
+
+        # Con water_volume dimezzato e salt_mass invariata, l'EC deve
+        # essere esattamente raddoppiata.
+        self.assertAlmostEqual(ec_finale / ec_iniziale, 2.0, places=5)
+
+    # ----- Validazione degli input -----
+
+    def test_negative_ph_rejected_at_construction(self):
+        # Il sentinel value è esattamente -1.0 (vedi __post_init__ del
+        # Pot). Valori negativi diversi dal sentinel devono essere
+        # rifiutati come errori di input, non confusi con la sentinella.
+        with self.assertRaises(ValueError):
+            self._make_chemistry_pot(ph_substrate=-5.0)
+
+    def test_ph_above_14_rejected(self):
+        with self.assertRaises(ValueError):
+            self._make_chemistry_pot(ph_substrate=15.0)
+
+    def test_ph_zero_rejected(self):
+        # pH=0 è chimicamente al limite della scala, non ha senso per
+        # un substrato di coltivazione.
+        with self.assertRaises(ValueError):
+            self._make_chemistry_pot(ph_substrate=0.0)
+
+    def test_negative_salt_mass_rejected(self):
+        with self.assertRaises(ValueError):
+            self._make_chemistry_pot(salt_mass_meq=-5.0)
+
+    def test_zero_salt_mass_accepted(self):
+        # Zero è il default ed è perfettamente legittimo.
+        pot = self._make_chemistry_pot(salt_mass_meq=0.0)
+        self.assertEqual(pot.salt_mass_meq, 0.0)
+
+    # ----- Indipendenza dal modello idrico esistente -----
+
+    def test_chemistry_does_not_affect_water_balance(self):
+        # I nuovi stati chimici NON devono influenzare il bilancio
+        # idrico: chiamando apply_balance_step con o senza chimica
+        # attiva, lo state_mm finale e il drainage devono essere
+        # identici nei due casi.
+        pot_a = self._make_chemistry_pot(state_mm=30.0)
+        pot_b = self._make_chemistry_pot(
+            state_mm=30.0, salt_mass_meq=25.0, ph_substrate=5.5,
+        )
+
+        # Stesso evento idrico nei due Pot: stessa ET, niente input.
+        test_date = date(2026, 5, 15)
+        result_a = pot_a.apply_balance_step(
+            et_0_mm=4.0, water_input_mm=0.0, current_date=test_date,
+        )
+        result_b = pot_b.apply_balance_step(
+            et_0_mm=4.0, water_input_mm=0.0, current_date=test_date,
+        )
+
+        # Lo state_mm finale e il drainage devono essere identici.
+        self.assertAlmostEqual(pot_a.state_mm, pot_b.state_mm, places=6)
+        self.assertAlmostEqual(
+            result_a.new_state, result_b.new_state, places=6,
+        )
+        self.assertAlmostEqual(
+            result_a.drainage, result_b.drainage, places=6,
+        )
 
 
 if __name__ == "__main__":

@@ -327,5 +327,138 @@ class TestSpeciesDualKcParameters(unittest.TestCase):
         self.assertTrue(s.supports_dual_kc)
 
 
+# =======================================================================
+#  Estensione tappa 3 fascia 2: modello chimico (EC e pH ottimali)
+# =======================================================================
+
+class TestSpeciesChemistryModel(unittest.TestCase):
+    """
+    Validazione dei quattro parametri chimici aggiunti in tappa 3 della
+    fascia 2 (ec_optimal_min_mscm, ec_optimal_max_mscm, ph_optimal_min,
+    ph_optimal_max). Definiscono il range ottimale di EC e pH del
+    substrato per la specie e alimentano il calcolo del Kn.
+    """
+
+    def _make_basic_species(self, **overrides) -> Species:
+        """Helper: specie minima senza modello chimico, per estendere."""
+        defaults = dict(
+            common_name="test",
+            scientific_name="Test species",
+            kc_initial=0.5, kc_mid=1.0, kc_late=0.7,
+        )
+        defaults.update(overrides)
+        return Species(**defaults)
+
+    def test_chemistry_default_all_none(self):
+        # Senza specificare nulla, i quattro campi sono None: la specie
+        # non supporta il modello chimico.
+        s = self._make_basic_species()
+        self.assertIsNone(s.ec_optimal_min_mscm)
+        self.assertIsNone(s.ec_optimal_max_mscm)
+        self.assertIsNone(s.ph_optimal_min)
+        self.assertIsNone(s.ph_optimal_max)
+
+    def test_supports_chemistry_model_false_by_default(self):
+        # supports_chemistry_model deve essere False per le specie
+        # legacy (analogo a supports_dual_kc).
+        s = self._make_basic_species()
+        self.assertFalse(s.supports_chemistry_model)
+
+    def test_full_chemistry_model_accepted(self):
+        # Tutti e quattro valorizzati: la specie supporta il modello.
+        s = self._make_basic_species(
+            ec_optimal_min_mscm=1.0,
+            ec_optimal_max_mscm=1.6,
+            ph_optimal_min=6.0,
+            ph_optimal_max=7.0,
+        )
+        self.assertTrue(s.supports_chemistry_model)
+        self.assertEqual(s.ec_optimal_min_mscm, 1.0)
+        self.assertEqual(s.ph_optimal_max, 7.0)
+
+    def test_partial_chemistry_rejected(self):
+        # Tre su quattro: stato indefinito, ValueError.
+        with self.assertRaises(ValueError) as ctx:
+            self._make_basic_species(
+                ec_optimal_min_mscm=1.0,
+                ec_optimal_max_mscm=1.6,
+                ph_optimal_min=6.0,
+                # ph_optimal_max mancante
+            )
+        self.assertIn("tutti o nessuno", str(ctx.exception))
+
+    def test_one_chemistry_param_alone_rejected(self):
+        # Un solo campo valorizzato: anche peggio.
+        with self.assertRaises(ValueError):
+            self._make_basic_species(ec_optimal_min_mscm=1.0)
+
+    def test_ec_range_inverted_rejected(self):
+        # min >= max: range vuoto, fisicamente impossibile.
+        with self.assertRaises(ValueError) as ctx:
+            self._make_basic_species(
+                ec_optimal_min_mscm=2.0,
+                ec_optimal_max_mscm=1.5,  # invertito
+                ph_optimal_min=6.0,
+                ph_optimal_max=7.0,
+            )
+        self.assertIn("EC", str(ctx.exception))
+
+    def test_ec_excessive_rejected(self):
+        # EC > 8 mS/cm è già stress salino acuto, non può essere "ottimale".
+        with self.assertRaises(ValueError):
+            self._make_basic_species(
+                ec_optimal_min_mscm=5.0,
+                ec_optimal_max_mscm=10.0,  # troppo alto
+                ph_optimal_min=6.0,
+                ph_optimal_max=7.0,
+            )
+
+    def test_ph_range_inverted_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._make_basic_species(
+                ec_optimal_min_mscm=1.0,
+                ec_optimal_max_mscm=2.0,
+                ph_optimal_min=7.5,
+                ph_optimal_max=6.5,  # invertito
+            )
+        self.assertIn("pH", str(ctx.exception))
+
+    def test_ph_above_14_rejected(self):
+        # pH > 14 esce dalla scala chimica.
+        with self.assertRaises(ValueError):
+            self._make_basic_species(
+                ec_optimal_min_mscm=1.0,
+                ec_optimal_max_mscm=2.0,
+                ph_optimal_min=6.0,
+                ph_optimal_max=15.0,
+            )
+
+    def test_acidophilic_species_accepted(self):
+        # Mirtillo: pH acido 4.5-5.5 è accettato (sotto neutro ma sopra 0).
+        s = self._make_basic_species(
+            common_name="mirtillo",
+            scientific_name="Vaccinium corymbosum",
+            ec_optimal_min_mscm=0.8,
+            ec_optimal_max_mscm=1.4,
+            ph_optimal_min=4.5,
+            ph_optimal_max=5.5,
+        )
+        self.assertTrue(s.supports_chemistry_model)
+        self.assertEqual(s.ph_optimal_min, 4.5)
+
+    def test_chemistry_compatible_with_dual_kc(self):
+        # Una specie può avere sia il dual-Kc sia il modello chimico:
+        # le due estensioni sono indipendenti.
+        s = self._make_basic_species(
+            kcb_initial=0.35, kcb_mid=0.85, kcb_late=0.55,
+            ec_optimal_min_mscm=1.0,
+            ec_optimal_max_mscm=1.6,
+            ph_optimal_min=6.0,
+            ph_optimal_max=7.0,
+        )
+        self.assertTrue(s.supports_dual_kc)
+        self.assertTrue(s.supports_chemistry_model)
+
+
 if __name__ == "__main__":
     unittest.main()
