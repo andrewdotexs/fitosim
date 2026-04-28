@@ -22,6 +22,7 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict
 
+from fitosim.domain.alerts import AlertCategory, AlertSeverity
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
@@ -884,6 +885,172 @@ class TestGardenForecast(unittest.TestCase):
         # basilico-1: sali aumentati il 17
         b1 = result.trajectories["basilico-1"]
         self.assertGreater(b1.points[2].salt_mass_meq, 8.0)
+
+
+# =======================================================================
+#  Famiglia 9: sistema di allerte (current_alerts e forecast_alerts)
+# =======================================================================
+
+class TestGardenCurrentAlerts(unittest.TestCase):
+    """Test del metodo current_alerts."""
+
+    def setUp(self):
+        self.garden = Garden(name="balcone")
+
+    def test_empty_garden_no_alerts(self):
+        # Garden vuoto: nessuna allerta.
+        alerts = self.garden.current_alerts(date(2026, 5, 15))
+        self.assertEqual(alerts, [])
+
+    def test_optimal_pots_no_alerts(self):
+        # Vasi in condizioni ottimali: nessuna allerta.
+        # state_mm=25, salt=8.27 → EC=1.3 in range, pH 6.5 in range.
+        for label in ["v1", "v2"]:
+            self.garden.add_pot(_make_pot(
+                label=label, state_mm=25.0, salt_mass_meq=8.27,
+                ph_substrate=6.5,
+            ))
+        alerts = self.garden.current_alerts(date(2026, 5, 15))
+        self.assertEqual(alerts, [])
+
+    def test_dry_pot_produces_irrigation_alert(self):
+        # Un vaso secco produce un'allerta irrigation.
+        self.garden.add_pot(_make_pot(
+            label="secco", state_mm=2.0,
+        ))
+        alerts = self.garden.current_alerts(date(2026, 5, 15))
+        irrigation_alerts = [
+            a for a in alerts
+            if a.category == AlertCategory.IRRIGATION_NEEDED
+        ]
+        self.assertEqual(len(irrigation_alerts), 1)
+        self.assertEqual(irrigation_alerts[0].pot_label, "secco")
+
+    def test_alerts_sorted_deterministically(self):
+        # Più vasi e più allerte: ordinamento per (pot_label, category).
+        self.garden.add_pot(_make_pot(
+            label="z-vaso", state_mm=2.0, ph_substrate=8.5,
+        ))
+        self.garden.add_pot(_make_pot(
+            label="a-vaso", state_mm=2.0,
+        ))
+        alerts = self.garden.current_alerts(date(2026, 5, 15))
+        # I vasi che cominciano con 'a' vengono prima di 'z'.
+        labels_in_order = [a.pot_label for a in alerts]
+        # Tutti i 'a-vaso' vengono prima di tutti i 'z-vaso'.
+        a_indices = [i for i, l in enumerate(labels_in_order)
+                     if l == "a-vaso"]
+        z_indices = [i for i, l in enumerate(labels_in_order)
+                     if l == "z-vaso"]
+        if a_indices and z_indices:
+            self.assertLess(max(a_indices), min(z_indices))
+
+    def test_default_current_date_is_today(self):
+        # Senza parametro current_date, il metodo usa date.today().
+        # Verifichiamo che il metodo non sollevi errori senza parametro.
+        self.garden.add_pot(_make_pot(label="secco", state_mm=2.0))
+        alerts = self.garden.current_alerts()
+        # La triggered_date deve essere oggi.
+        self.assertEqual(
+            alerts[0].triggered_date, date.today(),
+        )
+
+    def test_no_side_effect_on_pot_state(self):
+        # current_alerts non modifica lo stato dei vasi.
+        self.garden.add_pot(_make_pot(label="v", state_mm=2.0))
+        before = self.garden.get_pot("v").state_mm
+        self.garden.current_alerts(date(2026, 5, 15))
+        after = self.garden.get_pot("v").state_mm
+        self.assertEqual(before, after)
+
+
+class TestGardenForecastAlerts(unittest.TestCase):
+    """Test del metodo forecast_alerts."""
+
+    def setUp(self):
+        self.garden = Garden(name="balcone")
+        # Vaso che parte ottimale, ma asciugherà col tempo.
+        self.garden.add_pot(_make_pot(
+            label="basilico", state_mm=20.0, salt_mass_meq=8.27,
+        ))
+
+    def _make_dry_forecast(self, num_days: int) -> list:
+        """Forecast meteorologico secco (alta ET, niente pioggia)."""
+        return [
+            WeatherDayForecast(
+                date_=date(2026, 5, 15) + timedelta(days=i),
+                et_0_mm=5.5, rainfall_mm=0.0,
+            )
+            for i in range(num_days)
+        ]
+
+    def test_empty_forecast_rejected(self):
+        # Forecast vuoto: ValueError.
+        with self.assertRaises(ValueError):
+            self.garden.forecast_alerts([])
+
+    def test_dry_forecast_predicts_irrigation_alerts(self):
+        # 7 giorni di sole intenso senza pioggia: il vaso si seccherà
+        # progressivamente e l'allerta irrigation scatterà a un certo
+        # punto della proiezione.
+        alerts = self.garden.forecast_alerts(self._make_dry_forecast(7))
+        irrigation_alerts = [
+            a for a in alerts
+            if a.category == AlertCategory.IRRIGATION_NEEDED
+        ]
+        # Almeno qualche allerta irrigation nei 7 giorni.
+        self.assertGreater(len(irrigation_alerts), 0)
+
+    def test_alerts_have_future_dates(self):
+        # Le triggered_date delle allerte forecast sono giorni futuri.
+        forecast = self._make_dry_forecast(5)
+        alerts = self.garden.forecast_alerts(forecast)
+        if alerts:
+            future_dates = {a.triggered_date for a in alerts}
+            forecast_dates = {f.date_ for f in forecast}
+            # Ogni triggered_date deve essere uno dei giorni del
+            # forecast.
+            self.assertTrue(future_dates.issubset(forecast_dates))
+
+    def test_no_side_effect_on_pot_state(self):
+        # Come per forecast(), forecast_alerts non modifica i vasi
+        # del Garden corrente.
+        before = self.garden.get_pot("basilico").state_mm
+        self.garden.forecast_alerts(self._make_dry_forecast(10))
+        after = self.garden.get_pot("basilico").state_mm
+        self.assertEqual(before, after)
+
+    def test_alerts_sorted_by_date_then_pot(self):
+        # Le allerte sono ordinate per (triggered_date, pot_label,
+        # category).
+        self.garden.add_pot(_make_pot(
+            label="a-altro", state_mm=15.0,
+        ))
+        alerts = self.garden.forecast_alerts(self._make_dry_forecast(5))
+        # Verifica monotonia del triggered_date.
+        for i in range(len(alerts) - 1):
+            self.assertLessEqual(
+                alerts[i].triggered_date, alerts[i + 1].triggered_date,
+            )
+
+    def test_no_dedup_same_alert_across_days(self):
+        # Niente dedup interna: se la stessa categoria scatta per più
+        # giorni di seguito, restituiamo N allerte.
+        # Il vaso parte secco, quindi irrigation scatta dal giorno 1.
+        self.garden.remove_pot("basilico")
+        self.garden.add_pot(_make_pot(
+            label="secco", state_mm=2.0,
+        ))
+        alerts = self.garden.forecast_alerts(self._make_dry_forecast(5))
+        irrigation = [
+            a for a in alerts
+            if a.category == AlertCategory.IRRIGATION_NEEDED
+        ]
+        # Più allerte irrigation, una per ogni giorno futuro.
+        self.assertGreater(len(irrigation), 1)
+        # Le triggered_date sono diverse.
+        dates = {a.triggered_date for a in irrigation}
+        self.assertEqual(len(dates), len(irrigation))
 
 
 if __name__ == "__main__":

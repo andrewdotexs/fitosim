@@ -64,6 +64,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Dict, Iterator, List, Optional, Tuple, Union
 
+from fitosim.domain.alerts import ALL_RULES, Alert
 from fitosim.domain.pot import FullStepResult, Pot, SensorUpdateResult
 from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
 from fitosim.io.sensors import (
@@ -848,6 +849,137 @@ class Garden:
                 current_date=day,
             )
         # Altri event_type ignorati per il forecast.
+
+    # ----- Sistema di allerte -----
+
+    def current_alerts(
+        self, current_date: Optional[date] = None,
+    ) -> List[Alert]:
+        """
+        Calcola le allerte sullo stato corrente di tutti i vasi.
+
+        Per ogni vaso del giardino applica tutte le regole di
+        ``ALL_RULES`` e raccoglie le allerte non-None. Le allerte sono
+        ordinate per ``(pot_label, category)`` per produrre output
+        deterministico tra chiamate consecutive.
+
+        Le allerte **non vengono persistite**: sono il risultato
+        dell'applicazione delle regole allo stato corrente. Se il
+        chiamante chiama di nuovo il metodo dopo aver modificato lo
+        stato (per esempio dopo una fertirrigazione che corregge l'EC
+        bassa), l'allerta corrispondente sarà scomparsa.
+
+        Parametri
+        ---------
+        current_date : date, opzionale
+            Data di riferimento per le allerte (popolerà il campo
+            ``triggered_date`` di ogni Alert e contribuirà al calcolo
+            del suo ``alert_id``). Default: data odierna del sistema.
+
+        Ritorna
+        -------
+        List[Alert]
+            Le allerte attive sullo stato corrente, ordinate per
+            ``(pot_label, category)``.
+        """
+        if current_date is None:
+            current_date = date.today()
+
+        alerts: List[Alert] = []
+        for pot in self._pots.values():
+            for rule in ALL_RULES:
+                alert = rule(pot, current_date)
+                if alert is not None:
+                    alerts.append(alert)
+
+        # Ordinamento deterministico per dare al chiamante un output
+        # stabile tra chiamate.
+        alerts.sort(key=lambda a: (a.pot_label, a.category.value))
+        return alerts
+
+    def forecast_alerts(
+        self,
+        weather_forecast: List[WeatherDayForecast],
+    ) -> List[Alert]:
+        """
+        Calcola le allerte previste nei prossimi giorni dato un forecast
+        meteorologico.
+
+        Per ogni giorno della previsione, il metodo applica gli eventi
+        pianificati e l'evapotraspirazione/pioggia ai vasi copia (come
+        fa ``forecast``), e poi applica le regole di ``ALL_RULES`` allo
+        stato risultante. Le allerte hanno ``triggered_date`` uguale
+        al giorno futuro a cui si riferiscono.
+
+        Niente deduplicazione interna: se la stessa allerta scatta per
+        più giorni consecutivi nel forecast, restituiamo N allerte
+        (una per giorno con id diversi). Il dashboard è responsabile
+        di presentare quello che vuole presentare.
+
+        Proprietà fondamentale: come per ``forecast``, lavora su copie
+        deep dei vasi. Lo stato del Garden corrente non viene
+        modificato.
+
+        Parametri
+        ---------
+        weather_forecast : List[WeatherDayForecast]
+            Previsione meteorologica per i giorni successivi.
+
+        Ritorna
+        -------
+        List[Alert]
+            Le allerte previste nei prossimi giorni, ordinate per
+            ``(triggered_date, pot_label, category)``.
+        """
+        if not weather_forecast:
+            raise ValueError(
+                "weather_forecast deve essere una lista non vuota."
+            )
+
+        # Ricalca il loop interno di forecast: deep copy dei vasi e
+        # iterazione giornaliera applicando eventi pianificati e
+        # apply_step. Niente refactor del metodo forecast esistente
+        # per non rischiare regressioni.
+        pot_copies: Dict[str, Pot] = {
+            label: copy.deepcopy(pot)
+            for label, pot in self._pots.items()
+        }
+
+        all_alerts: List[Alert] = []
+
+        for day_forecast in weather_forecast:
+            day = day_forecast.date_
+
+            # Applica eventi pianificati del giorno ai vasi copia.
+            for event in self.events_due_today(day):
+                if event.pot_label not in pot_copies:
+                    continue
+                pot_copy = pot_copies[event.pot_label]
+                self._apply_scheduled_event_to_copy(pot_copy, event, day)
+
+            # Step giornaliero standard.
+            for label, pot_copy in pot_copies.items():
+                rainfall_volume_l = (
+                    day_forecast.rainfall_mm * pot_copy.surface_area_m2
+                )
+                pot_copy.apply_step(
+                    et_0_mm=day_forecast.et_0_mm,
+                    current_date=day,
+                    rainfall_volume_l=rainfall_volume_l,
+                )
+
+            # Applica le regole di alerts allo stato post-evoluzione
+            # del giorno per ogni vaso copia.
+            for pot_copy in pot_copies.values():
+                for rule in ALL_RULES:
+                    alert = rule(pot_copy, day)
+                    if alert is not None:
+                        all_alerts.append(alert)
+
+        all_alerts.sort(
+            key=lambda a: (a.triggered_date, a.pot_label, a.category.value),
+        )
+        return all_alerts
 
 
 # =======================================================================
