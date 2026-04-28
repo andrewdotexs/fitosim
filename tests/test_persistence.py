@@ -38,6 +38,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot
+from fitosim.domain.scheduling import ScheduledEvent
 from fitosim.domain.species import Species
 from fitosim.io.persistence import (
     CatalogMissingError,
@@ -736,13 +737,14 @@ class TestChannelIdPersistence(unittest.TestCase):
         loaded = self.persistence.load_garden("balcone")
         self.assertIsNone(loaded.get_channel_id("basilico-1"))
 
-    def test_schema_version_is_2(self):
-        # Database nuovo: schema_version = 2.
+    def test_schema_version_is_current(self):
+        # Database nuovo: schema_version uguale alla SCHEMA_VERSION
+        # corrente (3 dalla sotto-tappa D).
         cursor = self.persistence._conn.execute(
             "SELECT version FROM schema_metadata "
             "ORDER BY id DESC LIMIT 1"
         )
-        self.assertEqual(cursor.fetchone()["version"], 2)
+        self.assertEqual(cursor.fetchone()["version"], SCHEMA_VERSION)
 
     def test_v1_database_migrates_to_v2_automatically(self):
         # Simuliamo un database creato con lo schema v1: applichiamo
@@ -821,11 +823,175 @@ class TestChannelIdPersistence(unittest.TestCase):
                     "SELECT version FROM schema_metadata "
                     "ORDER BY id DESC LIMIT 1"
                 )
-                self.assertEqual(cursor.fetchone()["version"], 2)
+                self.assertEqual(cursor.fetchone()["version"], 3)
                 # E la colonna channel_id esiste:
                 cursor = p._conn.execute("PRAGMA table_info(pots)")
                 cols = [r["name"] for r in cursor.fetchall()]
                 self.assertIn("channel_id", cols)
+        finally:
+            os.unlink(tmp_path)
+
+
+# =======================================================================
+#  Famiglia 8: persistenza degli eventi pianificati (sotto-tappa D)
+# =======================================================================
+
+class TestScheduledEventsPersistence(unittest.TestCase):
+    """Persistenza SQLite degli eventi pianificati e migrazione v2→v3."""
+
+    def setUp(self):
+        self.persistence = GardenPersistence(":memory:")
+        self.persistence.register_species(_make_basil())
+        self.persistence.register_substrate(_make_universal_substrate())
+
+    def tearDown(self):
+        self.persistence.close()
+
+    def test_schema_version_is_3(self):
+        cursor = self.persistence._conn.execute(
+            "SELECT version FROM schema_metadata "
+            "ORDER BY id DESC LIMIT 1"
+        )
+        self.assertEqual(cursor.fetchone()["version"], 3)
+
+    def test_round_trip_with_scheduled_events(self):
+        garden = Garden(name="balcone")
+        garden.add_pot(_make_basic_pot("basilico-1"))
+        garden.add_scheduled_event(ScheduledEvent(
+            event_id="fert-001", pot_label="basilico-1",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 18),
+            payload={"volume_l": 0.3, "ec_mscm": 2.0, "ph": 6.2},
+        ))
+        garden.add_scheduled_event(ScheduledEvent(
+            event_id="treat-001", pot_label="basilico-1",
+            event_type="treatment",
+            scheduled_date=date(2026, 5, 25),
+            payload={"product": "antifungino"},
+        ))
+
+        self.persistence.save_garden(garden)
+        loaded = self.persistence.load_garden("balcone")
+
+        events = loaded.scheduled_events
+        self.assertEqual(len(events), 2)
+        # Ordinati per scheduled_date.
+        self.assertEqual(events[0].event_id, "fert-001")
+        self.assertEqual(events[1].event_id, "treat-001")
+        # Payload completo preservato.
+        self.assertEqual(
+            events[0].payload,
+            {"volume_l": 0.3, "ec_mscm": 2.0, "ph": 6.2},
+        )
+
+    def test_resave_synchronizes_events(self):
+        # Salvataggio iniziale con due eventi.
+        garden = Garden(name="balcone")
+        garden.add_pot(_make_basic_pot("basilico-1"))
+        garden.add_scheduled_event(ScheduledEvent(
+            event_id="e1", pot_label="basilico-1",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 18), payload={},
+        ))
+        garden.add_scheduled_event(ScheduledEvent(
+            event_id="e2", pot_label="basilico-1",
+            event_type="treatment",
+            scheduled_date=date(2026, 5, 25), payload={},
+        ))
+        self.persistence.save_garden(garden)
+
+        # Cancella e2, aggiungi e3, risalva.
+        garden.cancel_scheduled_event("basilico-1", "e2")
+        garden.add_scheduled_event(ScheduledEvent(
+            event_id="e3", pot_label="basilico-1",
+            event_type="leaching",
+            scheduled_date=date(2026, 6, 1), payload={},
+        ))
+        self.persistence.save_garden(garden)
+
+        # Il database riflette il nuovo stato.
+        loaded = self.persistence.load_garden("balcone")
+        ids = [e.event_id for e in loaded.scheduled_events]
+        self.assertEqual(set(ids), {"e1", "e3"})
+
+    def test_query_scheduled_events_with_filters(self):
+        garden = Garden(name="balcone")
+        garden.add_pot(_make_basic_pot("basilico-1"))
+        garden.add_pot(_make_basic_pot("basilico-2"))
+        for i, day in enumerate([15, 20, 25]):
+            garden.add_scheduled_event(ScheduledEvent(
+                event_id=f"e{i}", pot_label="basilico-1",
+                event_type="fertigation",
+                scheduled_date=date(2026, 5, day), payload={},
+            ))
+        garden.add_scheduled_event(ScheduledEvent(
+            event_id="e-b2", pot_label="basilico-2",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 18), payload={},
+        ))
+        self.persistence.save_garden(garden)
+
+        # Filtro per pot_label.
+        b1_events = self.persistence.query_scheduled_events(
+            "balcone", pot_label="basilico-1",
+        )
+        self.assertEqual(len(b1_events), 3)
+        # Filtro per range di date.
+        in_range = self.persistence.query_scheduled_events(
+            "balcone", since=date(2026, 5, 17), until=date(2026, 5, 22),
+        )
+        # In range: e1 (20), e-b2 (18). Non e0 (15) né e2 (25).
+        ids = [e.event_id for e in in_range]
+        self.assertEqual(set(ids), {"e1", "e-b2"})
+
+    def test_delete_garden_cascades_to_scheduled_events(self):
+        garden = Garden(name="balcone")
+        garden.add_pot(_make_basic_pot("basilico-1"))
+        garden.add_scheduled_event(ScheduledEvent(
+            event_id="e1", pot_label="basilico-1",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 18), payload={},
+        ))
+        self.persistence.save_garden(garden)
+        self.persistence.delete_garden("balcone")
+
+        # Tabella scheduled_events svuotata dalla cascata
+        cursor = self.persistence._conn.execute(
+            "SELECT COUNT(*) AS c FROM scheduled_events"
+        )
+        self.assertEqual(cursor.fetchone()["c"], 0)
+
+    def test_v2_database_migrates_to_v3_automatically(self):
+        # Crea un database v2 a mano e verifica che venga migrato.
+        import sqlite3, tempfile, os
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            conn = sqlite3.connect(tmp_path)
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("""
+                CREATE TABLE schema_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version INTEGER NOT NULL
+                )
+            """)
+            conn.execute("INSERT INTO schema_metadata (version) VALUES (2)")
+            conn.commit()
+            conn.close()
+
+            # Apri con il codice v3: deve creare scheduled_events.
+            with GardenPersistence(tmp_path) as p:
+                cursor = p._conn.execute(
+                    "SELECT version FROM schema_metadata "
+                    "ORDER BY id DESC LIMIT 1"
+                )
+                self.assertEqual(cursor.fetchone()["version"], 3)
+                # La tabella scheduled_events esiste.
+                cursor = p._conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='scheduled_events'"
+                )
+                self.assertIsNotNone(cursor.fetchone())
         finally:
             os.unlink(tmp_path)
 

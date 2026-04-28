@@ -59,11 +59,13 @@ in-memory che costruiamo qui.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
-from datetime import date
-from typing import Dict, Iterator, Optional, Union
+from datetime import date, timedelta
+from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 from fitosim.domain.pot import FullStepResult, Pot, SensorUpdateResult
+from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
 from fitosim.io.sensors import (
     SensorTemporaryError,
     SoilSensor,
@@ -138,6 +140,14 @@ class Garden:
     # sensore reale che lo monitora. Vasi senza mapping continuano
     # solo in previsione (giardini misti permessi).
     _channel_mapping: Dict[str, str] = field(
+        default_factory=dict, repr=False,
+    )
+    # Eventi pianificati indicizzati per (pot_label, event_id) per
+    # garantire l'unicità. Sono il "piano del giardiniere": cosa farò
+    # nei prossimi giorni/settimane. Da non confondere con la storia
+    # degli eventi (avvenuti) che vive nella tabella `events` della
+    # persistenza SQLite.
+    _scheduled_events: Dict[Tuple[str, str], ScheduledEvent] = field(
         default_factory=dict, repr=False,
     )
 
@@ -529,3 +539,348 @@ class Garden:
             results[label] = result
 
         return results
+
+    # ----- Gestione degli eventi pianificati -----
+
+    def add_scheduled_event(self, event: ScheduledEvent) -> None:
+        """
+        Aggiunge un evento al piano del giardino.
+
+        Solleva ValueError se la pot_label dell'evento non corrisponde
+        a nessun vaso nel giardino: vogliamo evitare eventi "orfani"
+        che fanno riferimento a vasi inesistenti.
+
+        Solleva ValueError anche se esiste già un evento con la stessa
+        coppia (pot_label, event_id): vogliamo che le coppie siano
+        uniche per evitare ambiguità in cancel_scheduled_event.
+
+        Parametri
+        ---------
+        event : ScheduledEvent
+            L'evento da aggiungere. La pot_label deve corrispondere
+            a un vaso esistente del giardino.
+
+        Solleva
+        -------
+        ValueError
+            Se la pot_label è di un vaso non esistente, oppure se
+            l'evento ha lo stesso (pot_label, event_id) di un evento
+            già presente.
+        """
+        if event.pot_label not in self._pots:
+            raise ValueError(
+                f"Garden '{self.name}': impossibile aggiungere evento "
+                f"per il vaso '{event.pot_label}' che non è presente. "
+                f"Vasi presenti: {list(self._pots.keys())}"
+            )
+        key = (event.pot_label, event.event_id)
+        if key in self._scheduled_events:
+            raise ValueError(
+                f"Garden '{self.name}': esiste già un evento con id "
+                f"'{event.event_id}' per il vaso '{event.pot_label}'. "
+                f"Per modificarlo, prima cancella quello esistente."
+            )
+        self._scheduled_events[key] = event
+
+    def cancel_scheduled_event(
+        self, pot_label: str, event_id: str,
+    ) -> ScheduledEvent:
+        """
+        Rimuove un evento dal piano e lo restituisce.
+
+        Caso d'uso tipico: il giardiniere ha appena fatto la
+        fertirrigazione, quindi rimuove l'evento dal piano e
+        contestualmente lo registra come storico via
+        ``persistence.record_event``.
+
+        Solleva
+        -------
+        KeyError
+            Se non esiste un evento con quella combinazione di
+            pot_label ed event_id.
+        """
+        key = (pot_label, event_id)
+        if key not in self._scheduled_events:
+            raise KeyError(
+                f"Garden '{self.name}': nessun evento con id "
+                f"'{event_id}' per il vaso '{pot_label}'."
+            )
+        return self._scheduled_events.pop(key)
+
+    def get_scheduled_event(
+        self, pot_label: str, event_id: str,
+    ) -> ScheduledEvent:
+        """Recupera un evento pianificato. KeyError se non esiste."""
+        key = (pot_label, event_id)
+        if key not in self._scheduled_events:
+            raise KeyError(
+                f"Garden '{self.name}': nessun evento con id "
+                f"'{event_id}' per il vaso '{pot_label}'."
+            )
+        return self._scheduled_events[key]
+
+    def has_scheduled_event(
+        self, pot_label: str, event_id: str,
+    ) -> bool:
+        """Test booleano di esistenza di un evento."""
+        return (pot_label, event_id) in self._scheduled_events
+
+    @property
+    def scheduled_events(self) -> List[ScheduledEvent]:
+        """
+        Lista di tutti gli eventi pianificati del giardino.
+
+        Ordinati per (scheduled_date, pot_label, event_id) per
+        produzione deterministica. Ritorna una nuova lista a ogni
+        chiamata, modificarla non altera lo stato interno.
+        """
+        return sorted(
+            self._scheduled_events.values(),
+            key=lambda e: (e.scheduled_date, e.pot_label, e.event_id),
+        )
+
+    def events_due_today(
+        self,
+        current_date: date,
+        pot_label: Optional[str] = None,
+    ) -> List[ScheduledEvent]:
+        """
+        Ritorna gli eventi pianificati per il giorno corrente.
+
+        La definizione di "due today" è restrittiva: ``scheduled_date``
+        esattamente uguale a ``current_date``. Eventi con date
+        precedenti (in ritardo) NON sono inclusi: per recuperarli usa
+        ``events_due_in_range`` con un range che li includa, oppure
+        un metodo dedicato (futuro).
+
+        Parametri
+        ---------
+        current_date : date
+            Il giorno per cui cercare eventi pianificati.
+        pot_label : str, opzionale
+            Se specificato, filtra solo gli eventi del vaso indicato.
+
+        Ritorna
+        -------
+        List[ScheduledEvent]
+            Eventi del giorno, ordinati per (pot_label, event_id).
+        """
+        result = [
+            e for e in self._scheduled_events.values()
+            if e.scheduled_date == current_date
+            and (pot_label is None or e.pot_label == pot_label)
+        ]
+        return sorted(result, key=lambda e: (e.pot_label, e.event_id))
+
+    def events_due_in_range(
+        self,
+        start_date: date,
+        end_date: date,
+        pot_label: Optional[str] = None,
+    ) -> List[ScheduledEvent]:
+        """
+        Ritorna gli eventi pianificati in un intervallo di date.
+
+        Range inclusivo su entrambi gli estremi. Utile per produrre
+        viste "settimana corrente" o "prossimi 30 giorni" nel
+        dashboard.
+
+        Parametri
+        ---------
+        start_date, end_date : date
+            Estremi inclusivi dell'intervallo.
+        pot_label : str, opzionale
+            Filtro per singolo vaso.
+
+        Ritorna
+        -------
+        List[ScheduledEvent]
+            Eventi nel range, ordinati per (scheduled_date, pot_label,
+            event_id).
+        """
+        if start_date > end_date:
+            raise ValueError(
+                f"start_date ({start_date}) deve essere ≤ end_date "
+                f"({end_date})."
+            )
+        result = [
+            e for e in self._scheduled_events.values()
+            if start_date <= e.scheduled_date <= end_date
+            and (pot_label is None or e.pot_label == pot_label)
+        ]
+        return sorted(
+            result, key=lambda e: (e.scheduled_date, e.pot_label, e.event_id),
+        )
+
+    # ----- Forecast: proiezione dello stato nei giorni futuri -----
+
+    def forecast(
+        self,
+        weather_forecast: List[WeatherDayForecast],
+    ) -> "ForecastResult":
+        """
+        Proietta lo stato del giardino nei giorni futuri.
+
+        Per ogni giorno della previsione meteorologica, il metodo
+        applica:
+
+          1. Gli eventi pianificati del giorno (``fertigation``,
+             ``leaching``) ai vasi corrispondenti — usando i metodi
+             scientifici esistenti di Pot.
+          2. L'evapotraspirazione e la pioggia del giorno —
+             chiamando ``apply_step`` standard.
+
+        Eventi con event_type diverso da ``fertigation`` e
+        ``leaching`` sono ignorati dal forecast (effetti fisiologici
+        non modellati nel sistema scientifico corrente di fitosim).
+
+        Proprietà fondamentale: il forecast lavora su **copie deep**
+        dei vasi del giardino. Lo stato dei vasi del Garden corrente
+        NON viene modificato dalla chiamata. È una previsione "se
+        le cose andassero così", non un'evoluzione effettiva del
+        modello.
+
+        Parametri
+        ---------
+        weather_forecast : List[WeatherDayForecast]
+            Previsione meteorologica per i giorni successivi. La
+            lista deve essere non-vuota e contenere giorni
+            consecutivi (la sequenza date_ deve essere ordinata e
+            senza buchi). Il metodo non valida la consecutività in
+            modo stretto, ma è una proprietà che il chiamante deve
+            garantire per ottenere risultati sensati.
+
+        Ritorna
+        -------
+        ForecastResult
+            Per ogni vaso del giardino, la traiettoria proiettata di
+            stato (state_mm, salt_mass_meq, ph_substrate, ec_mscm
+            derivata) per ogni giorno della previsione.
+        """
+        if not weather_forecast:
+            raise ValueError(
+                "weather_forecast deve essere una lista non vuota."
+            )
+
+        # Costruisce mappe label→Pot copia per evolvere la simulazione
+        # senza toccare i vasi originali.
+        pot_copies: Dict[str, Pot] = {
+            label: copy.deepcopy(pot)
+            for label, pot in self._pots.items()
+        }
+
+        # Inizializza le traiettorie con un'entrata per ogni vaso.
+        trajectories: Dict[str, "PotForecastTrajectory"] = {
+            label: PotForecastTrajectory(pot_label=label, points=[])
+            for label in pot_copies
+        }
+
+        for day_forecast in weather_forecast:
+            day = day_forecast.date_
+
+            # Applica gli eventi pianificati del giorno ai vasi copia.
+            for event in self.events_due_today(day):
+                if event.pot_label not in pot_copies:
+                    # Evento orfano (vaso rimosso dopo che l'evento è
+                    # stato pianificato): salta.
+                    continue
+                pot_copy = pot_copies[event.pot_label]
+                self._apply_scheduled_event_to_copy(
+                    pot_copy, event, day,
+                )
+
+            # Step giornaliero standard (ET₀ + pioggia) su tutti i vasi.
+            for label, pot_copy in pot_copies.items():
+                rainfall_volume_l = (
+                    day_forecast.rainfall_mm * pot_copy.surface_area_m2
+                )
+                pot_copy.apply_step(
+                    et_0_mm=day_forecast.et_0_mm,
+                    current_date=day,
+                    rainfall_volume_l=rainfall_volume_l,
+                )
+
+                # Cattura il punto della traiettoria post-evoluzione.
+                trajectories[label].points.append(
+                    PotForecastPoint(
+                        date_=day,
+                        state_mm=pot_copy.state_mm,
+                        state_theta=pot_copy.state_theta,
+                        salt_mass_meq=pot_copy.salt_mass_meq,
+                        ph_substrate=pot_copy.ph_substrate,
+                        ec_substrate_mscm=pot_copy.ec_substrate_mscm,
+                    )
+                )
+
+        return ForecastResult(trajectories=trajectories)
+
+    @staticmethod
+    def _apply_scheduled_event_to_copy(
+        pot_copy: Pot, event: ScheduledEvent, day: date,
+    ) -> None:
+        """
+        Applica un singolo evento pianificato a un Pot copia,
+        chiamando i metodi scientifici esistenti.
+
+        Solo gli event_type "fertigation" e "leaching" sono
+        effettivamente simulati; gli altri sono ignorati senza errore
+        (comportamento documentato: il forecast non modella tutti i
+        tipi di evento).
+        """
+        if event.event_type == "fertigation":
+            payload = event.payload
+            pot_copy.apply_fertigation_step(
+                volume_l=payload["volume_l"],
+                ec_mscm=payload["ec_mscm"],
+                ph=payload["ph"],
+                current_date=day,
+            )
+        elif event.event_type == "leaching":
+            # Lavaggio: anche questo è una "fertirrigazione" dal punto
+            # di vista del modello, ma con acqua quasi pura. Il
+            # giardiniere virtuale che pianifica il lavaggio sa che
+            # ec_mscm è basso e ph è circa neutro.
+            payload = event.payload
+            pot_copy.apply_fertigation_step(
+                volume_l=payload["volume_l"],
+                ec_mscm=payload["ec_mscm"],
+                ph=payload.get("ph", 7.0),
+                current_date=day,
+            )
+        # Altri event_type ignorati per il forecast.
+
+
+# =======================================================================
+#  Strutture di ritorno del forecast
+# =======================================================================
+
+@dataclass(frozen=True)
+class PotForecastPoint:
+    """Singolo punto della traiettoria proiettata di un vaso."""
+    date_: date
+    state_mm: float
+    state_theta: float
+    salt_mass_meq: float
+    ph_substrate: float
+    ec_substrate_mscm: float
+
+
+@dataclass
+class PotForecastTrajectory:
+    """Traiettoria proiettata di un singolo vaso nei giorni futuri."""
+    pot_label: str
+    points: List[PotForecastPoint]
+
+
+@dataclass(frozen=True)
+class ForecastResult:
+    """
+    Risultato di un forecast del giardino.
+
+    Contiene una traiettoria per ogni vaso del giardino, indicizzata
+    per label. Ogni traiettoria è una sequenza di
+    ``PotForecastPoint``, una per ogni giorno della previsione
+    meteorologica fornita.
+    """
+    trajectories: Dict[str, PotForecastTrajectory]
+

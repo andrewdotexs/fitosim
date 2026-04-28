@@ -33,6 +33,7 @@ from fitosim.domain.pot import (
     PotShape,
     SunExposure,
 )
+from fitosim.domain.scheduling import ScheduledEvent
 from fitosim.domain.species import Species
 from fitosim.io.serialization import (
     FORMAT_VERSION,
@@ -95,6 +96,31 @@ def _make_basic_pot(label: str = "basilico-1", **overrides) -> Pot:
     )
     defaults.update(overrides)
     return Pot(label=label, **defaults)
+
+
+def _make_basil_dict():
+    """Helper per costruire un dict di species per i test di JSON v1."""
+    return {
+        "common_name": "basilico",
+        "scientific_name": "Ocimum basilicum",
+        "kc_initial": 0.50, "kc_mid": 1.10, "kc_late": 0.85,
+        "kcb_initial": None, "kcb_mid": None, "kcb_late": None,
+        "initial_stage_days": 30, "mid_stage_days": 60,
+        "ec_optimal_min_mscm": 1.0, "ec_optimal_max_mscm": 1.6,
+        "ph_optimal_min": 6.0, "ph_optimal_max": 7.0,
+    }
+
+
+def _make_universal_dict():
+    """Helper per costruire un dict di substrato per i test JSON v1."""
+    return {
+        "name": "terriccio universale",
+        "theta_fc": 0.40, "theta_pwp": 0.10,
+        "description": "",
+        "rew_mm": None, "tew_mm": None,
+        "cec_meq_per_100g": 50.0, "ph_typical": 6.8,
+        "is_mixture": False,
+    }
 
 
 # =======================================================================
@@ -283,6 +309,51 @@ class TestRoundTripBasic(unittest.TestCase):
         self.assertIsNone(g2.get_channel_id("b1"))
         self.assertIsNone(g2.get_channel_id("b2"))
         self.assertEqual(g2.channel_mapping, {})
+
+    def test_scheduled_events_round_trip(self):
+        # Round-trip degli eventi pianificati attraverso JSON.
+        g = Garden(name="balcone")
+        g.add_pot(_make_basic_pot("basilico"))
+        g.add_scheduled_event(ScheduledEvent(
+            event_id="fert-1", pot_label="basilico",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 18),
+            payload={"volume_l": 0.3, "ec_mscm": 2.0, "ph": 6.2},
+        ))
+        g.add_scheduled_event(ScheduledEvent(
+            event_id="treat-1", pot_label="basilico",
+            event_type="treatment",
+            scheduled_date=date(2026, 5, 25),
+            payload={"product": "antifungino"},
+        ))
+
+        g2 = import_garden_json(export_garden_json(g))
+        events = g2.scheduled_events
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].event_id, "fert-1")
+        self.assertEqual(
+            events[0].payload,
+            {"volume_l": 0.3, "ec_mscm": 2.0, "ph": 6.2},
+        )
+        self.assertEqual(events[1].event_id, "treat-1")
+        self.assertEqual(events[1].payload, {"product": "antifungino"})
+
+    def test_v1_json_without_scheduled_events_imports_cleanly(self):
+        # Backward compat: un JSON v1 (senza chiave scheduled_events)
+        # viene importato senza errori, e il Garden ricostruito non
+        # ha eventi pianificati.
+        v1_json = json.dumps({
+            "format_version": 1,
+            "garden": {"name": "balcone", "location_description": ""},
+            "catalog": {
+                "species": [_make_basil_dict()],
+                "base_materials": [],
+                "substrates": [_make_universal_dict()],
+            },
+            "pots": [],
+        })
+        g = import_garden_json(v1_json)
+        self.assertEqual(g.scheduled_events, [])
 
 
 # =======================================================================

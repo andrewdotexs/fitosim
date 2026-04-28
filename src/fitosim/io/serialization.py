@@ -120,6 +120,7 @@ from fitosim.domain.pot import (
     PotShape,
     SunExposure,
 )
+from fitosim.domain.scheduling import ScheduledEvent
 from fitosim.domain.species import Species
 from fitosim.science.substrate import (
     BaseMaterial,
@@ -134,7 +135,13 @@ from fitosim.science.substrate import (
 # Pot), incrementeremo questo numero. Le funzioni di import sapranno
 # come gestire le versioni precedenti tramite migrazioni applicate
 # alla struttura del dict prima della ricostruzione del Garden.
-FORMAT_VERSION = 1
+#
+# Versione 2 (sotto-tappa D tappa 4): aggiunta chiave top-level
+# scheduled_events (opzionale). I JSON v1 senza questa chiave vengono
+# importati senza errori (il Garden ricostruito non avrà eventi
+# pianificati pre-esistenti). I JSON v2 con scheduled_events vuota o
+# popolata vengono parsati identicamente.
+FORMAT_VERSION = 2
 
 
 # =======================================================================
@@ -422,6 +429,28 @@ def _dict_to_pot(
     return Pot(**kwargs)
 
 
+def _scheduled_event_to_dict(event: ScheduledEvent) -> Dict[str, Any]:
+    """Converte un ScheduledEvent in dict serializzabile."""
+    return {
+        "event_id": event.event_id,
+        "pot_label": event.pot_label,
+        "event_type": event.event_type,
+        "scheduled_date": event.scheduled_date.isoformat(),
+        "payload": event.payload,
+    }
+
+
+def _dict_to_scheduled_event(data: Dict[str, Any]) -> ScheduledEvent:
+    """Ricostruisce uno ScheduledEvent dal suo dict."""
+    return ScheduledEvent(
+        event_id=data["event_id"],
+        pot_label=data["pot_label"],
+        event_type=data["event_type"],
+        scheduled_date=date.fromisoformat(data["scheduled_date"]),
+        payload=data.get("payload", {}),
+    )
+
+
 # =======================================================================
 #  Catalog inference: cosa serve effettivamente al giardino
 # =======================================================================
@@ -532,6 +561,9 @@ def export_garden_json(
         "pots": [
             _pot_to_dict(pot, channel_id=garden.get_channel_id(pot.label))
             for pot in garden
+        ],
+        "scheduled_events": [
+            _scheduled_event_to_dict(e) for e in garden.scheduled_events
         ],
     }
 
@@ -652,5 +684,16 @@ def import_garden_json(json_str: str) -> Garden:
         channel_id = pot_data.get("static_fields", {}).get("channel_id")
         if channel_id is not None:
             garden.set_channel_id(pot.label, channel_id)
+
+    # Ricostruzione degli eventi pianificati. La chiave è opzionale per
+    # backward compat: i JSON in format_version 1 non l'avevano e
+    # vengono accettati senza errori (Garden senza eventi pianificati).
+    for ev_data in data.get("scheduled_events", []):
+        event = _dict_to_scheduled_event(ev_data)
+        # Tolleriamo eventi orfani (vasi non più presenti) silenziando:
+        # in fase di evoluzione del formato è il comportamento più
+        # robusto.
+        if event.pot_label in garden:
+            garden.add_scheduled_event(event)
 
     return garden

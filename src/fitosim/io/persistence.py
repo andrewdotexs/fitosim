@@ -86,6 +86,7 @@ from typing import Any, Dict, List, Optional
 
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot, PotMaterial, PotColor, PotShape, SunExposure
+from fitosim.domain.scheduling import ScheduledEvent
 from fitosim.domain.species import Species
 from fitosim.science.substrate import (
     BaseMaterial,
@@ -104,7 +105,12 @@ from fitosim.science.substrate import (
 # nullable alla tabella pots per la mappa label → channel_id del
 # gateway hardware. Database alla versione 1 vengono migrati
 # automaticamente con un ALTER TABLE.
-SCHEMA_VERSION = 2
+#
+# Versione 3 (sotto-tappa D tappa 4): aggiunta la tabella
+# scheduled_events per persistere gli eventi pianificati del Garden.
+# Database alla versione 2 vengono migrati automaticamente creando
+# la nuova tabella vuota.
+SCHEMA_VERSION = 3
 
 
 # =======================================================================
@@ -265,6 +271,25 @@ SCHEMA_STATEMENTS: List[str] = [
     )
     """,
 
+    # ----- Eventi pianificati (sotto-tappa D) -----
+    # Sono il "piano del giardiniere": cosa farò nei prossimi giorni.
+    # Da non confondere con events (sopra) che è la storia di cosa è
+    # avvenuto. Quando il giardiniere fa effettivamente l'azione,
+    # cancella l'evento da scheduled_events e ne registra uno
+    # corrispondente in events.
+    """
+    CREATE TABLE IF NOT EXISTS scheduled_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        pot_id          INTEGER NOT NULL,
+        event_id        TEXT NOT NULL,
+        event_type      TEXT NOT NULL,
+        scheduled_date  TEXT NOT NULL,
+        payload_json    TEXT NOT NULL,
+        UNIQUE (pot_id, event_id),
+        FOREIGN KEY (pot_id) REFERENCES pots(id) ON DELETE CASCADE
+    )
+    """,
+
     # ----- Indici per le query più frequenti -----
     "CREATE INDEX IF NOT EXISTS idx_pot_states_pot_timestamp "
     "ON pot_states(pot_id, timestamp)",
@@ -272,6 +297,8 @@ SCHEMA_STATEMENTS: List[str] = [
     "ON events(pot_id, timestamp)",
     "CREATE INDEX IF NOT EXISTS idx_events_type "
     "ON events(event_type)",
+    "CREATE INDEX IF NOT EXISTS idx_scheduled_events_pot_date "
+    "ON scheduled_events(pot_id, scheduled_date)",
 ]
 
 
@@ -485,10 +512,13 @@ class GardenPersistence:
             if current < 2:
                 self._migrate_v1_to_v2()
                 current = 2
+            if current < 3:
+                self._migrate_v2_to_v3()
+                current = 3
             # In futuro:
-            # if current < 3:
-            #     self._migrate_v2_to_v3()
-            #     current = 3
+            # if current < 4:
+            #     self._migrate_v3_to_v4()
+            #     current = 4
             # Aggiorna la versione registrata.
             self._conn.execute(
                 "INSERT INTO schema_metadata (version) VALUES (?)",
@@ -508,6 +538,34 @@ class GardenPersistence:
         """
         self._conn.execute(
             "ALTER TABLE pots ADD COLUMN channel_id TEXT"
+        )
+
+    def _migrate_v2_to_v3(self) -> None:
+        """
+        Migrazione dalla versione 2 alla versione 3.
+
+        Cambiamento: aggiunta tabella scheduled_events per gli eventi
+        pianificati introdotti dalla sotto-tappa D.
+
+        Database alla versione 2 vengono aggiornati senza perdita di
+        dati: la tabella scheduled_events viene creata vuota, i
+        giardini esistenti non hanno eventi pianificati pre-esistenti.
+        """
+        self._conn.execute("""
+            CREATE TABLE scheduled_events (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                pot_id          INTEGER NOT NULL,
+                event_id        TEXT NOT NULL,
+                event_type      TEXT NOT NULL,
+                scheduled_date  TEXT NOT NULL,
+                payload_json    TEXT NOT NULL,
+                UNIQUE (pot_id, event_id),
+                FOREIGN KEY (pot_id) REFERENCES pots(id) ON DELETE CASCADE
+            )
+        """)
+        self._conn.execute(
+            "CREATE INDEX idx_scheduled_events_pot_date "
+            "ON scheduled_events(pot_id, scheduled_date)"
         )
 
     # ====================================================================
@@ -1001,7 +1059,67 @@ class GardenPersistence:
                 pot_id = self._save_pot(garden_id, pot, channel_id)
                 self._save_pot_state(pot_id, pot, snapshot_timestamp)
 
+            # Sincronizza gli eventi pianificati: cancella quelli che
+            # non sono più nel piano e (re)inserisci quelli attuali.
+            # È coerente con la sincronizzazione dei vasi: il database
+            # rispecchia lo stato del Garden in-memory.
+            self._sync_scheduled_events(garden_id, garden)
+
             return garden_id
+
+    def _sync_scheduled_events(
+        self, garden_id: int, garden: Garden,
+    ) -> None:
+        """
+        Sincronizza gli eventi pianificati del database con quelli
+        del Garden in-memory.
+
+        Strategia: cancella tutti gli eventi attualmente nel database
+        per i vasi del giardino, poi reinserisce quelli del Garden.
+        Più semplice di un diff puntuale e coerente per piani di
+        dimensioni tipiche del balcone (decine di eventi).
+        """
+        # Mappa label → pot_id per i vasi del giardino.
+        pot_id_by_label: Dict[str, int] = {}
+        cursor = self._conn.execute(
+            "SELECT id, label FROM pots WHERE garden_id = ?",
+            (garden_id,),
+        )
+        for row in cursor.fetchall():
+            pot_id_by_label[row["label"]] = row["id"]
+
+        # Cancella tutti gli eventi pianificati dei vasi del giardino.
+        # ON DELETE CASCADE non si applica qui perché stiamo
+        # cancellando da scheduled_events direttamente, non da pots.
+        if pot_id_by_label:
+            placeholders = ",".join("?" * len(pot_id_by_label))
+            self._conn.execute(
+                f"DELETE FROM scheduled_events WHERE pot_id IN "
+                f"({placeholders})",
+                tuple(pot_id_by_label.values()),
+            )
+
+        # Reinserisci gli eventi del Garden corrente.
+        for event in garden.scheduled_events:
+            if event.pot_label not in pot_id_by_label:
+                # Evento orfano: il vaso non è più nel garden.
+                # Non dovrebbe accadere perché add_scheduled_event
+                # rifiuta gli orfani, ma per robustezza saltiamo.
+                continue
+            pot_id = pot_id_by_label[event.pot_label]
+            self._conn.execute(
+                """
+                INSERT INTO scheduled_events (
+                    pot_id, event_id, event_type, scheduled_date,
+                    payload_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    pot_id, event.event_id, event.event_type,
+                    event.scheduled_date.isoformat(),
+                    json.dumps(event.payload),
+                ),
+            )
 
     def _save_pot(
         self, garden_id: int, pot: Pot,
@@ -1176,6 +1294,28 @@ class GardenPersistence:
             # mappatura nel garden.
             if pot_row["channel_id"] is not None:
                 garden.set_channel_id(pot.label, pot_row["channel_id"])
+
+        # Carica gli eventi pianificati per i vasi del giardino.
+        cursor = self._conn.execute(
+            """
+            SELECT se.event_id, se.event_type, se.scheduled_date,
+                   se.payload_json, p.label AS pot_label
+            FROM scheduled_events se
+            JOIN pots p ON p.id = se.pot_id
+            WHERE p.garden_id = ?
+            ORDER BY se.scheduled_date, p.label, se.event_id
+            """,
+            (garden_row["id"],),
+        )
+        for ev_row in cursor.fetchall():
+            event = ScheduledEvent(
+                event_id=ev_row["event_id"],
+                pot_label=ev_row["pot_label"],
+                event_type=ev_row["event_type"],
+                scheduled_date=date.fromisoformat(ev_row["scheduled_date"]),
+                payload=json.loads(ev_row["payload_json"]),
+            )
+            garden.add_scheduled_event(event)
 
         return garden
 
@@ -1453,4 +1593,81 @@ class GardenPersistence:
                 "event_type": row["event_type"],
                 "payload": json.loads(row["payload_json"]),
             })
+        return events
+
+    # ====================================================================
+    #  Eventi pianificati
+    # ====================================================================
+
+    def query_scheduled_events(
+        self,
+        garden_name: str,
+        pot_label: Optional[str] = None,
+        since: Optional[date] = None,
+        until: Optional[date] = None,
+    ) -> List[ScheduledEvent]:
+        """
+        Ritorna gli eventi pianificati di un giardino, con filtri.
+
+        Utile per il dashboard che vuole consultare il piano senza
+        caricare l'intero Garden (per esempio per produrre la vista
+        "calendario degli eventi del mese").
+
+        Parametri
+        ---------
+        garden_name : str
+            Nome del giardino.
+        pot_label : str, opzionale
+            Filtra per singolo vaso. Default: tutti i vasi del giardino.
+        since, until : date, opzionali
+            Range inclusivo di date. Default: nessun filtro temporale.
+
+        Ritorna
+        -------
+        List[ScheduledEvent]
+            Eventi ordinati per (scheduled_date, pot_label, event_id).
+
+        Solleva
+        -------
+        KeyError
+            Se il giardino non esiste.
+        """
+        # Verifica esistenza del giardino.
+        cursor = self._conn.execute(
+            "SELECT id FROM gardens WHERE name = ?", (garden_name,),
+        )
+        garden_row = cursor.fetchone()
+        if garden_row is None:
+            raise KeyError(
+                f"Giardino '{garden_name}' non trovato nel database."
+            )
+
+        sql = """
+            SELECT se.event_id, se.event_type, se.scheduled_date,
+                   se.payload_json, p.label AS pot_label
+            FROM scheduled_events se
+            JOIN pots p ON p.id = se.pot_id
+            WHERE p.garden_id = ?
+        """
+        params: list = [garden_row["id"]]
+        if pot_label is not None:
+            sql += " AND p.label = ?"
+            params.append(pot_label)
+        if since is not None:
+            sql += " AND se.scheduled_date >= ?"
+            params.append(since.isoformat())
+        if until is not None:
+            sql += " AND se.scheduled_date <= ?"
+            params.append(until.isoformat())
+        sql += " ORDER BY se.scheduled_date, p.label, se.event_id"
+
+        events = []
+        for row in self._conn.execute(sql, params).fetchall():
+            events.append(ScheduledEvent(
+                event_id=row["event_id"],
+                pot_label=row["pot_label"],
+                event_type=row["event_type"],
+                scheduled_date=date.fromisoformat(row["scheduled_date"]),
+                payload=json.loads(row["payload_json"]),
+            ))
         return events

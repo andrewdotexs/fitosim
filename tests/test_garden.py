@@ -19,11 +19,12 @@ Quattro famiglie tematiche di test:
 """
 
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict
 
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot
+from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
 from fitosim.domain.species import Species
 from fitosim.io.sensors import (
     SensorDataQualityError,
@@ -595,6 +596,294 @@ class TestGardenUpdateFromSensors(unittest.TestCase):
         self.assertNotIn("fantasma", results)
         # Le altre mappature funzionano normalmente.
         self.assertIn("basilico", results)
+
+
+# =======================================================================
+#  Famiglia 7: gestione degli eventi pianificati
+# =======================================================================
+
+class TestGardenScheduledEvents(unittest.TestCase):
+    """Pianificazione di eventi futuri (fertirrigazioni, trattamenti)."""
+
+    def setUp(self):
+        self.garden = Garden(name="balcone")
+        self.garden.add_pot(_make_pot("basilico"))
+        self.garden.add_pot(_make_pot("pomodoro"))
+
+    def test_add_and_query_scheduled_event(self):
+        ev = ScheduledEvent(
+            event_id="fert-001", pot_label="basilico",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 18),
+            payload={"volume_l": 0.3, "ec_mscm": 2.0, "ph": 6.2},
+        )
+        self.garden.add_scheduled_event(ev)
+        retrieved = self.garden.get_scheduled_event("basilico", "fert-001")
+        self.assertEqual(retrieved, ev)
+        self.assertTrue(
+            self.garden.has_scheduled_event("basilico", "fert-001"),
+        )
+
+    def test_add_event_for_unknown_pot_rejected(self):
+        # Eventi orfani (per vasi inesistenti): rifiutati subito.
+        ev = ScheduledEvent(
+            event_id="fert-x", pot_label="vaso-fantasma",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 18),
+            payload={},
+        )
+        with self.assertRaises(ValueError) as ctx:
+            self.garden.add_scheduled_event(ev)
+        self.assertIn("vaso-fantasma", str(ctx.exception))
+
+    def test_add_duplicate_event_rejected(self):
+        # Stesso (pot_label, event_id) due volte: rifiutato.
+        ev1 = ScheduledEvent(
+            event_id="fert-001", pot_label="basilico",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 18),
+            payload={},
+        )
+        ev2 = ScheduledEvent(
+            event_id="fert-001", pot_label="basilico",
+            event_type="leaching",  # diverso ma stesso event_id
+            scheduled_date=date(2026, 5, 20),
+            payload={},
+        )
+        self.garden.add_scheduled_event(ev1)
+        with self.assertRaises(ValueError):
+            self.garden.add_scheduled_event(ev2)
+
+    def test_same_event_id_in_different_pots_allowed(self):
+        # event_id univoco solo all'interno del singolo vaso. Lo
+        # stesso event_id può apparire in vasi diversi.
+        for pot_label in ["basilico", "pomodoro"]:
+            self.garden.add_scheduled_event(ScheduledEvent(
+                event_id="fert-weekly",
+                pot_label=pot_label,
+                event_type="fertigation",
+                scheduled_date=date(2026, 5, 18),
+                payload={},
+            ))
+        # Entrambi gli eventi presenti, indipendenti.
+        self.assertEqual(len(self.garden.scheduled_events), 2)
+
+    def test_cancel_scheduled_event(self):
+        ev = ScheduledEvent(
+            event_id="fert-001", pot_label="basilico",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 18),
+            payload={},
+        )
+        self.garden.add_scheduled_event(ev)
+        cancelled = self.garden.cancel_scheduled_event("basilico", "fert-001")
+        self.assertEqual(cancelled, ev)
+        self.assertFalse(
+            self.garden.has_scheduled_event("basilico", "fert-001"),
+        )
+        # Cancellare un evento inesistente: KeyError.
+        with self.assertRaises(KeyError):
+            self.garden.cancel_scheduled_event("basilico", "fert-001")
+
+    def test_events_due_today_filters_by_date(self):
+        # Tre eventi su date diverse; events_due_today ritorna solo
+        # quelli di oggi.
+        for i, day in enumerate([15, 16, 17]):
+            self.garden.add_scheduled_event(ScheduledEvent(
+                event_id=f"e{i}", pot_label="basilico",
+                event_type="fertigation",
+                scheduled_date=date(2026, 5, day),
+                payload={},
+            ))
+        today = self.garden.events_due_today(date(2026, 5, 16))
+        self.assertEqual(len(today), 1)
+        self.assertEqual(today[0].event_id, "e1")
+
+    def test_events_due_today_filters_by_pot(self):
+        # Due vasi con eventi nello stesso giorno; filtro per vaso.
+        for pot in ["basilico", "pomodoro"]:
+            self.garden.add_scheduled_event(ScheduledEvent(
+                event_id=f"e-{pot}", pot_label=pot,
+                event_type="fertigation",
+                scheduled_date=date(2026, 5, 18),
+                payload={},
+            ))
+        only_basil = self.garden.events_due_today(
+            date(2026, 5, 18), pot_label="basilico",
+        )
+        self.assertEqual(len(only_basil), 1)
+        self.assertEqual(only_basil[0].pot_label, "basilico")
+
+    def test_events_due_in_range(self):
+        # Cinque eventi distribuiti in giorni diversi; range middle.
+        for i, day in enumerate([10, 12, 15, 18, 22]):
+            self.garden.add_scheduled_event(ScheduledEvent(
+                event_id=f"e{i}", pot_label="basilico",
+                event_type="fertigation",
+                scheduled_date=date(2026, 5, day),
+                payload={},
+            ))
+        # Range 14-19 inclusivo: eventi di 15 e 18.
+        in_range = self.garden.events_due_in_range(
+            date(2026, 5, 14), date(2026, 5, 19),
+        )
+        days = [e.scheduled_date.day for e in in_range]
+        self.assertEqual(days, [15, 18])
+
+    def test_scheduled_events_sorted_deterministically(self):
+        # La proprietà scheduled_events ritorna eventi ordinati per
+        # (scheduled_date, pot_label, event_id) per garantire output
+        # stabile.
+        self.garden.add_scheduled_event(ScheduledEvent(
+            event_id="z-evento", pot_label="pomodoro",
+            event_type="treatment",
+            scheduled_date=date(2026, 5, 20), payload={},
+        ))
+        self.garden.add_scheduled_event(ScheduledEvent(
+            event_id="a-evento", pot_label="basilico",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 15), payload={},
+        ))
+        events = self.garden.scheduled_events
+        # Ordinati per data ascendente: prima basilico (15/5), poi
+        # pomodoro (20/5).
+        self.assertEqual(events[0].pot_label, "basilico")
+        self.assertEqual(events[1].pot_label, "pomodoro")
+
+
+# =======================================================================
+#  Famiglia 8: forecast (proiezione dello stato nei giorni futuri)
+# =======================================================================
+
+class TestGardenForecast(unittest.TestCase):
+    """Proiezione dello stato del giardino nei giorni futuri."""
+
+    def setUp(self):
+        self.garden = Garden(name="balcone")
+        self.garden.add_pot(_make_pot(
+            "basilico-1", state_mm=25.0, salt_mass_meq=8.0,
+        ))
+        self.garden.add_pot(_make_pot(
+            "basilico-2", state_mm=20.0, salt_mass_meq=10.0,
+        ))
+
+    def _make_forecast(self, num_days, et_0=4.0, rainfall=0.0,
+                       start_day=15):
+        return [
+            WeatherDayForecast(
+                date_=date(2026, 5, start_day + i),
+                et_0_mm=et_0, rainfall_mm=rainfall,
+            )
+            for i in range(num_days)
+        ]
+
+    def test_forecast_does_not_modify_pot_state(self):
+        # PROPRIETÀ FONDAMENTALE: il forecast lavora su copie.
+        # Lo stato dei vasi del Garden corrente NON cambia.
+        before_states = {
+            label: (p.state_mm, p.salt_mass_meq, p.ph_substrate)
+            for label, p in self.garden._pots.items()
+        }
+        self.garden.forecast(self._make_forecast(7))
+        after_states = {
+            label: (p.state_mm, p.salt_mass_meq, p.ph_substrate)
+            for label, p in self.garden._pots.items()
+        }
+        self.assertEqual(before_states, after_states)
+
+    def test_forecast_returns_trajectory_per_pot(self):
+        # Il risultato contiene una traiettoria per ogni vaso.
+        result = self.garden.forecast(self._make_forecast(5))
+        self.assertEqual(
+            set(result.trajectories.keys()),
+            {"basilico-1", "basilico-2"},
+        )
+        for traj in result.trajectories.values():
+            self.assertEqual(len(traj.points), 5)
+
+    def test_forecast_dates_are_consecutive(self):
+        # Ogni traiettoria ha le date corrispondenti al weather_forecast.
+        result = self.garden.forecast(self._make_forecast(3, start_day=10))
+        traj = result.trajectories["basilico-1"]
+        dates = [p.date_ for p in traj.points]
+        self.assertEqual(dates, [
+            date(2026, 5, 10), date(2026, 5, 11), date(2026, 5, 12),
+        ])
+
+    def test_forecast_drying_under_no_rainfall(self):
+        # 7 giorni di sole senza pioggia: i vasi si seccano.
+        result = self.garden.forecast(self._make_forecast(7, et_0=5.0))
+        traj = result.trajectories["basilico-1"]
+        # Lo state_mm finale è inferiore a quello iniziale (25.0).
+        self.assertLess(traj.points[-1].state_mm, 25.0)
+        # E l'EC è salita per concentrazione (sali invariati, acqua diminuita).
+        # initial EC = 8 / V_acqua (stato 25 mm); final EC > initial.
+        # Lo verifichiamo solo qualitativamente.
+
+    def test_forecast_applies_scheduled_fertigation(self):
+        # Pianifica una fertirrigazione il 17/5; verifica che l'evento
+        # produca un salto chimico nella traiettoria.
+        self.garden.add_scheduled_event(ScheduledEvent(
+            event_id="fert-mid", pot_label="basilico-1",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 17),
+            payload={"volume_l": 0.3, "ec_mscm": 2.0, "ph": 6.2},
+        ))
+        result = self.garden.forecast(self._make_forecast(5))
+        traj = result.trajectories["basilico-1"]
+        # Punti: 15, 16, 17, 18, 19 — l'evento è il 17 (indice 2).
+        # Prima dell'evento (15-16): salt_mass_meq invariato a 8.0
+        # (l'evapotraspirazione concentra ma non aggiunge sali).
+        self.assertAlmostEqual(traj.points[0].salt_mass_meq, 8.0, places=2)
+        self.assertAlmostEqual(traj.points[1].salt_mass_meq, 8.0, places=2)
+        # Il giorno dell'evento (17): salt_mass cresce per la fertirrigazione.
+        self.assertGreater(traj.points[2].salt_mass_meq, 8.0)
+
+    def test_forecast_ignores_unmodelable_event_types(self):
+        # Eventi treatment/pruning/repotting sono ignorati dal forecast
+        # (effetti non modellati). Il forecast con o senza eventi non
+        # simulati produce lo stesso risultato.
+        baseline = self.garden.forecast(self._make_forecast(5))
+
+        self.garden.add_scheduled_event(ScheduledEvent(
+            event_id="treat-1", pot_label="basilico-1",
+            event_type="treatment",
+            scheduled_date=date(2026, 5, 17),
+            payload={"product": "antifungino"},
+        ))
+        with_treatment = self.garden.forecast(self._make_forecast(5))
+
+        # Le traiettorie sono identiche perché treatment non è modellato.
+        for pt_baseline, pt_treat in zip(
+            baseline.trajectories["basilico-1"].points,
+            with_treatment.trajectories["basilico-1"].points,
+        ):
+            self.assertAlmostEqual(
+                pt_baseline.state_mm, pt_treat.state_mm, places=6,
+            )
+            self.assertAlmostEqual(
+                pt_baseline.salt_mass_meq, pt_treat.salt_mass_meq, places=6,
+            )
+
+    def test_forecast_rejects_empty_weather(self):
+        with self.assertRaises(ValueError):
+            self.garden.forecast([])
+
+    def test_forecast_only_affects_targeted_pot(self):
+        # Una fertirrigazione su basilico-1 non deve influenzare basilico-2.
+        self.garden.add_scheduled_event(ScheduledEvent(
+            event_id="fert-1", pot_label="basilico-1",
+            event_type="fertigation",
+            scheduled_date=date(2026, 5, 17),
+            payload={"volume_l": 0.3, "ec_mscm": 2.0, "ph": 6.2},
+        ))
+        result = self.garden.forecast(self._make_forecast(5))
+        # basilico-2: salt_mass invariato (8.0 → ?, no eventi)
+        b2 = result.trajectories["basilico-2"]
+        self.assertAlmostEqual(b2.points[2].salt_mass_meq, 10.0, places=2)
+        # basilico-1: sali aumentati il 17
+        b1 = result.trajectories["basilico-1"]
+        self.assertGreater(b1.points[2].salt_mass_meq, 8.0)
 
 
 if __name__ == "__main__":
