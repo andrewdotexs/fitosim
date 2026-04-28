@@ -1613,5 +1613,668 @@ class TestPotChemistryState(unittest.TestCase):
         )
 
 
+# =======================================================================
+#  Sotto-tappa C tappa 3 fascia 2: metodi di fertirrigazione del Pot
+# =======================================================================
+
+class TestPotFertigationMethods(unittest.TestCase):
+    """
+    Validazione dei tre nuovi metodi del Pot aggiunti in sotto-tappa C:
+    `apply_fertigation_step`, `apply_rainfall_step`, `apply_step`.
+
+    Questi metodi orchestrano le funzioni pure di `science/fertigation.py`
+    aggiornando lo stato del Pot in-place. I test di livello "scienza"
+    sono già in tests/test_fertigation.py; qui ci concentriamo
+    sull'integrazione: che gli stati del Pot si muovano nel modo giusto,
+    che il FertigationResult contenga i dati corretti, che la
+    composizione di metodi produca risultati coerenti.
+    """
+
+    def _make_chemistry_pot(self, **overrides):
+        """Helper: vaso configurabile per i test della fertirrigazione."""
+        defaults = dict(
+            label="fert-test",
+            species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0,
+            pot_diameter_cm=18.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1),
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    # ----- apply_fertigation_step -----
+
+    def test_fertigation_increases_salt_mass(self):
+        # Una fertirrigazione con EC>0 deve far crescere la massa salina.
+        pot = self._make_chemistry_pot(salt_mass_meq=5.0)
+        salt_before = pot.salt_mass_meq
+        pot.apply_fertigation_step(
+            volume_l=0.3, ec_mscm=2.0, ph=6.0,
+            current_date=date(2026, 5, 1),
+        )
+        self.assertGreater(pot.salt_mass_meq, salt_before)
+
+    def test_fertigation_modifies_ph(self):
+        # Fertirrigazione a pH diverso dal substrato: il pH cambia.
+        pot = self._make_chemistry_pot()  # ph default 7.0
+        ph_before = pot.ph_substrate
+        pot.apply_fertigation_step(
+            volume_l=0.5, ec_mscm=2.0, ph=5.5,
+            current_date=date(2026, 5, 1),
+        )
+        # pH è sceso ma resta tra 5.5 e 7.0
+        self.assertLess(pot.ph_substrate, ph_before)
+        self.assertGreater(pot.ph_substrate, 5.5)
+
+    def test_fertigation_increases_water_state(self):
+        # Una fertirrigazione che non causa drenaggio aumenta state_mm.
+        pot = self._make_chemistry_pot(state_mm=20.0)
+        state_before = pot.state_mm
+        pot.apply_fertigation_step(
+            volume_l=0.05,                # volume piccolo: no drenaggio
+            ec_mscm=1.5, ph=6.5,
+            current_date=date(2026, 5, 1),
+        )
+        self.assertGreater(pot.state_mm, state_before)
+
+    def test_fertigation_can_cause_drainage(self):
+        # Una fertirrigazione abbondante su vaso quasi pieno fa drenaggio.
+        pot = self._make_chemistry_pot()
+        # Riempi quasi a fc per provocare drenaggio con un piccolo input.
+        pot.state_mm = pot.fc_mm - 1.0
+        result = pot.apply_fertigation_step(
+            volume_l=0.5,                  # volume abbondante
+            ec_mscm=1.5, ph=6.5,
+            current_date=date(2026, 5, 1),
+        )
+        # Lo stato finale è capped alla fc.
+        self.assertAlmostEqual(pot.state_mm, pot.fc_mm, places=3)
+        # Il drenaggio è positivo.
+        self.assertGreater(result.water_drained_l, 0.0)
+        # Il drenaggio ha portato via dei sali.
+        self.assertGreater(result.salt_mass_drained_meq, 0.0)
+
+    def test_fertigation_result_fields_populated(self):
+        # Il FertigationResult contiene tutti i campi attesi.
+        event_date = date(2026, 5, 1)
+        pot = self._make_chemistry_pot(salt_mass_meq=5.0)
+        result = pot.apply_fertigation_step(
+            volume_l=0.3, ec_mscm=2.0, ph=6.0,
+            current_date=event_date,
+        )
+        self.assertEqual(result.event_date, event_date)
+        self.assertEqual(result.volume_input_l, 0.3)
+        self.assertEqual(result.ec_input_mscm, 2.0)
+        self.assertEqual(result.ph_input, 6.0)
+        self.assertEqual(result.salt_mass_before_meq, 5.0)
+        self.assertGreater(result.salt_mass_added_meq, 0.0)
+        # ph_delta è coerente
+        self.assertAlmostEqual(
+            result.ph_delta, result.ph_after - result.ph_before, places=9,
+        )
+
+    # ----- apply_rainfall_step -----
+
+    def test_rainfall_does_not_add_salts(self):
+        # La pioggia naturale ha EC=0: non aggiunge sali.
+        pot = self._make_chemistry_pot(salt_mass_meq=10.0, state_mm=15.0)
+        result = pot.apply_rainfall_step(
+            volume_l=0.1,                  # pioggia leggera
+            current_date=date(2026, 5, 1),
+        )
+        self.assertEqual(result.salt_mass_added_meq, 0.0)
+        # ph_input riconoscibile come pH della pioggia
+        from fitosim.science.fertigation import RAINFALL_PH
+        self.assertEqual(result.ph_input, RAINFALL_PH)
+
+    def test_rainfall_can_leach_salts(self):
+        # Pioggia abbondante che causa drenaggio: rimuove sali (pulisce).
+        pot = self._make_chemistry_pot(salt_mass_meq=30.0)
+        pot.state_mm = pot.fc_mm  # vaso a capacità di campo
+        salt_before = pot.salt_mass_meq
+        pot.apply_rainfall_step(
+            volume_l=0.5,                  # pioggia abbondante → drenaggio
+            current_date=date(2026, 5, 1),
+        )
+        # La massa salina è diminuita (pioggia ha lavato).
+        self.assertLess(pot.salt_mass_meq, salt_before)
+
+    def test_rainfall_pulls_ph_toward_acidic(self):
+        # Una pioggia abbondante su vaso alcalino abbassa il pH verso 5.6.
+        pot = self._make_chemistry_pot(ph_substrate=7.5)
+        ph_before = pot.ph_substrate
+        pot.apply_rainfall_step(
+            volume_l=0.5,
+            current_date=date(2026, 5, 1),
+        )
+        self.assertLess(pot.ph_substrate, ph_before)
+        # Ma non lo abbassa sotto 5.6 (limite asintotico).
+        self.assertGreater(pot.ph_substrate, 5.6)
+
+    # ----- apply_step orchestratore -----
+
+    def test_apply_step_water_only_equivalent_to_balance(self):
+        # apply_step senza pioggia né fertirrigazione equivale a
+        # apply_balance_step puro: state_mm finale identico.
+        pot_a = self._make_chemistry_pot(state_mm=30.0)
+        pot_b = self._make_chemistry_pot(state_mm=30.0)
+        test_date = date(2026, 5, 15)
+
+        result_a = pot_a.apply_step(et_0_mm=4.0, current_date=test_date)
+        result_b = pot_b.apply_balance_step(
+            et_0_mm=4.0, water_input_mm=0.0, current_date=test_date,
+        )
+
+        self.assertAlmostEqual(pot_a.state_mm, pot_b.state_mm, places=6)
+        self.assertIsNone(result_a.rainfall_result)
+        self.assertIsNone(result_a.fertigation_result)
+
+    def test_apply_step_with_fertigation(self):
+        # apply_step con fertirrigazione attiva tutti gli stati.
+        pot = self._make_chemistry_pot(state_mm=20.0, salt_mass_meq=5.0)
+        result = pot.apply_step(
+            et_0_mm=3.0,
+            current_date=date(2026, 5, 15),
+            fertigation_volume_l=0.3,
+            fertigation_ec_mscm=2.0,
+            fertigation_ph=6.0,
+        )
+        # FertigationResult presente, RainfallResult assente
+        self.assertIsNotNone(result.fertigation_result)
+        self.assertIsNone(result.rainfall_result)
+        # Massa salina cresciuta
+        self.assertGreater(pot.salt_mass_meq, 5.0)
+
+    def test_apply_step_with_rainfall(self):
+        # apply_step con pioggia: il rainfall_result è popolato.
+        pot = self._make_chemistry_pot(salt_mass_meq=15.0)
+        result = pot.apply_step(
+            et_0_mm=3.0,
+            current_date=date(2026, 5, 15),
+            rainfall_volume_l=0.2,
+        )
+        self.assertIsNotNone(result.rainfall_result)
+        self.assertIsNone(result.fertigation_result)
+
+    def test_apply_step_with_rainfall_and_fertigation(self):
+        # Entrambi gli eventi nello stesso giorno: entrambi i result
+        # sono popolati, e l'ordine di applicazione è pioggia →
+        # fertirrigazione → ET.
+        pot = self._make_chemistry_pot(salt_mass_meq=10.0)
+        result = pot.apply_step(
+            et_0_mm=3.0,
+            current_date=date(2026, 5, 15),
+            fertigation_volume_l=0.2,
+            fertigation_ec_mscm=2.0,
+            fertigation_ph=6.0,
+            rainfall_volume_l=0.1,
+        )
+        self.assertIsNotNone(result.rainfall_result)
+        self.assertIsNotNone(result.fertigation_result)
+
+    # ----- Coerenza con la science -----
+
+    def test_ec_property_consistent_with_state(self):
+        # Dopo una fertirrigazione, la property ec_substrate_mscm deve
+        # essere coerente con il nuovo stato (salt_mass / volume / 10).
+        pot = self._make_chemistry_pot()
+        pot.state_mm = pot.fc_mm  # vaso a capacità di campo
+        pot.apply_fertigation_step(
+            volume_l=0.05,                # piccolo, niente drenaggio
+            ec_mscm=2.0, ph=6.5,
+            current_date=date(2026, 5, 1),
+        )
+        # Ricalcola manualmente l'EC attesa
+        expected_ec = (pot.salt_mass_meq / pot.water_volume_liters) / 10.0
+        self.assertAlmostEqual(pot.ec_substrate_mscm, expected_ec, places=9)
+
+
+# =======================================================================
+#  Sotto-tappa D tappa 3 fascia 2: integrazione del Kn nel Pot
+# =======================================================================
+
+class TestPotNutritionIntegration(unittest.TestCase):
+    """
+    Validazione dell'integrazione del coefficiente nutrizionale Kn
+    nel calcolo dell'ET colturale del Pot, sotto-tappa D.
+
+    Test concentrati su:
+      1. Retrocompatibilità: specie legacy (BASIL del catalogo) →
+         Kn=1 silenzioso, ET identica a prima della tappa 3.
+      2. Specie con modello chimico in condizioni ottimali → Kn=1,
+         ET identica al caso legacy con stessi parametri.
+      3. Specie con modello chimico in stress → Kn<1, ET strettamente
+         minore del caso ottimale.
+      4. Effetto materiale: il Kn modula il bilancio idrico via
+         apply_balance_step.
+    """
+
+    def _make_basil_with_chemistry(self) -> Species:
+        """Basilico con modello chimico configurato (range tipici)."""
+        return Species(
+            common_name="basilico-chem",
+            scientific_name="Ocimum basilicum",
+            kc_initial=0.50, kc_mid=1.10, kc_late=0.85,
+            ec_optimal_min_mscm=1.0,
+            ec_optimal_max_mscm=1.6,
+            ph_optimal_min=6.0,
+            ph_optimal_max=7.0,
+        )
+
+    def _make_pot(self, species, **overrides):
+        defaults = dict(
+            label="nutrition-test",
+            species=species,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0,
+            pot_diameter_cm=18.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1),
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    # ----- Retrocompat con specie legacy -----
+
+    def test_legacy_species_unaffected(self):
+        # Specie BASIL del catalogo (legacy, no chemistry).
+        # Indipendentemente da come configuriamo il Pot sul piano
+        # chimico (EC alta, pH fuori range), l'ET deve essere identica
+        # a quella che otterremmo senza chimica configurata.
+        pot_normal = self._make_pot(BASIL)
+        pot_stressed = self._make_pot(
+            BASIL,
+            salt_mass_meq=200.0,    # provoca EC alta
+            ph_substrate=4.0,        # fuori range
+        )
+        et_normal = pot_normal.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        et_stressed = pot_stressed.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        # Identici: la specie legacy non sa di chimica.
+        self.assertAlmostEqual(et_normal, et_stressed, places=9)
+
+    # ----- Specie con modello chimico in condizioni ottimali -----
+
+    def test_chemistry_species_optimal_conditions_kn_one(self):
+        # Basilico con modello chimico, condizioni perfette: Kn=1
+        # e l'ET deve essere identica a quella del basilico legacy
+        # con gli stessi parametri di Kc.
+        chem_species = self._make_basil_with_chemistry()
+        pot_chem = self._make_pot(
+            chem_species,
+            salt_mass_meq=0.0,        # niente sali → EC=0, dentro range
+                                       # [1.0, 1.6]? No, 0 è SOTTO 1.0.
+                                       # Devo scegliere un EC dentro range.
+        )
+        # Per portare EC nel range ottimale, calcolo la salt_mass
+        # corretta. ec=1.3 con water_volume corrente.
+        # ec = salt/(volume*10) → salt = ec*volume*10
+        target_ec = 1.3
+        pot_chem.salt_mass_meq = target_ec * pot_chem.water_volume_liters * 10
+        pot_chem.ph_substrate = 6.5  # dentro range [6.0, 7.0]
+
+        # Verifichiamo che l'EC corrente sia effettivamente nel range
+        self.assertGreater(pot_chem.ec_substrate_mscm, 1.0)
+        self.assertLess(pot_chem.ec_substrate_mscm, 1.6)
+
+        # ET con condizioni ottimali = ET di una specie equivalente
+        # senza chimica configurata.
+        et_chem = pot_chem.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        # Riferimento: la stessa simulazione con specie senza chimica
+        # ma stessi Kc.
+        legacy_species = Species(
+            common_name="basil-legacy",
+            scientific_name="Ocimum basilicum",
+            kc_initial=0.50, kc_mid=1.10, kc_late=0.85,
+        )
+        pot_legacy = self._make_pot(
+            legacy_species,
+            state_mm=pot_chem.state_mm,
+        )
+        et_legacy = pot_legacy.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        # In condizioni ottimali Kn=1 → ET identica.
+        self.assertAlmostEqual(et_chem, et_legacy, places=6)
+
+    # ----- Specie con modello chimico in stress -----
+
+    def test_chemistry_species_stressed_kn_reduces_et(self):
+        # Stesso basilico chimico ma in condizioni di stress salino:
+        # EC molto fuori range → Kn<1 → ET ridotta.
+        chem_species = self._make_basil_with_chemistry()
+
+        # Caso ottimale di riferimento.
+        pot_optimal = self._make_pot(chem_species)
+        target_ec = 1.3
+        pot_optimal.salt_mass_meq = (
+            target_ec * pot_optimal.water_volume_liters * 10
+        )
+        pot_optimal.ph_substrate = 6.5
+
+        # Caso con stress salino: EC molto sopra il range.
+        pot_stress = self._make_pot(chem_species)
+        stress_ec = 2.5    # ben sopra il max=1.6
+        pot_stress.salt_mass_meq = (
+            stress_ec * pot_stress.water_volume_liters * 10
+        )
+        pot_stress.ph_substrate = 6.5  # pH ottimale
+
+        et_optimal = pot_optimal.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        et_stressed = pot_stress.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        # ET del Pot stressato STRETTAMENTE INFERIORE al Pot ottimale.
+        self.assertLess(et_stressed, et_optimal)
+
+    def test_extreme_chemistry_stress_floor_effect(self):
+        # Stress massimo simultaneo (EC e pH entrambi molto fuori):
+        # Kn = KN_MIN² ≈ 0.09, ET ridotta drasticamente.
+        chem_species = self._make_basil_with_chemistry()
+
+        pot_optimal = self._make_pot(chem_species)
+        target_ec = 1.3
+        pot_optimal.salt_mass_meq = (
+            target_ec * pot_optimal.water_volume_liters * 10
+        )
+        pot_optimal.ph_substrate = 6.5
+
+        pot_extreme = self._make_pot(chem_species)
+        extreme_ec = 10.0   # molto sopra
+        pot_extreme.salt_mass_meq = (
+            extreme_ec * pot_extreme.water_volume_liters * 10
+        )
+        pot_extreme.ph_substrate = 11.0  # molto fuori
+
+        et_optimal = pot_optimal.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        et_extreme = pot_extreme.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        # Il rapporto deve essere circa Kn² = 0.09 (approssimato perché
+        # entrano in gioco anche Ks dipendente da theta, ma con
+        # state_mm uguali si compensa). Aspettative: il ratio è
+        # significativamente inferiore a 1.
+        ratio = et_extreme / et_optimal
+        # Il floor teorico è 0.09; in pratica deve essere intorno a quello.
+        self.assertLess(ratio, 0.15)
+
+    # ----- Effetto materiale sul bilancio idrico -----
+
+    def test_kn_materially_affects_water_balance(self):
+        # Il Kn modula effettivamente il bilancio idrico: una giornata
+        # di apply_balance_step su un vaso stressato consuma meno acqua
+        # di un vaso ottimale.
+        chem_species = self._make_basil_with_chemistry()
+
+        # Configurazione ottimale.
+        pot_opt = self._make_pot(chem_species, state_mm=30.0)
+        pot_opt.salt_mass_meq = 1.3 * pot_opt.water_volume_liters * 10
+        pot_opt.ph_substrate = 6.5
+
+        # Configurazione stressata (EC alta).
+        pot_str = self._make_pot(chem_species, state_mm=30.0)
+        pot_str.salt_mass_meq = 3.0 * pot_str.water_volume_liters * 10
+        pot_str.ph_substrate = 6.5
+
+        # Stesso evento: niente input, ET₀ = 5 mm.
+        test_date = date(2026, 5, 15)
+        pot_opt.apply_balance_step(
+            et_0_mm=5.0, water_input_mm=0.0, current_date=test_date,
+        )
+        pot_str.apply_balance_step(
+            et_0_mm=5.0, water_input_mm=0.0, current_date=test_date,
+        )
+
+        # Il Pot ottimale deve aver consumato MORE acqua del Pot
+        # stressato: state_mm finale del primo è inferiore.
+        self.assertLess(pot_opt.state_mm, pot_str.state_mm)
+
+
+# =======================================================================
+#  Sotto-tappa E tappa 3 fascia 2: feedback loop chimico via sensore
+# =======================================================================
+
+class TestSensorUpdateChemistry(unittest.TestCase):
+    """
+    Validazione dell'aggancio degli stati chimici del Pot ai campi
+    chimici del SoilReading (sotto-tappa E della tappa 3).
+
+    Test concentrati su:
+      1. Aggiornamento di salt_mass_meq da observed_ec_mscm.
+      2. Aggiornamento di ph_substrate da observed_ph.
+      3. Sequenza corretta: state_mm prima, chimica dopo.
+      4. Coerenza: dopo l'update, ec_substrate_mscm del Pot deve
+         coincidere col valore osservato.
+      5. Reading parziali: campi None lasciano gli stati invariati.
+      6. Campi diagnostici (predicted_*, discrepancy_*) valorizzati
+         correttamente.
+    """
+
+    def _make_reading(self, **overrides):
+        from datetime import datetime, timezone
+        from fitosim.io.sensors import SoilReading
+        defaults = dict(
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            theta_volumetric=0.32,
+            temperature_c=18.5,
+            ec_mscm=2.0,
+            ph=6.4,
+            provider_specific={},
+        )
+        defaults.update(overrides)
+        return SoilReading(**defaults)
+
+    def _make_chem_pot(self, **overrides):
+        defaults = dict(
+            label="chem-update-test",
+            species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0,
+            pot_diameter_cm=18.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1),
+            salt_mass_meq=10.0,
+            ph_substrate=7.0,
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    # ----- Aggiornamento dell'EC tramite massa salina derivata -----
+
+    def test_ec_observed_updates_salt_mass(self):
+        # Quando reading.ec_mscm è valorizzato, salt_mass_meq del Pot
+        # viene ricalcolata in modo che ec_substrate_mscm = observed.
+        pot = self._make_chem_pot()
+        reading = self._make_reading(ec_mscm=2.5)
+        pot.update_from_sensor(reading=reading)
+        # Dopo l'update, l'EC corrente del Pot deve essere 2.5 al
+        # millesimo (potremmo avere errori floating).
+        self.assertAlmostEqual(pot.ec_substrate_mscm, 2.5, places=6)
+
+    def test_salt_mass_calculation_uses_new_water_volume(self):
+        # CRUCIALE: la conversione EC → salt_mass deve usare il NUOVO
+        # state_mm (post-aggiornamento idrico), non quello precedente.
+        pot = self._make_chem_pot(state_mm=10.0)  # vaso quasi secco
+        # Il sensore vede più acqua e una EC moderata: il volume
+        # da usare è quello implicato dal θ osservato.
+        reading = self._make_reading(theta_volumetric=0.40, ec_mscm=1.5)
+        pot.update_from_sensor(reading=reading)
+
+        # Dopo l'update, ec_substrate_mscm del Pot deve essere 1.5
+        # E il volume d'acqua deve corrispondere al θ osservato.
+        self.assertAlmostEqual(pot.ec_substrate_mscm, 1.5, places=6)
+        expected_state_mm = 0.40 * pot.substrate_depth_mm
+        self.assertAlmostEqual(pot.state_mm, expected_state_mm, places=6)
+
+    # ----- Aggiornamento del pH -----
+
+    def test_ph_observed_updates_substrate_ph(self):
+        # Il pH è una grandezza intensiva: sovrascrittura diretta.
+        pot = self._make_chem_pot(ph_substrate=7.0)
+        reading = self._make_reading(ph=5.8)
+        pot.update_from_sensor(reading=reading)
+        self.assertEqual(pot.ph_substrate, 5.8)
+
+    def test_acidic_reading_lowers_substrate_ph(self):
+        # Test qualitativo: lettura più acida abbassa il pH del Pot.
+        pot = self._make_chem_pot(ph_substrate=7.0)
+        reading = self._make_reading(ph=5.0)
+        pot.update_from_sensor(reading=reading)
+        self.assertLess(pot.ph_substrate, 7.0)
+        self.assertEqual(pot.ph_substrate, 5.0)
+
+    # ----- Reading parziali: solo alcuni campi valorizzati -----
+
+    def test_partial_reading_only_theta(self):
+        # Reading di sensore WH51 (solo θ): salt_mass e ph_substrate
+        # non devono cambiare.
+        from datetime import datetime, timezone
+        from fitosim.io.sensors import SoilReading
+        partial = SoilReading(
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            theta_volumetric=0.30,
+            # niente ec_mscm, niente ph
+        )
+        pot = self._make_chem_pot(salt_mass_meq=15.0, ph_substrate=6.5)
+        pot.update_from_sensor(reading=partial)
+        # state_mm aggiornato, ma chimica invariata
+        self.assertEqual(pot.salt_mass_meq, 15.0)
+        self.assertEqual(pot.ph_substrate, 6.5)
+
+    def test_partial_reading_ec_only(self):
+        # Reading con solo θ ed EC, niente pH: ph_substrate invariato.
+        from datetime import datetime, timezone
+        from fitosim.io.sensors import SoilReading
+        partial = SoilReading(
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            theta_volumetric=0.30,
+            ec_mscm=1.8,
+        )
+        pot = self._make_chem_pot(ph_substrate=6.5)
+        pot.update_from_sensor(reading=partial)
+        # EC del Pot aggiornata, pH invariato
+        self.assertAlmostEqual(pot.ec_substrate_mscm, 1.8, places=6)
+        self.assertEqual(pot.ph_substrate, 6.5)
+
+    # ----- Legacy mode (theta_observed float, no Reading) -----
+
+    def test_legacy_float_mode_unaffected(self):
+        # Chiamata legacy con theta_observed float: nessun campo
+        # chimico nel result, nessun aggiornamento degli stati chimici
+        # del Pot.
+        pot = self._make_chem_pot(salt_mass_meq=15.0, ph_substrate=6.5)
+        result = pot.update_from_sensor(theta_observed=0.30)
+        # Stati chimici del Pot invariati.
+        self.assertEqual(pot.salt_mass_meq, 15.0)
+        self.assertEqual(pot.ph_substrate, 6.5)
+        # Campi diagnostici chimici tutti None nel result.
+        self.assertIsNone(result.observed_ec_mscm)
+        self.assertIsNone(result.observed_ph)
+        self.assertIsNone(result.predicted_ec_mscm)
+        self.assertIsNone(result.predicted_ph)
+        self.assertIsNone(result.discrepancy_ec_mscm)
+        self.assertIsNone(result.discrepancy_ph)
+
+    # ----- Campi diagnostici nel SensorUpdateResult -----
+
+    def test_diagnostic_fields_populated(self):
+        # Quando il Reading porta EC e pH, i campi diagnostici del
+        # result vengono valorizzati con i valori predetti dal modello
+        # PRIMA dell'aggiornamento, e con le discrepanze.
+        pot = self._make_chem_pot(state_mm=30.0, salt_mass_meq=20.0,
+                                    ph_substrate=7.0)
+        # Salviamo l'EC predetta prima dell'update (al volume corrente)
+        ec_before_update = pot.ec_substrate_mscm
+        reading = self._make_reading(
+            theta_volumetric=0.30, ec_mscm=2.5, ph=5.5,
+        )
+        result = pot.update_from_sensor(reading=reading)
+
+        # Predicted = stato del Pot prima dell'update
+        self.assertAlmostEqual(
+            result.predicted_ec_mscm, ec_before_update, places=6,
+        )
+        self.assertEqual(result.predicted_ph, 7.0)
+        # Discrepancy = observed - predicted
+        self.assertAlmostEqual(
+            result.discrepancy_ec_mscm,
+            2.5 - ec_before_update,
+            places=6,
+        )
+        self.assertAlmostEqual(result.discrepancy_ph, 5.5 - 7.0, places=6)
+
+    def test_predicted_ec_uses_state_before_water_update(self):
+        # CRUCIALE: predicted_ec_mscm deve essere calcolata col
+        # state_mm e il salt_mass PRIMA dell'aggiornamento, non con
+        # quelli intermedi. Verifichiamo numericamente il caso in cui
+        # il sensore osserva θ molto diverso dal predetto.
+        pot = self._make_chem_pot(state_mm=10.0, salt_mass_meq=15.0)
+        # Salva l'EC corrente del Pot (con state_mm=10).
+        ec_predicted_at_current_state = pot.ec_substrate_mscm
+
+        reading = self._make_reading(
+            theta_volumetric=0.40,    # molto più alto del predetto
+            ec_mscm=1.0,
+        )
+        result = pot.update_from_sensor(reading=reading)
+
+        # predicted_ec_mscm deve essere quella calcolata SU state_mm=10,
+        # non su state_mm aggiornato. Quindi deve coincidere col
+        # valore precedente.
+        self.assertAlmostEqual(
+            result.predicted_ec_mscm,
+            ec_predicted_at_current_state,
+            places=6,
+        )
+
+    # ----- Effetto del feedback loop sul Kn -----
+
+    def test_chemistry_update_affects_subsequent_kn(self):
+        # Dopo un update_from_sensor con valori subottimali, il Kn
+        # del Pot riflette il nuovo stato chimico, e ciò influenza
+        # il calcolo dell'ET successivo.
+        chem_species = Species(
+            common_name="basilico-chem",
+            scientific_name="Ocimum basilicum",
+            kc_initial=0.50, kc_mid=1.10, kc_late=0.85,
+            ec_optimal_min_mscm=1.0,
+            ec_optimal_max_mscm=1.6,
+            ph_optimal_min=6.0,
+            ph_optimal_max=7.0,
+        )
+        pot = self._make_chem_pot(species=chem_species)
+        # Stato iniziale ottimale.
+        pot.salt_mass_meq = 1.3 * pot.water_volume_liters * 10
+        pot.ph_substrate = 6.5
+        et_optimal = pot.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+
+        # Update con sensore che vede stress salino.
+        reading = self._make_reading(
+            theta_volumetric=pot.state_theta,    # stesso θ
+            ec_mscm=2.5,                          # EC alta
+            ph=6.5,                               # pH ottimo
+        )
+        pot.update_from_sensor(reading=reading)
+
+        # Il nuovo Kn riflette lo stress: ET ridotta.
+        et_after_stress_reading = pot.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        self.assertLess(et_after_stress_reading, et_optimal)
+
+
 if __name__ == "__main__":
     unittest.main()

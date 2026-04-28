@@ -202,6 +202,27 @@ class SensorUpdateResult:
         Dati di "secondo livello" del provider (es. NPK derivati
         dall'ATO 7-in-1) preservati opachi per logging diagnostico
         e presentazione nel dashboard. Default dict vuoto.
+    predicted_ec_mscm : float | None
+        EC del substrato secondo il modello, prima dell'aggiornamento
+        dal sensore. Aggiunto in sotto-tappa E della tappa 3 fascia 2.
+        Valorizzato solo quando il SoilReading porta un valore
+        observed_ec_mscm e quando lo state_mm finale del Pot è > 0
+        (altrimenti l'EC predetta sarebbe indefinita). Permette al
+        chiamante di calcolare la discrepanza chimica ec → modello vs
+        sensore per il logging e la detezione di drift chimico.
+    predicted_ph : float | None
+        pH del substrato secondo il modello, prima dell'aggiornamento.
+        Valorizzato quando il SoilReading porta un valore observed_ph.
+        Stessa logica diagnostica del predicted_ec_mscm.
+    discrepancy_ec_mscm : float | None
+        observed_ec_mscm - predicted_ec_mscm, con segno. Valorizzato
+        quando entrambi i campi sono disponibili. Positivo = sensore
+        vede più sali del modello (concentrazione progressiva non
+        catturata, fertirrigazione misurata dal sensore prima del
+        modello, ecc.). Negativo = sensore vede meno sali del modello.
+    discrepancy_ph : float | None
+        observed_ph - predicted_ph, con segno. Valorizzato quando
+        entrambi i campi sono disponibili.
     """
 
     predicted_theta: float
@@ -219,6 +240,15 @@ class SensorUpdateResult:
     observed_ec_mscm: Optional[float] = None
     observed_ph: Optional[float] = None
     provider_specific: dict = field(default_factory=dict)
+    # Campi aggiunti in sotto-tappa E della tappa 3 fascia 2: stato
+    # chimico predetto dal modello prima dell'aggiornamento, e
+    # discrepanze rispetto al sensore. Permettono al chiamante di
+    # detectare drift chimico nel tempo, esattamente come per il
+    # drift idrico.
+    predicted_ec_mscm: Optional[float] = None
+    predicted_ph: Optional[float] = None
+    discrepancy_ec_mscm: Optional[float] = None
+    discrepancy_ph: Optional[float] = None
 
     @property
     def absolute_error_mm(self) -> float:
@@ -235,6 +265,94 @@ class SensorUpdateResult:
         considerate "vere" deviazioni.
         """
         return abs(self.discrepancy_theta) > 0.02
+
+
+# =======================================================================
+#  Risultati strutturati per la fertirrigazione (sotto-tappa C tappa 3)
+# =======================================================================
+
+@dataclass(frozen=True)
+class FertigationResult:
+    """
+    Esito di un singolo evento di fertirrigazione applicato al vaso.
+
+    Restituito da `Pot.apply_fertigation_step` e `Pot.apply_rainfall_step`.
+    Contiene tutti i dati prodotti dal calcolo chimico, in formato adatto
+    al logging diagnostico, alla detezione di anomalie, e alla
+    presentazione nel dashboard del giardiniere.
+
+    Attributi
+    ---------
+    event_date : date
+        Data dell'evento, propagata per il logging.
+    volume_input_l : float
+        Volume di soluzione in arrivo, in litri.
+    volume_input_mm : float
+        Stessa quantità espressa in mm di colonna d'acqua sul vaso.
+    ec_input_mscm : float
+        Conducibilità elettrica della soluzione in arrivo, in mS/cm.
+    ph_input : float
+        pH della soluzione in arrivo, scala 0-14.
+    salt_mass_before_meq, salt_mass_after_meq : float
+        Massa salina del vaso prima e dopo l'evento, in
+        milli-equivalenti.
+    salt_mass_added_meq : float
+        Massa salina entrata con la soluzione (= EC × V × 10).
+    salt_mass_drained_meq : float
+        Massa salina uscita col drenaggio (zero se non c'è stato
+        drenaggio).
+    water_drained_l, water_drained_mm : float
+        Volume di acqua drenato, in litri e in mm rispettivamente.
+    ph_before, ph_after : float
+        pH del substrato prima e dopo l'evento.
+    ph_delta : float
+        ph_after - ph_before, con segno. Positivo = pH è salito,
+        negativo = pH è sceso.
+    """
+
+    event_date: date
+    volume_input_l: float
+    volume_input_mm: float
+    ec_input_mscm: float
+    ph_input: float
+    salt_mass_before_meq: float
+    salt_mass_after_meq: float
+    salt_mass_added_meq: float
+    salt_mass_drained_meq: float
+    water_drained_l: float
+    water_drained_mm: float
+    ph_before: float
+    ph_after: float
+    ph_delta: float
+
+
+@dataclass(frozen=True)
+class FullStepResult:
+    """
+    Esito aggregato di un passo completo del vaso (sotto-tappa C tappa 3).
+
+    Restituito da `Pot.apply_step`. Aggrega i risultati di tutti gli
+    eventi possibili di un giorno: bilancio idrico (sempre presente),
+    pioggia naturale (opzionale), fertirrigazione (opzionale).
+
+    Attributi
+    ---------
+    event_date : date
+        Data del passo.
+    balance_result : BalanceStepResult
+        Risultato del bilancio idrico giornaliero (ET, drenaggio,
+        nuovo stato). Sempre presente.
+    rainfall_result : FertigationResult | None
+        Risultato dell'evento pioggia, se presente. None altrimenti.
+    fertigation_result : FertigationResult | None
+        Risultato dell'evento fertirrigazione, se presente. None
+        altrimenti.
+    """
+
+    event_date: date
+    balance_result: "BalanceStepResult"
+    rainfall_result: Optional[FertigationResult] = None
+    fertigation_result: Optional[FertigationResult] = None
 
 
 @dataclass
@@ -590,6 +708,38 @@ class Pot:
         return meq_per_liter / 10.0
 
     @property
+    def substrate_dry_mass_kg(self) -> float:
+        """
+        Massa secca del substrato presente nel vaso, in chilogrammi.
+
+        Aggiunto in sotto-tappa C della tappa 3 fascia 2: serve come
+        input alla formula del buffering del pH durante la fertirrigazione,
+        dove il "peso" del substrato nel mescolamento è proporzionale
+        alla sua massa fisica × CEC.
+
+        Calcolo: il volume effettivo di substrato è
+        `pot_volume_l × active_depth_fraction` (la frazione attiva
+        tiene conto dello strato superficiale eventualmente non popolato
+        da radici, modellato in tappa 4 della fascia 1). La massa secca
+        si ottiene moltiplicando per la densità tipica dei terricci da
+        giardinaggio domestico (0.4 kg/L). Per un vaso da 2 L con
+        active_depth_fraction=1 si ottiene 0.8 kg, valore di riferimento
+        usato negli esempi della docstring del modulo
+        `science/fertigation.py`.
+
+        Nota: questa è una stima a partire dal volume, non un dato
+        misurato. Per il giardiniere che pesa effettivamente il substrato
+        prima di rinvasare, il valore reale potrebbe differire di qualche
+        decina di percento dalla stima. È un'approssimazione coerente
+        con la filosofia di fitosim di "modello semplice ma calibrabile".
+        """
+        from fitosim.science.fertigation import (
+            TYPICAL_SUBSTRATE_DENSITY_KG_PER_L,
+        )
+        active_volume_l = self.pot_volume_l * self.active_depth_fraction
+        return active_volume_l * TYPICAL_SUBSTRATE_DENSITY_KG_PER_L
+
+    @property
     def kp(self) -> float:
         """
         Coefficiente di vaso Kp, fattore moltiplicativo che modula
@@ -701,28 +851,47 @@ class Pot:
         Combina ET₀ del giorno con tutti i moltiplicatori in cascata,
         scegliendo automaticamente tra modello single Kc (default,
         tradizionale FAO-56 cap. 6) e dual-Kc (FAO-56 cap. 7) in base
-        ai parametri disponibili.
+        ai parametri disponibili. In sotto-tappa D della tappa 3 fascia 2
+        è stato aggiunto il fattore nutrizionale Kn che modula il
+        risultato in base allo stato chimico del substrato.
 
         Single Kc (specie/substrato non supportano dual-Kc):
 
-            ET_c,act = Kp × Ks × Kc × ET_0
+            ET_c,act = Kp × Ks × Kc × Kn × ET_0
 
         Dual-Kc (specie ha Kcb e substrato ha REW/TEW):
 
-            ET_c,act = Kp × (Ks × Kcb + Ke) × ET_0
+            ET_c,act = Kp × (Ks × Kcb + Ke) × Kn × ET_0
 
         dove:
           Kc/Kcb vengono dalla biologia della pianta (Species);
           Ke è dinamico nel tempo (dipende da De e dai parametri del
             substrato, calcolato via il modulo science/dual_kc.py);
           Ks viene dallo stato idrico del bulk substrato;
-          Kp è il coefficiente di vaso (materiale/colore/esposizione).
+          Kp è il coefficiente di vaso (materiale/colore/esposizione);
+          Kn è il fattore nutrizionale calcolato da
+            science.nutrition.nutritional_factor a partire dall'EC e
+            dal pH correnti del substrato e dai range ottimali della
+            specie. Vale 1.0 silenziosamente quando la specie non ha
+            il modello chimico configurato — retrocompat totale con la
+            fascia 1.
         """
+        # Calcolo del Kn nutrizionale. Con specie senza modello chimico
+        # configurato (caso del catalogo legacy della fascia 1)
+        # nutritional_factor ritorna 1.0 silenziosamente e l'estensione
+        # è inerte. Import lazy per evitare cicli a livello di package.
+        from fitosim.science.nutrition import nutritional_factor
+        kn = nutritional_factor(
+            species=self.species,
+            ec_substrate_mscm=self.ec_substrate_mscm,
+            ph_substrate=self.ph_substrate,
+        )
+
         if self.supports_dual_kc:
             et_c_total, _soil_evap = self._current_et_c_dual_kc(
                 et_0_mm=et_0_mm, current_date=current_date,
             )
-            return et_c_total
+            return et_c_total * kn
         # Cammino tradizionale single Kc.
         et_c_base = actual_et_c(
             species=self.species,
@@ -731,7 +900,7 @@ class Pot:
             current_theta=self.state_theta,
             substrate=self.substrate,
         )
-        return self.kp * et_c_base
+        return self.kp * et_c_base * kn
 
     def apply_balance_step(
         self,
@@ -1042,13 +1211,58 @@ class Pot:
         else:
             relative_error_pct = 0.0
 
-        # Aggiornamento dello stato: lo state_mm del vaso viene
-        # sovrascritto con il valore desunto dalla lettura del sensore.
-        # È un overwrite "duro" non una media pesata: assumiamo che
-        # il sensore sia più affidabile della previsione del modello,
-        # che è l'ipotesi naturale per un sensore di buona qualità
-        # come il WH51.
+        # ----- Aggiornamento dello stato chimico (sotto-tappa E tappa 3) -----
+        #
+        # Snapshot dello stato chimico predetto, PRIMA dell'aggiornamento
+        # idrico. Lo facciamo qui perché ec_substrate_mscm è una property
+        # derivata che cambia automaticamente quando state_mm si modifica:
+        # se calcolassimo predicted_ec dopo l'overwrite di state_mm
+        # otterremmo un valore "ibrido" che non è né predetto né osservato.
+        predicted_ec_mscm = None
+        predicted_ph = None
+        discrepancy_ec_mscm_value = None
+        discrepancy_ph_value = None
+
+        if observed_ec_mscm is not None:
+            predicted_ec_mscm = self.ec_substrate_mscm
+            discrepancy_ec_mscm_value = observed_ec_mscm - predicted_ec_mscm
+        if observed_ph is not None:
+            predicted_ph = self.ph_substrate
+            discrepancy_ph_value = observed_ph - predicted_ph
+
+        # Aggiornamento dello state_mm: sovrascritto con il valore
+        # desunto dalla lettura del sensore. È un overwrite "duro" non
+        # una media pesata: assumiamo che il sensore sia più affidabile
+        # della previsione del modello, che è l'ipotesi naturale per
+        # un sensore di buona qualità come il WH51 o l'ATO 7-in-1.
         self.state_mm = observed_mm
+
+        # Aggiornamento degli stati chimici. Importante: questo viene
+        # DOPO l'aggiornamento di state_mm, perché la conversione
+        # EC → salt_mass deve usare il nuovo volume d'acqua che è
+        # coerente con il θ osservato. Se invertissimo l'ordine
+        # avremmo una salt_mass calcolata su un volume "vecchio" e poi
+        # uno state_mm aggiornato, producendo un'EC corrente diversa
+        # da quella misurata dal sensore. La stessa filosofia che
+        # governa il sequencing in apply_step.
+        if observed_ec_mscm is not None and self.water_volume_liters > 0:
+            # Inversione della relazione EC = salt/(volume*10):
+            # salt = EC × volume × 10. Il fattore 10 è la costante
+            # documentata in fertigation.py.
+            self.salt_mass_meq = (
+                observed_ec_mscm * self.water_volume_liters * 10.0
+            )
+        # Caso degenere: water_volume_liters == 0 (vaso completamente
+        # asciutto secondo il sensore). In questa condizione l'EC è
+        # indefinita fisicamente (non c'è soluzione). Lasciamo
+        # salt_mass_meq invariata: i sali "cristallizzati" tornano
+        # in soluzione alla prossima fertirrigazione.
+
+        if observed_ph is not None:
+            # Il pH è una grandezza intensiva, non scala col volume:
+            # il sensore fornisce direttamente il valore corrente del
+            # substrato. Sovrascrittura diretta.
+            self.ph_substrate = observed_ph
 
         return SensorUpdateResult(
             predicted_theta=predicted_theta,
@@ -1063,6 +1277,11 @@ class Pot:
             observed_ec_mscm=observed_ec_mscm,
             observed_ph=observed_ph,
             provider_specific=provider_specific_data,
+            # Campi diagnostici chimici (sotto-tappa E).
+            predicted_ec_mscm=predicted_ec_mscm,
+            predicted_ph=predicted_ph,
+            discrepancy_ec_mscm=discrepancy_ec_mscm_value,
+            discrepancy_ph=discrepancy_ph_value,
         )
 
     def water_to_field_capacity(self) -> float:
@@ -1077,3 +1296,289 @@ class Pot:
     def water_to_field_capacity_liters(self) -> float:
         """Stessa cosa di water_to_field_capacity ma in litri."""
         return self.water_to_field_capacity() * self.surface_area_m2
+
+    # ===================================================================
+    #  Sotto-tappa C tappa 3 fascia 2: metodi di fertirrigazione
+    # ===================================================================
+
+    def apply_fertigation_step(
+        self,
+        volume_l: float,
+        ec_mscm: float,
+        ph: float,
+        current_date: date,
+    ) -> "FertigationResult":
+        """
+        Applica un evento di fertirrigazione al vaso, aggiornando in-place
+        sia lo stato idrico (state_mm, drainage) sia lo stato chimico
+        (salt_mass_meq, ph_substrate).
+
+        È il duale chimico di `apply_balance_step` per il bilancio idrico:
+        prende un singolo evento (volume di soluzione, EC, pH) e
+        produce un'evoluzione coerente di tutti gli stati del vaso.
+
+        Cosa succede in sequenza
+        ------------------------
+
+        Il metodo orchestra tre operazioni:
+
+          1. **Calcolo del bilancio chimico** via la funzione
+             `fertigation_step` di `science/fertigation.py`. Questa
+             determina la massa salina finale, il drenaggio salino,
+             il volume drenato, e il nuovo pH.
+
+          2. **Applicazione al stato idrico**: lo state_mm viene
+             aggiornato come `state_mm + water_input_mm - drainage_mm`,
+             dove water_input_mm è il volume entrante convertito in mm
+             di colonna d'acqua, e drainage_mm è il volume drenato
+             ottenuto dal calcolo chimico (per coerenza con la
+             stessa quantità del bilancio salino).
+
+          3. **Applicazione al stato chimico**: salt_mass_meq e
+             ph_substrate vengono aggiornati ai valori finali calcolati.
+
+        Parametri
+        ---------
+        volume_l : float
+            Volume di soluzione in arrivo, in litri. Non-negativo.
+        ec_mscm : float
+            Conducibilità elettrica della soluzione, in mS/cm a 25°C.
+            Non-negativa. Per acqua del rubinetto milanese tipica
+            usare 0.5; per BioBizz Bio-Grow al dosaggio raccomandato
+            usare 2.0-2.5; per pioggia naturale usare 0 (oppure
+            chiama direttamente `apply_rainfall_step`).
+        ph : float
+            pH della soluzione, scala 0-14. Per acqua del rubinetto
+            milanese usare 7.5; per BioBizz al dosaggio standard
+            usare 6.0-6.5; per pioggia naturale 5.6.
+        current_date : date
+            Data dell'evento, propagata al record di risultato per il
+            logging. Non influenza il calcolo (la fertirrigazione è
+            modellata come istantanea).
+
+        Ritorna
+        -------
+        FertigationResult
+            Record strutturato con tutti i dati prodotti: massa salina
+            iniziale e finale, drenaggio idrico e salino, pH iniziale
+            e finale, volumi convertiti per il logging, data dell'evento.
+
+        Solleva
+        -------
+        ValueError
+            Per parametri fisicamente impossibili (volume negativo, EC
+            negativa, pH fuori scala).
+        """
+        # Import lazy per evitare ciclicità tra domain e science
+        # all'inizializzazione del modulo.
+        from fitosim.science.fertigation import fertigation_step
+
+        # Snapshot dello stato pre-evento per il logging del result.
+        salt_before = self.salt_mass_meq
+        ph_before = self.ph_substrate
+        water_volume_before_l = self.water_volume_liters
+
+        # Calcolo del bilancio chimico (delega al modulo science).
+        chemistry_result = fertigation_step(
+            salt_mass_before_meq=salt_before,
+            ph_before=ph_before,
+            water_volume_before_l=water_volume_before_l,
+            water_input_l=volume_l,
+            ec_input_mscm=ec_mscm,
+            ph_input=ph,
+            fc_water_volume_l=self.fc_mm * self.surface_area_m2,
+            cec_meq_per_100g=self.substrate.effective_cec_meq_per_100g,
+            substrate_dry_mass_kg=self.substrate_dry_mass_kg,
+        )
+
+        # Conversione del volume drenato da L a mm per coerenza con
+        # state_mm. Il drainage in litri / area superficie = mm.
+        drainage_mm = chemistry_result.water_drained_l / self.surface_area_m2
+
+        # Conversione del volume entrante da L a mm.
+        water_input_mm = volume_l / self.surface_area_m2
+
+        # Aggiornamento dello state_mm: input - drainage. Il bilancio
+        # idrico per un evento di fertirrigazione è puro: niente ET
+        # (modellata in apply_balance_step su scala giornaliera
+        # separata), solo input idrico ed eventuale drenaggio.
+        self.state_mm = self.state_mm + water_input_mm - drainage_mm
+
+        # Aggiornamento degli stati chimici ai valori finali.
+        self.salt_mass_meq = chemistry_result.salt_mass_after_meq
+        self.ph_substrate = chemistry_result.ph_after
+
+        return FertigationResult(
+            event_date=current_date,
+            volume_input_l=volume_l,
+            volume_input_mm=water_input_mm,
+            ec_input_mscm=ec_mscm,
+            ph_input=ph,
+            salt_mass_before_meq=salt_before,
+            salt_mass_after_meq=chemistry_result.salt_mass_after_meq,
+            salt_mass_added_meq=chemistry_result.salt_mass_added_meq,
+            salt_mass_drained_meq=chemistry_result.salt_mass_drained_meq,
+            water_drained_l=chemistry_result.water_drained_l,
+            water_drained_mm=drainage_mm,
+            ph_before=ph_before,
+            ph_after=chemistry_result.ph_after,
+            ph_delta=chemistry_result.ph_delta,
+        )
+
+    def apply_rainfall_step(
+        self,
+        volume_l: float,
+        current_date: date,
+    ) -> "FertigationResult":
+        """
+        Applica un evento di pioggia naturale al vaso, internamente
+        chiamando `apply_fertigation_step` con i valori canonici della
+        pioggia: EC=0 e pH=5.6.
+
+        Il pH 5.6 è il valore "letterario" della pioggia naturale,
+        corrispondente all'equilibrio dell'acqua pura con la CO₂
+        atmosferica. La pioggia urbana milanese può essere leggermente
+        più acida (5.0-5.5) per via degli ossidi di azoto del traffico,
+        ma 5.6 è il valore convenzionale dei manuali di chimica del
+        suolo. Se vorrai personalizzare il valore per la tua zona
+        geografica, puoi usare `apply_fertigation_step` direttamente
+        passando il pH che preferisci.
+
+        L'EC della pioggia è praticamente nulla (acqua "distillata"
+        dal punto di vista del bilancio salino), quindi la pioggia
+        non aggiunge sali al vaso ma può rimuoverne via drenaggio se
+        è abbondante. È esattamente il fenomeno della "lisciviazione
+        naturale" che lava progressivamente i substrati outdoor.
+
+        Parametri
+        ---------
+        volume_l : float
+            Volume di pioggia raccolta dal vaso, in litri. Va calcolato
+            dal chiamante moltiplicando i mm di pioggia caduti per
+            l'area di intercettazione del vaso (`surface_area_m2`).
+        current_date : date
+            Data dell'evento.
+
+        Ritorna
+        -------
+        FertigationResult
+            Stesso tipo di risultato di apply_fertigation_step.
+        """
+        from fitosim.science.fertigation import RAINFALL_EC_MSCM, RAINFALL_PH
+        return self.apply_fertigation_step(
+            volume_l=volume_l,
+            ec_mscm=RAINFALL_EC_MSCM,
+            ph=RAINFALL_PH,
+            current_date=current_date,
+        )
+
+    def apply_step(
+        self,
+        et_0_mm: float,
+        current_date: date,
+        fertigation_volume_l: float = 0.0,
+        fertigation_ec_mscm: float = 0.0,
+        fertigation_ph: float = 7.0,
+        rainfall_volume_l: float = 0.0,
+    ) -> "FullStepResult":
+        """
+        Orchestratore completo del passo giornaliero del vaso: combina
+        in sequenza il bilancio idrico (ET, perdite per evapotraspirazione)
+        con l'eventuale evento di fertirrigazione e/o l'eventuale
+        evento di pioggia naturale.
+
+        È il metodo da preferire quando il chiamante vuole simulazione
+        chimica completa, perché orchestra correttamente la sequenza
+        degli eventi nella giornata e produce un report unificato.
+
+        Sequenza degli eventi
+        ---------------------
+
+        Il metodo applica gli eventi in questo ordine:
+
+          1. **Pioggia naturale** (se rainfall_volume_l > 0): il
+             modello la considera "del mattino", quindi viene applicata
+             prima che la giornata di evapotraspirazione consumi acqua.
+             Questo riproduce il caso pratico della pioggia notturna
+             che il giardiniere trova al mattino.
+
+          2. **Fertirrigazione** (se fertigation_volume_l > 0):
+             applicata dopo l'eventuale pioggia. Il caso "il
+             giardiniere fertirriga di mattina perché ha visto che
+             non ha piovuto" è ben rappresentato perché tipicamente
+             c'è solo uno dei due in un giorno specifico.
+
+          3. **Evapotraspirazione** giornaliera tramite il bilancio
+             idrico standard, applicata sull'eventuale stato già
+             modificato dagli eventi 1 e 2.
+
+        Significato della sequenza
+        --------------------------
+
+        Quando piove al mattino, il vaso si bagna prima che il sole
+        di mezzogiorno faccia evaporare. Quindi i sali in arrivo (zero
+        per la pioggia, ma non lo sono per la fertirrigazione) vengono
+        applicati al vaso "umido" e l'eventuale drenaggio ne porta via
+        una parte. Solo dopo, il bilancio idrico di FAO-56 calcola
+        l'evapotraspirazione del giorno sulla base dello stato idrico
+        post-eventi.
+
+        Parametri
+        ---------
+        et_0_mm : float
+            Evapotraspirazione di riferimento del giorno, in mm.
+        current_date : date
+            Data del passo. Usata per il modello fenologico (Kc dello
+            stadio corrente), per il logging, e per il dual-Kc.
+        fertigation_volume_l : float, opzionale
+            Volume di soluzione fertilizzante (default 0 = niente
+            fertirrigazione).
+        fertigation_ec_mscm : float, opzionale
+            EC del fertilizzante (ignorato se volume_l=0).
+        fertigation_ph : float, opzionale
+            pH del fertilizzante (default 7.0, comunque ignorato se
+            volume_l=0).
+        rainfall_volume_l : float, opzionale
+            Volume di pioggia raccolta (default 0 = niente pioggia).
+
+        Ritorna
+        -------
+        FullStepResult
+            Record che aggrega il BalanceStepResult del bilancio idrico
+            e gli eventuali FertigationResult di pioggia e/o
+            fertirrigazione applicati.
+        """
+        rainfall_result = None
+        fertigation_result = None
+
+        # Step 1: pioggia naturale (se presente).
+        if rainfall_volume_l > 0:
+            rainfall_result = self.apply_rainfall_step(
+                volume_l=rainfall_volume_l,
+                current_date=current_date,
+            )
+
+        # Step 2: fertirrigazione (se presente).
+        if fertigation_volume_l > 0:
+            fertigation_result = self.apply_fertigation_step(
+                volume_l=fertigation_volume_l,
+                ec_mscm=fertigation_ec_mscm,
+                ph=fertigation_ph,
+                current_date=current_date,
+            )
+
+        # Step 3: bilancio idrico giornaliero. Il water_input_mm
+        # passato qui è zero perché eventuali input li abbiamo già
+        # applicati ai due step precedenti.
+        balance_result = self.apply_balance_step(
+            et_0_mm=et_0_mm,
+            water_input_mm=0.0,
+            current_date=current_date,
+        )
+
+        return FullStepResult(
+            event_date=current_date,
+            balance_result=balance_result,
+            rainfall_result=rainfall_result,
+            fertigation_result=fertigation_result,
+        )
