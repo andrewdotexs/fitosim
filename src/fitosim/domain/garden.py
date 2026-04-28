@@ -61,9 +61,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Dict, Iterator, Optional
+from typing import Dict, Iterator, Optional, Union
 
-from fitosim.domain.pot import FullStepResult, Pot
+from fitosim.domain.pot import FullStepResult, Pot, SensorUpdateResult
+from fitosim.io.sensors import (
+    SensorTemporaryError,
+    SoilSensor,
+)
 
 
 @dataclass
@@ -129,6 +133,13 @@ class Garden:
     # default_factory=dict per evitare il classico bug del default
     # mutabile condiviso tra istanze.
     _pots: Dict[str, Pot] = field(default_factory=dict, repr=False)
+    # Mappa label → channel_id del gateway hardware. È una proprietà
+    # configurativa del giardino: collega ogni vaso al canale del
+    # sensore reale che lo monitora. Vasi senza mapping continuano
+    # solo in previsione (giardini misti permessi).
+    _channel_mapping: Dict[str, str] = field(
+        default_factory=dict, repr=False,
+    )
 
     def __post_init__(self) -> None:
         """Validazione: il nome non può essere vuoto."""
@@ -270,6 +281,165 @@ class Garden:
         per ``garden.has_pot(label)``.
         """
         return label in self._pots
+
+    # ----- Gestione della mappa label → channel_id -----
+
+    def set_channel_id(self, label: str, channel_id: str) -> None:
+        """
+        Associa un vaso al canale del sensore hardware.
+
+        Solleva KeyError se la label non corrisponde a nessun vaso
+        attualmente nel giardino. È una scelta deliberata: vogliamo
+        evitare mappature "orfane" che si riferiscono a vasi non
+        ancora aggiunti — è quasi sempre indicatore di un errore
+        di configurazione.
+
+        Parametri
+        ---------
+        label : str
+            La label del vaso. Deve essere già nel giardino.
+        channel_id : str
+            L'identificatore del canale del sensore. Il formato
+            dipende dal gateway hardware in uso (es. "1" per WH51 o
+            "ato_001" per ATO 7-in-1).
+
+        Solleva
+        -------
+        KeyError
+            Se la label non corrisponde a nessun vaso del giardino.
+        """
+        if label not in self._pots:
+            raise KeyError(
+                f"Garden '{self.name}': nessun vaso con label '{label}' "
+                f"a cui associare il channel_id '{channel_id}'. "
+                f"Vasi presenti: {list(self._pots.keys())}"
+            )
+        self._channel_mapping[label] = channel_id
+
+    def get_channel_id(self, label: str) -> Optional[str]:
+        """
+        Ritorna il channel_id mappato per il vaso, o None se non c'è.
+
+        Test non-eccezionale: chi vuole controllare se un vaso ha un
+        canale mappato può confrontare il risultato con None. Niente
+        eccezione perché molti vasi possono legittimamente non avere
+        un sensore (giardini misti).
+        """
+        return self._channel_mapping.get(label)
+
+    def has_channel_id(self, label: str) -> bool:
+        """Test booleano di presenza della mappatura."""
+        return label in self._channel_mapping
+
+    def remove_channel_id(self, label: str) -> None:
+        """
+        Rimuove la mappatura per un vaso. No-op se non c'è.
+
+        Caso pratico: il sensore è stato fisicamente scollegato dal
+        vaso, e da ora in poi quel vaso continua solo in previsione
+        senza vincolarsi a un canale.
+        """
+        self._channel_mapping.pop(label, None)
+
+    @property
+    def channel_mapping(self) -> Dict[str, str]:
+        """
+        Vista pubblica della mappa label → channel_id.
+
+        Ritorna una **copia** del dict per impedire modifiche dirette
+        dall'esterno. Per modificare la mappa usare i metodi
+        set_channel_id, remove_channel_id.
+        """
+        return dict(self._channel_mapping)
+
+    # ----- Orchestratore: aggiornamento dai sensori reali -----
+
+    def update_all_from_sensors(
+        self,
+        sensor: SoilSensor,
+    ) -> Dict[str, Union[SensorUpdateResult, SensorTemporaryError]]:
+        """
+        Allinea tutti i vasi mappati alle letture dei sensori reali.
+
+        Per ogni vaso del giardino che ha un channel_id mappato:
+
+          1. Chiama sensor.current_state(channel_id) per ottenere la
+             SoilReading corrente del canale.
+          2. Chiama pot.update_from_sensor(reading=reading) per
+             allineare il modello al sensore e produrre un report
+             diagnostico della discrepanza.
+          3. Inserisce il SensorUpdateResult nel dizionario di
+             ritorno indicizzato per label.
+
+        Vasi senza mappatura nel dizionario _channel_mapping vengono
+        saltati silenziosamente: continuano solo in previsione. È il
+        meccanismo che permette i "giardini misti" — alcuni vasi
+        sotto sensore reale, altri solo in previsione — senza
+        configurazione speciale.
+
+        Gestione degli errori
+        ---------------------
+        Per gli errori transitori del sensore (SensorTemporaryError —
+        timeout di rete, batteria momentaneamente debole, gateway
+        congestionato), il metodo NON propaga l'eccezione: il vaso
+        problematico viene saltato per quel ciclo, e il dizionario
+        di ritorno contiene l'eccezione invece del SensorUpdateResult.
+        Il giardiniere virtuale può poi ispezionare il risultato per
+        sapere quali vasi non sono stati aggiornati e perché.
+
+        Per gli errori permanenti (SensorPermanentError — channel_id
+        inesistente, credenziali sbagliate) e di qualità dati
+        (SensorDataQualityError — letture impossibili come θ
+        negativa o pH > 14), il metodo PROPAGA l'eccezione perché
+        indicano problemi di configurazione o malfunzionamenti che
+        richiedono intervento umano. Silenziarli equivarrebbe a
+        nascondere problemi che peggioreranno se non corretti.
+
+        Parametri
+        ---------
+        sensor : SoilSensor
+            Il client del sensore hardware. Va passato come parametro
+            (e non tenuto come attributo del Garden) perché:
+
+              * Può cambiare durante la vita del giardino (un fake
+                sensor in test, l'HTTP sensor reale in produzione).
+              * Tenerlo fuori dalla dataclass garantisce che il
+                Garden resti serializzabile in JSON (un client HTTP
+                con stato di connessione non lo è).
+
+        Ritorna
+        -------
+        Dict[str, SensorUpdateResult | SensorTemporaryError]
+            Un dizionario {label: result} con un'entrata per ogni
+            vaso mappato. Vasi senza mappatura non sono inclusi.
+            Il valore è un SensorUpdateResult per le letture
+            riuscite, oppure un'istanza di SensorTemporaryError
+            preservata come oggetto (non sollevata) per gli errori
+            transitori.
+        """
+        results: Dict[str, Union[SensorUpdateResult, SensorTemporaryError]] = {}
+        for label, channel_id in self._channel_mapping.items():
+            # Vasi mappati ma poi rimossi dal giardino: tolleriamo
+            # silenziosamente. Le mappature orfane si possono creare
+            # solo via remove_pot senza prima rimuovere il mapping.
+            if label not in self._pots:
+                continue
+
+            pot = self._pots[label]
+            try:
+                reading = sensor.current_state(channel_id)
+            except SensorTemporaryError as e:
+                # Errore transitorio: preserva l'eccezione nel
+                # risultato e prosegui con gli altri vasi.
+                results[label] = e
+                continue
+            # SensorPermanentError e SensorDataQualityError NON sono
+            # catturati: propagano in alto come da contratto.
+
+            update_result = pot.update_from_sensor(reading=reading)
+            results[label] = update_result
+
+        return results
 
     # ----- Orchestratore: evoluzione giornaliera di tutti i vasi -----
 

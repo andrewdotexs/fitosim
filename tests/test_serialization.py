@@ -254,6 +254,36 @@ class TestRoundTripBasic(unittest.TestCase):
         self.assertEqual(substrate2.rew_mm, 8.0)
         self.assertEqual(substrate2.tew_mm, 18.0)
 
+    def test_channel_mapping_round_trip(self):
+        # La mappa label → channel_id è preservata dal round-trip JSON.
+        g = Garden(name="balcone")
+        g.add_pot(_make_basic_pot("b1"))
+        g.add_pot(_make_basic_pot("b2"))
+        g.add_pot(_make_basic_pot("b3"))
+        # Mapping parziale (giardino misto).
+        g.set_channel_id("b1", "wh51_ch1")
+        g.set_channel_id("b3", "ato_001")
+
+        g2 = import_garden_json(export_garden_json(g))
+        self.assertEqual(g2.get_channel_id("b1"), "wh51_ch1")
+        self.assertIsNone(g2.get_channel_id("b2"))
+        self.assertEqual(g2.get_channel_id("b3"), "ato_001")
+        self.assertEqual(
+            g2.channel_mapping, {"b1": "wh51_ch1", "b3": "ato_001"},
+        )
+
+    def test_no_channel_mapping_round_trip(self):
+        # Garden senza mapping: il JSON non deve creare problemi e
+        # tutti i vasi ricaricati sono "non mappati".
+        g = Garden(name="balcone")
+        g.add_pot(_make_basic_pot("b1"))
+        g.add_pot(_make_basic_pot("b2"))
+
+        g2 = import_garden_json(export_garden_json(g))
+        self.assertIsNone(g2.get_channel_id("b1"))
+        self.assertIsNone(g2.get_channel_id("b2"))
+        self.assertEqual(g2.channel_mapping, {})
+
 
 # =======================================================================
 #  Famiglia 2: catalogo

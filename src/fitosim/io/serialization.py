@@ -327,7 +327,10 @@ def _dict_to_substrate(
     )
 
 
-def _pot_to_dict(pot: Pot) -> Dict[str, Any]:
+def _pot_to_dict(
+    pot: Pot,
+    channel_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Converte un Pot in dict, separando campi statici da mutabili."""
     static_fields = {
         "pot_volume_l": pot.pot_volume_l,
@@ -345,6 +348,7 @@ def _pot_to_dict(pot: Pot) -> Dict[str, Any]:
         "saucer_evap_coef": pot.saucer_evap_coef,
         "planting_date": pot.planting_date.isoformat(),
         "notes": pot.notes,
+        "channel_id": channel_id,
     }
     state_fields = {
         "state_mm": pot.state_mm,
@@ -525,7 +529,10 @@ def export_garden_json(
             "location_description": garden.location_description,
         },
         "catalog": catalog,
-        "pots": [_pot_to_dict(pot) for pot in garden],
+        "pots": [
+            _pot_to_dict(pot, channel_id=garden.get_channel_id(pot.label))
+            for pot in garden
+        ],
     }
 
     return json.dumps(payload, indent=indent, ensure_ascii=False)
@@ -640,5 +647,10 @@ def import_garden_json(json_str: str) -> Garden:
     for pot_data in data.get("pots", []):
         pot = _dict_to_pot(pot_data, species_by_name, substrates_by_name)
         garden.add_pot(pot)
+        # Se il pot_data contiene channel_id (presente dal format_version
+        # 1 della sotto-tappa C in poi), applica la mappatura.
+        channel_id = pot_data.get("static_fields", {}).get("channel_id")
+        if channel_id is not None:
+            garden.set_channel_id(pot.label, channel_id)
 
     return garden

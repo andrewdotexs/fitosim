@@ -676,5 +676,159 @@ class TestEvents(unittest.TestCase):
             )
 
 
+# =======================================================================
+#  Famiglia 7: persistenza della mappa channel_id e migrazione schema
+# =======================================================================
+
+class TestChannelIdPersistence(unittest.TestCase):
+    """
+    Persistenza della mappa label → channel_id introdotta nella
+    sotto-tappa C, e migrazione automatica da schema v1.
+    """
+
+    def setUp(self):
+        self.persistence = GardenPersistence(":memory:")
+        self.persistence.register_species(_make_basil())
+        self.persistence.register_substrate(_make_universal_substrate())
+
+    def tearDown(self):
+        self.persistence.close()
+
+    def test_channel_id_round_trip(self):
+        # Salvataggio e caricamento di un giardino con mappa parziale.
+        garden = Garden(name="balcone")
+        garden.add_pot(_make_basic_pot("basilico-1"))
+        garden.add_pot(_make_basic_pot("basilico-2"))
+        garden.set_channel_id("basilico-1", "wh51_ch1")
+        # basilico-2 senza mapping
+        self.persistence.save_garden(garden)
+
+        loaded = self.persistence.load_garden("balcone")
+        self.assertEqual(loaded.get_channel_id("basilico-1"), "wh51_ch1")
+        self.assertIsNone(loaded.get_channel_id("basilico-2"))
+
+    def test_channel_id_update_on_resave(self):
+        # Cambio del channel_id e successivo salvataggio: il valore
+        # nel database viene aggiornato.
+        garden = Garden(name="balcone")
+        garden.add_pot(_make_basic_pot("basilico-1"))
+        garden.set_channel_id("basilico-1", "wh51_ch1")
+        self.persistence.save_garden(garden)
+
+        # Cambio del canale (es. il sensore è stato spostato).
+        garden.set_channel_id("basilico-1", "wh51_ch5")
+        self.persistence.save_garden(garden)
+
+        loaded = self.persistence.load_garden("balcone")
+        self.assertEqual(loaded.get_channel_id("basilico-1"), "wh51_ch5")
+
+    def test_channel_id_removal_on_resave(self):
+        # Rimozione del mapping e successivo salvataggio: il
+        # channel_id nel database diventa NULL.
+        garden = Garden(name="balcone")
+        garden.add_pot(_make_basic_pot("basilico-1"))
+        garden.set_channel_id("basilico-1", "wh51_ch1")
+        self.persistence.save_garden(garden)
+
+        garden.remove_channel_id("basilico-1")
+        self.persistence.save_garden(garden)
+
+        loaded = self.persistence.load_garden("balcone")
+        self.assertIsNone(loaded.get_channel_id("basilico-1"))
+
+    def test_schema_version_is_2(self):
+        # Database nuovo: schema_version = 2.
+        cursor = self.persistence._conn.execute(
+            "SELECT version FROM schema_metadata "
+            "ORDER BY id DESC LIMIT 1"
+        )
+        self.assertEqual(cursor.fetchone()["version"], 2)
+
+    def test_v1_database_migrates_to_v2_automatically(self):
+        # Simuliamo un database creato con lo schema v1: applichiamo
+        # solo le tabelle iniziali e poi forziamo version=1, infine
+        # apriamo il database con il codice corrente che deve fare
+        # la migrazione.
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys = ON")
+        # Schema v1: stesso del v2 ma SENZA channel_id sulla tabella pots
+        conn.execute("""
+            CREATE TABLE schema_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE pots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                garden_id INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                species_id INTEGER NOT NULL,
+                substrate_id INTEGER NOT NULL,
+                pot_volume_l REAL NOT NULL,
+                pot_diameter_cm REAL NOT NULL,
+                pot_shape TEXT NOT NULL,
+                pot_width_cm REAL,
+                pot_material TEXT NOT NULL,
+                pot_color TEXT NOT NULL,
+                location TEXT NOT NULL,
+                sun_exposure TEXT NOT NULL,
+                active_depth_fraction REAL NOT NULL,
+                rainfall_exposure REAL NOT NULL,
+                saucer_capacity_mm REAL,
+                saucer_capillary_rate REAL,
+                saucer_evap_coef REAL,
+                planting_date TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        conn.execute("INSERT INTO schema_metadata (version) VALUES (1)")
+        conn.commit()
+
+        # Adesso simuliamo l'apertura dello stesso database via
+        # GardenPersistence (versione 2). La migrazione deve applicarsi.
+        # Per farlo creiamo un GardenPersistence appoggiato su questa
+        # connessione esistente.
+        # Non possiamo riusare la stessa connessione perché :memory:
+        # è isolato per connessione. Usiamo un file temporaneo invece.
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            # Costruisci v1 sul file
+            conn2 = sqlite3.connect(tmp_path)
+            conn2.execute("PRAGMA foreign_keys = ON")
+            conn2.execute("""
+                CREATE TABLE schema_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version INTEGER NOT NULL
+                )
+            """)
+            conn2.execute("""
+                CREATE TABLE pots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    label TEXT NOT NULL
+                )
+            """)
+            conn2.execute("INSERT INTO schema_metadata (version) VALUES (1)")
+            conn2.commit()
+            conn2.close()
+
+            # Ora apri con GardenPersistence v2: deve migrare.
+            with GardenPersistence(tmp_path) as p:
+                cursor = p._conn.execute(
+                    "SELECT version FROM schema_metadata "
+                    "ORDER BY id DESC LIMIT 1"
+                )
+                self.assertEqual(cursor.fetchone()["version"], 2)
+                # E la colonna channel_id esiste:
+                cursor = p._conn.execute("PRAGMA table_info(pots)")
+                cols = [r["name"] for r in cursor.fetchall()]
+                self.assertIn("channel_id", cols)
+        finally:
+            os.unlink(tmp_path)
+
+
 if __name__ == "__main__":
     unittest.main()

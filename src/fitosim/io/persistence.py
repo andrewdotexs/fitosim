@@ -99,7 +99,12 @@ from fitosim.science.substrate import (
 # (per esempio quando aggiungeremo gli eventi pianificati nella sotto-
 # tappa D), incrementeremo questo numero e aggiungeremo una funzione
 # `_migrate_v1_to_v2()` che applica le modifiche al database esistente.
-SCHEMA_VERSION = 1
+#
+# Versione 2 (sotto-tappa C tappa 4): aggiunto il campo channel_id
+# nullable alla tabella pots per la mappa label → channel_id del
+# gateway hardware. Database alla versione 1 vengono migrati
+# automaticamente con un ALTER TABLE.
+SCHEMA_VERSION = 2
 
 
 # =======================================================================
@@ -219,6 +224,7 @@ SCHEMA_STATEMENTS: List[str] = [
         saucer_evap_coef         REAL,
         planting_date            TEXT NOT NULL,
         notes                    TEXT NOT NULL DEFAULT '',
+        channel_id               TEXT,
         UNIQUE (garden_id, label),
         FOREIGN KEY (garden_id) REFERENCES gardens(id) ON DELETE CASCADE,
         FOREIGN KEY (species_id) REFERENCES species(id) ON DELETE RESTRICT,
@@ -462,18 +468,47 @@ class GardenPersistence:
                     f"{SCHEMA_VERSION}. Aggiorna fitosim per leggerlo."
                 )
             elif row["version"] < SCHEMA_VERSION:
-                # In futuro qui si applicheranno le migrazioni:
-                # for v in range(row['version'], SCHEMA_VERSION):
-                #     migration_fn = _MIGRATIONS[v]
-                #     migration_fn(self._conn)
-                # Per ora abbiamo solo la versione 1, quindi questo
-                # ramo non è raggiungibile.
-                raise PersistenceError(
-                    f"Il database è alla versione {row['version']}, "
-                    f"più vecchia della versione corrente "
-                    f"{SCHEMA_VERSION}. Le migrazioni non sono ancora "
-                    f"implementate (non servivano fino a oggi)."
-                )
+                # Database più vecchio del codice: applica migrazioni.
+                self._apply_migrations(from_version=row["version"])
+
+    def _apply_migrations(self, from_version: int) -> None:
+        """
+        Applica le migrazioni dello schema dal version corrente fino
+        a SCHEMA_VERSION.
+
+        Le migrazioni sono cumulative: applichiamo in ordine
+        v1→v2, v2→v3, etc., fino a raggiungere la versione corrente
+        del codice.
+        """
+        with self._conn:
+            current = from_version
+            if current < 2:
+                self._migrate_v1_to_v2()
+                current = 2
+            # In futuro:
+            # if current < 3:
+            #     self._migrate_v2_to_v3()
+            #     current = 3
+            # Aggiorna la versione registrata.
+            self._conn.execute(
+                "INSERT INTO schema_metadata (version) VALUES (?)",
+                (SCHEMA_VERSION,),
+            )
+
+    def _migrate_v1_to_v2(self) -> None:
+        """
+        Migrazione dalla versione 1 alla versione 2.
+
+        Cambiamento: aggiunto campo channel_id nullable alla tabella
+        pots per la mappa label → channel_id del gateway hardware.
+
+        Database alla versione 1 vengono aggiornati senza perdita di
+        dati: tutti i vasi esistenti avranno channel_id NULL (cioè
+        "non mappato"), comportamento equivalente a quello pre-migrazione.
+        """
+        self._conn.execute(
+            "ALTER TABLE pots ADD COLUMN channel_id TEXT"
+        )
 
     # ====================================================================
     #  Catalogo: specie
@@ -962,12 +997,16 @@ class GardenPersistence:
 
             # Insert/update di ciascun vaso e snapshot del suo stato.
             for pot in garden:
-                pot_id = self._save_pot(garden_id, pot)
+                channel_id = garden.get_channel_id(pot.label)
+                pot_id = self._save_pot(garden_id, pot, channel_id)
                 self._save_pot_state(pot_id, pot, snapshot_timestamp)
 
             return garden_id
 
-    def _save_pot(self, garden_id: int, pot: Pot) -> int:
+    def _save_pot(
+        self, garden_id: int, pot: Pot,
+        channel_id: Optional[str] = None,
+    ) -> int:
         """
         Insert o update di un singolo vaso. Ritorna l'id del vaso.
         """
@@ -999,6 +1038,7 @@ class GardenPersistence:
             pot.saucer_capillary_rate, pot.saucer_evap_coef,
             pot.planting_date.isoformat(),
             pot.notes,
+            channel_id,
         )
 
         if existing:
@@ -1013,7 +1053,7 @@ class GardenPersistence:
                     active_depth_fraction = ?, rainfall_exposure = ?,
                     saucer_capacity_mm = ?,
                     saucer_capillary_rate = ?, saucer_evap_coef = ?,
-                    planting_date = ?, notes = ?
+                    planting_date = ?, notes = ?, channel_id = ?
                 WHERE id = ?
                 """,
                 params + (existing["id"],),
@@ -1031,8 +1071,8 @@ class GardenPersistence:
                 location, sun_exposure,
                 active_depth_fraction, rainfall_exposure,
                 saucer_capacity_mm, saucer_capillary_rate, saucer_evap_coef,
-                planting_date, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                planting_date, notes, channel_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (garden_id, pot.label) + params,
         )
@@ -1132,6 +1172,10 @@ class GardenPersistence:
         for pot_row in cursor.fetchall():
             pot = self._load_pot(pot_row, as_of)
             garden.add_pot(pot)
+            # Se il vaso ha un channel_id salvato, ricostruisci la
+            # mappatura nel garden.
+            if pot_row["channel_id"] is not None:
+                garden.set_channel_id(pot.label, pot_row["channel_id"])
 
         return garden
 

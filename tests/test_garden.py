@@ -19,11 +19,18 @@ Quattro famiglie tematiche di test:
 """
 
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
+from typing import Dict
 
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.species import Species
+from fitosim.io.sensors import (
+    SensorDataQualityError,
+    SensorPermanentError,
+    SensorTemporaryError,
+    SoilReading,
+)
 from fitosim.science.substrate import Substrate
 
 
@@ -387,6 +394,207 @@ class TestGardenApplyStepAll(unittest.TestCase):
         # (entrambi hanno consumato circa lo stesso quantitativo di
         # acqua per ET, ma partono da stati molto diversi).
         self.assertGreater(wet_pot.state_mm, dry_pot.state_mm)
+
+
+# =======================================================================
+#  Famiglia 5: gestione della mappa channel_id
+# =======================================================================
+
+class TestGardenChannelMapping(unittest.TestCase):
+    """Mappa label → channel_id del gateway hardware."""
+
+    def setUp(self):
+        self.garden = Garden(name="balcone")
+        self.garden.add_pot(_make_pot("basilico"))
+        self.garden.add_pot(_make_pot("pomodoro"))
+
+    def test_set_and_get_channel_id(self):
+        self.garden.set_channel_id("basilico", "wh51_ch1")
+        self.assertEqual(
+            self.garden.get_channel_id("basilico"), "wh51_ch1",
+        )
+
+    def test_get_channel_id_returns_none_if_unmapped(self):
+        # Un vaso senza mapping ritorna None senza errore.
+        self.assertIsNone(self.garden.get_channel_id("basilico"))
+
+    def test_get_channel_id_returns_none_for_unknown_label(self):
+        # Anche per label che non sono mai esistite nel garden:
+        # restituisce None (non solleva errore). È coerente con
+        # l'uso "test non eccezionale" della funzione.
+        self.assertIsNone(self.garden.get_channel_id("inesistente"))
+
+    def test_set_channel_id_rejects_unknown_label(self):
+        # Mappare una label che non esiste è quasi sempre un errore
+        # di configurazione. Solleviamo subito.
+        with self.assertRaises(KeyError) as ctx:
+            self.garden.set_channel_id("inesistente", "wh51_ch9")
+        self.assertIn("inesistente", str(ctx.exception))
+
+    def test_has_channel_id(self):
+        self.assertFalse(self.garden.has_channel_id("basilico"))
+        self.garden.set_channel_id("basilico", "wh51_ch1")
+        self.assertTrue(self.garden.has_channel_id("basilico"))
+
+    def test_remove_channel_id(self):
+        self.garden.set_channel_id("basilico", "wh51_ch1")
+        self.garden.remove_channel_id("basilico")
+        self.assertFalse(self.garden.has_channel_id("basilico"))
+        # Idempotente: rimuovere da non mappato è no-op.
+        self.garden.remove_channel_id("basilico")  # niente errore
+
+    def test_channel_mapping_returns_copy_not_reference(self):
+        # PROPRIETÀ FONDAMENTALE: channel_mapping ritorna una COPIA.
+        # Modificare la copia NON deve modificare lo stato interno.
+        self.garden.set_channel_id("basilico", "wh51_ch1")
+        copy = self.garden.channel_mapping
+        copy["pomodoro"] = "wh51_ch99"  # modifica la copia
+        # Lo stato interno del garden NON è cambiato.
+        self.assertFalse(self.garden.has_channel_id("pomodoro"))
+
+    def test_channel_mapping_preserves_pots_with_no_mapping(self):
+        # Mapping di un solo vaso: l'altro è correttamente "non mappato".
+        self.garden.set_channel_id("basilico", "wh51_ch1")
+        mapping = self.garden.channel_mapping
+        self.assertIn("basilico", mapping)
+        self.assertNotIn("pomodoro", mapping)
+
+
+# =======================================================================
+#  Famiglia 6: update_all_from_sensors
+# =======================================================================
+
+class _FakeSoilSensor:
+    """
+    SoilSensor fake per i test, configurabile per ritornare letture
+    arbitrarie o sollevare eccezioni specifiche per canali specifici.
+    """
+
+    def __init__(
+        self,
+        readings: Dict[str, SoilReading] = None,
+        errors: Dict[str, Exception] = None,
+    ):
+        self._readings = readings or {}
+        self._errors = errors or {}
+        self.calls = []  # registra le chiamate per test diagnostici
+
+    def current_state(self, channel_id: str) -> SoilReading:
+        self.calls.append(channel_id)
+        if channel_id in self._errors:
+            raise self._errors[channel_id]
+        if channel_id in self._readings:
+            return self._readings[channel_id]
+        # Default: lettura "neutra" basata sul nome del canale
+        return SoilReading(
+            timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc),
+            theta_volumetric=0.30,
+        )
+
+
+class TestGardenUpdateFromSensors(unittest.TestCase):
+    """
+    Validazione dell'orchestratore di aggiornamento dai sensori.
+    """
+
+    def setUp(self):
+        self.garden = Garden(name="balcone")
+        self.garden.add_pot(_make_pot("basilico", state_mm=20.0))
+        self.garden.add_pot(_make_pot("pomodoro", state_mm=15.0))
+        self.garden.add_pot(_make_pot("solo_previsione", state_mm=18.0))
+        # Mappiamo solo i primi due. Il terzo resta "solo previsione".
+        self.garden.set_channel_id("basilico", "ch1")
+        self.garden.set_channel_id("pomodoro", "ch2")
+
+    def test_updates_only_mapped_pots(self):
+        # I vasi senza mapping sono saltati: il dict di ritorno
+        # contiene solo i due vasi mappati.
+        sensor = _FakeSoilSensor(readings={
+            "ch1": SoilReading(
+                timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc),
+                theta_volumetric=0.35,
+            ),
+            "ch2": SoilReading(
+                timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc),
+                theta_volumetric=0.25,
+            ),
+        })
+        results = self.garden.update_all_from_sensors(sensor)
+        self.assertEqual(set(results.keys()), {"basilico", "pomodoro"})
+        self.assertNotIn("solo_previsione", results)
+
+    def test_unmapped_pots_continue_in_prediction(self):
+        # Il vaso "solo_previsione" mantiene il suo state_mm originale
+        # perché non viene toccato dall'aggiornamento.
+        sensor = _FakeSoilSensor()
+        before = self.garden.get_pot("solo_previsione").state_mm
+        self.garden.update_all_from_sensors(sensor)
+        after = self.garden.get_pot("solo_previsione").state_mm
+        self.assertEqual(before, after)
+
+    def test_sensor_called_with_correct_channel_ids(self):
+        # Il sensore viene chiamato con i channel_id corretti.
+        sensor = _FakeSoilSensor()
+        self.garden.update_all_from_sensors(sensor)
+        self.assertEqual(set(sensor.calls), {"ch1", "ch2"})
+
+    def test_temporary_error_skips_pot_continues_others(self):
+        # Errore transitorio sul ch1: il vaso basilico non viene
+        # aggiornato ma l'orchestratore continua col pomodoro.
+        sensor = _FakeSoilSensor(
+            readings={
+                "ch2": SoilReading(
+                    timestamp=datetime(2026, 5, 15, 12, 0,
+                                       tzinfo=timezone.utc),
+                    theta_volumetric=0.25,
+                ),
+            },
+            errors={"ch1": SensorTemporaryError("batteria scarica")},
+        )
+        results = self.garden.update_all_from_sensors(sensor)
+        # Per basilico, il risultato è l'eccezione preservata.
+        self.assertIsInstance(results["basilico"], SensorTemporaryError)
+        # Per pomodoro, il risultato è regolare.
+        self.assertNotIsInstance(results["pomodoro"], Exception)
+
+    def test_permanent_error_propagates(self):
+        # Errore permanente: propaga subito, niente skip.
+        sensor = _FakeSoilSensor(
+            errors={"ch1": SensorPermanentError("canale inesistente")},
+        )
+        with self.assertRaises(SensorPermanentError):
+            self.garden.update_all_from_sensors(sensor)
+
+    def test_data_quality_error_propagates(self):
+        # SensorDataQualityError: propaga, indica letture impossibili
+        # che contaminerebbero il modello se silenziate.
+        sensor = _FakeSoilSensor(
+            errors={"ch1": SensorDataQualityError("theta < 0")},
+        )
+        with self.assertRaises(SensorDataQualityError):
+            self.garden.update_all_from_sensors(sensor)
+
+    def test_empty_garden_returns_empty_dict(self):
+        # Garden senza vasi mappati: dict vuoto, nessuna chiamata
+        # al sensore.
+        empty = Garden(name="vuoto")
+        sensor = _FakeSoilSensor()
+        results = empty.update_all_from_sensors(sensor)
+        self.assertEqual(results, {})
+        self.assertEqual(sensor.calls, [])
+
+    def test_orphan_mapping_ignored_silently(self):
+        # Caso patologico: un vaso viene rimosso dal garden senza
+        # rimuovere prima il suo mapping. La mappatura "orfana" non
+        # blocca l'orchestratore — è semplicemente ignorata.
+        # Per simularlo, accediamo direttamente al dict interno.
+        self.garden._channel_mapping["fantasma"] = "ch99"
+        sensor = _FakeSoilSensor()
+        results = self.garden.update_all_from_sensors(sensor)
+        # La mappatura orfana non causa errori e non appare nei risultati.
+        self.assertNotIn("fantasma", results)
+        # Le altre mappature funzionano normalmente.
+        self.assertIn("basilico", results)
 
 
 if __name__ == "__main__":
