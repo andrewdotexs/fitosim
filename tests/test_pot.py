@@ -2276,5 +2276,277 @@ class TestSensorUpdateChemistry(unittest.TestCase):
         self.assertLess(et_after_stress_reading, et_optimal)
 
 
+# =======================================================================
+#  Sotto-tappa F tappa 3 fascia 2: coefficiente di esposizione alla pioggia
+# =======================================================================
+
+class TestPotRainfallExposure(unittest.TestCase):
+    """
+    Validazione del campo `rainfall_exposure` aggiunto in sotto-tappa F.
+
+    Test concentrati su:
+      1. Default 1.0 e retrocompat con i test della sotto-tappa C.
+      2. Validazione del range [0, 1].
+      3. Effetto materiale: il coefficiente modula il volume effettivo
+         che entra nel vaso solo per gli eventi di pioggia naturale.
+      4. Invarianza: le fertirrigazioni manuali non sono influenzate
+         dal coefficiente (il giardiniere punta direttamente).
+      5. Campi diagnostici (volume_intercepted_l/mm) valorizzati
+         correttamente per le piogge, restano None per le fertirrigazioni.
+      6. Casi limite: esposizione zero (vaso totalmente al riparo) e
+         esposizione uno (totalmente esposto).
+    """
+
+    def _make_chemistry_pot(self, **overrides) -> Pot:
+        defaults = dict(
+            label="rain-exposure-test",
+            species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0,
+            pot_diameter_cm=18.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1),
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    # ----- Default e validazione -----
+
+    def test_default_exposure_is_one(self):
+        # Senza specificarlo, il vaso è completamente esposto: 1.0.
+        # Garantisce retrocompatibilità totale con i test esistenti.
+        pot = self._make_chemistry_pot()
+        self.assertEqual(pot.rainfall_exposure, 1.0)
+
+    def test_explicit_exposure_value_accepted(self):
+        for value in [0.0, 0.3, 0.5, 0.7, 1.0]:
+            with self.subTest(value=value):
+                pot = self._make_chemistry_pot(rainfall_exposure=value)
+                self.assertEqual(pot.rainfall_exposure, value)
+
+    def test_negative_exposure_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._make_chemistry_pot(rainfall_exposure=-0.1)
+        self.assertIn("rainfall_exposure", str(ctx.exception))
+
+    def test_above_one_rejected(self):
+        # Pioggia "amplificata" non ha senso fisico.
+        with self.assertRaises(ValueError):
+            self._make_chemistry_pot(rainfall_exposure=1.5)
+
+    # ----- Effetto sul bilancio chimico della pioggia -----
+
+    def test_rainfall_volume_modulated_by_exposure(self):
+        # Il volume di pioggia che effettivamente entra nel vaso è
+        # ridotto dal coefficiente. Verifichiamo confrontando lo
+        # state_mm finale di due Pot identici tranne che per
+        # l'esposizione.
+        pot_full = self._make_chemistry_pot(rainfall_exposure=1.0)
+        pot_half = self._make_chemistry_pot(rainfall_exposure=0.5)
+
+        # Stessa pioggia in entrambi i Pot (volume_l identico).
+        rain_volume_l = 0.05
+        result_full = pot_full.apply_rainfall_step(
+            volume_l=rain_volume_l, current_date=date(2026, 5, 1),
+        )
+        result_half = pot_half.apply_rainfall_step(
+            volume_l=rain_volume_l, current_date=date(2026, 5, 1),
+        )
+
+        # Il vaso completamente esposto riceve volume_input_l = 0.05.
+        self.assertAlmostEqual(result_full.volume_input_l, 0.05, places=9)
+        # Il vaso parzialmente esposto riceve volume_input_l = 0.025.
+        self.assertAlmostEqual(result_half.volume_input_l, 0.025, places=9)
+
+    def test_drainage_proportional_to_actual_input(self):
+        # Conseguenza diretta del precedente: anche il drenaggio
+        # (se c'è) è ridotto in proporzione al volume effettivo.
+        # Configuriamo un vaso quasi a fc per provocare drenaggio.
+        pot_full = self._make_chemistry_pot(rainfall_exposure=1.0)
+        pot_half = self._make_chemistry_pot(rainfall_exposure=0.5)
+        # Riempi quasi a fc per provocare drenaggio.
+        pot_full.state_mm = pot_full.fc_mm - 1.0
+        pot_half.state_mm = pot_half.fc_mm - 1.0
+
+        result_full = pot_full.apply_rainfall_step(
+            volume_l=0.5, current_date=date(2026, 5, 1),
+        )
+        result_half = pot_half.apply_rainfall_step(
+            volume_l=0.5, current_date=date(2026, 5, 1),
+        )
+
+        # Il vaso con esposizione 0.5 riceve metà acqua → meno drenaggio.
+        self.assertGreater(result_full.water_drained_l,
+                           result_half.water_drained_l)
+
+    # ----- Campi diagnostici -----
+
+    def test_volume_intercepted_populated_for_rainfall(self):
+        # Per gli eventi di pioggia naturale, i due campi diagnostici
+        # sono valorizzati. Il volume intercettato = volume nominale
+        # × (1 - rainfall_exposure).
+        pot = self._make_chemistry_pot(rainfall_exposure=0.3)
+        result = pot.apply_rainfall_step(
+            volume_l=1.0, current_date=date(2026, 5, 1),
+        )
+        # 1.0 L nominale × (1 - 0.3) = 0.7 L intercettati
+        self.assertIsNotNone(result.volume_intercepted_l)
+        self.assertAlmostEqual(result.volume_intercepted_l, 0.7, places=9)
+        # volume_intercepted_mm = 0.7 / area; verifichiamo coerenza
+        expected_mm = 0.7 / pot.surface_area_m2
+        self.assertAlmostEqual(
+            result.volume_intercepted_mm, expected_mm, places=6,
+        )
+
+    def test_volume_intercepted_zero_for_full_exposure(self):
+        # Vaso completamente esposto: niente intercezione.
+        pot = self._make_chemistry_pot(rainfall_exposure=1.0)
+        result = pot.apply_rainfall_step(
+            volume_l=0.5, current_date=date(2026, 5, 1),
+        )
+        self.assertEqual(result.volume_intercepted_l, 0.0)
+        self.assertEqual(result.volume_intercepted_mm, 0.0)
+
+    def test_volume_intercepted_none_for_fertigation(self):
+        # Le fertirrigazioni manuali NON applicano il coefficiente:
+        # il giardiniere punta direttamente sul vaso. I due campi
+        # diagnostici restano None nel result.
+        pot = self._make_chemistry_pot(rainfall_exposure=0.3)
+        result = pot.apply_fertigation_step(
+            volume_l=0.5, ec_mscm=2.0, ph=6.0,
+            current_date=date(2026, 5, 1),
+        )
+        self.assertIsNone(result.volume_intercepted_l)
+        self.assertIsNone(result.volume_intercepted_mm)
+
+    # ----- Invarianza per fertirrigazioni manuali -----
+
+    def test_fertigation_unaffected_by_exposure(self):
+        # Una fertirrigazione manuale produce esattamente lo stesso
+        # bilancio chimico in due Pot identici tranne che per
+        # l'esposizione: il coefficiente non si applica.
+        pot_full = self._make_chemistry_pot(
+            rainfall_exposure=1.0, salt_mass_meq=10.0,
+        )
+        pot_half = self._make_chemistry_pot(
+            rainfall_exposure=0.3, salt_mass_meq=10.0,
+        )
+
+        result_full = pot_full.apply_fertigation_step(
+            volume_l=0.3, ec_mscm=2.0, ph=6.0,
+            current_date=date(2026, 5, 1),
+        )
+        result_half = pot_half.apply_fertigation_step(
+            volume_l=0.3, ec_mscm=2.0, ph=6.0,
+            current_date=date(2026, 5, 1),
+        )
+
+        # Stessi sali aggiunti, stesso state_mm finale, stesso pH:
+        # il coefficiente di esposizione non tocca le fertirrigazioni.
+        self.assertAlmostEqual(
+            result_full.salt_mass_added_meq,
+            result_half.salt_mass_added_meq, places=9,
+        )
+        self.assertAlmostEqual(
+            pot_full.state_mm, pot_half.state_mm, places=9,
+        )
+        self.assertAlmostEqual(
+            pot_full.ph_substrate, pot_half.ph_substrate, places=9,
+        )
+
+    # ----- Casi limite -----
+
+    def test_full_shelter_no_rainfall_effect(self):
+        # rainfall_exposure = 0 (vaso indoor o sotto tettoia chiusa):
+        # nessun effetto della pioggia sul vaso, anche se chiamiamo
+        # apply_rainfall_step.
+        pot = self._make_chemistry_pot(
+            rainfall_exposure=0.0, salt_mass_meq=10.0,
+        )
+        state_before = pot.state_mm
+        salt_before = pot.salt_mass_meq
+        ph_before = pot.ph_substrate
+
+        result = pot.apply_rainfall_step(
+            volume_l=2.0,    # pioggia abbondante, ma intercettata tutta
+            current_date=date(2026, 5, 1),
+        )
+
+        # Niente cambia nello stato del Pot.
+        self.assertAlmostEqual(pot.state_mm, state_before, places=9)
+        self.assertAlmostEqual(pot.salt_mass_meq, salt_before, places=9)
+        self.assertAlmostEqual(pot.ph_substrate, ph_before, places=9)
+        # Tutto il volume nominale è intercettato.
+        self.assertAlmostEqual(result.volume_intercepted_l, 2.0, places=9)
+        self.assertAlmostEqual(result.volume_input_l, 0.0, places=9)
+
+    def test_apply_step_orchestrator_applies_exposure_to_rainfall(self):
+        # Il metodo orchestratore apply_step deve applicare il
+        # coefficiente alla componente di pioggia ma non alla
+        # componente di fertirrigazione.
+        pot = self._make_chemistry_pot(rainfall_exposure=0.5)
+        result = pot.apply_step(
+            et_0_mm=3.0,
+            current_date=date(2026, 5, 1),
+            fertigation_volume_l=0.2,
+            fertigation_ec_mscm=2.0,
+            fertigation_ph=6.0,
+            rainfall_volume_l=0.3,    # nominale: 0.3, effettiva: 0.15
+        )
+        # rainfall_result deve essere popolato
+        self.assertIsNotNone(result.rainfall_result)
+        # E deve mostrare volume intercettato
+        self.assertAlmostEqual(
+            result.rainfall_result.volume_intercepted_l, 0.15, places=9,
+        )
+        # fertigation_result deve essere popolato e NON avere
+        # volume_intercepted (è None)
+        self.assertIsNotNone(result.fertigation_result)
+        self.assertIsNone(result.fertigation_result.volume_intercepted_l)
+
+    # ----- Scenari pratici realistici -----
+
+    def test_typical_balcony_under_overhang(self):
+        # Caso pratico: vaso sotto un balcone alto del piano superiore,
+        # rainfall_exposure stimata 0.6. Verifica che il modello
+        # produca differenze plausibili rispetto a un vaso scoperto.
+        pot_open = self._make_chemistry_pot(
+            rainfall_exposure=1.0, salt_mass_meq=15.0,
+        )
+        pot_overhang = self._make_chemistry_pot(
+            rainfall_exposure=0.6, salt_mass_meq=15.0,
+        )
+        # Pioggia abbondante.
+        rain_l = 0.8
+        # Riempiamo a fc per garantire drenaggio.
+        pot_open.state_mm = pot_open.fc_mm
+        pot_overhang.state_mm = pot_overhang.fc_mm
+
+        pot_open.apply_rainfall_step(
+            volume_l=rain_l, current_date=date(2026, 5, 1),
+        )
+        pot_overhang.apply_rainfall_step(
+            volume_l=rain_l, current_date=date(2026, 5, 1),
+        )
+
+        # Il vaso scoperto ha più drenaggio quindi più sali rimossi
+        # → salt_mass finale inferiore.
+        self.assertLess(pot_open.salt_mass_meq,
+                        pot_overhang.salt_mass_meq)
+
+    def test_pot_under_tree_30_percent_exposure(self):
+        # Caso pratico: vaso sotto la chioma di un albero, con
+        # rainfall_exposure stimata 0.3. Il test sanity verifica i
+        # numeri esatti.
+        pot = self._make_chemistry_pot(rainfall_exposure=0.3)
+        result = pot.apply_rainfall_step(
+            volume_l=1.0, current_date=date(2026, 5, 1),
+        )
+        # Volume effettivo = 0.3 L
+        self.assertAlmostEqual(result.volume_input_l, 0.3, places=9)
+        # Volume intercettato = 0.7 L
+        self.assertAlmostEqual(result.volume_intercepted_l, 0.7, places=9)
+
+
 if __name__ == "__main__":
     unittest.main()

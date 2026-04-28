@@ -308,6 +308,15 @@ class FertigationResult:
     ph_delta : float
         ph_after - ph_before, con segno. Positivo = pH è salito,
         negativo = pH è sceso.
+    volume_intercepted_l, volume_intercepted_mm : float | None
+        Volume di pioggia che NON è entrato nel vaso a causa della
+        sua copertura (tetto, alberi, ringhiera). Aggiunti in
+        sotto-tappa F della tappa 3 fascia 2. Valorizzati solo per
+        gli eventi di pioggia naturale tramite `apply_rainfall_step`,
+        dove il rainfall_exposure del Pot < 1.0 produce intercezione.
+        Per gli eventi di fertirrigazione manuale tramite
+        `apply_fertigation_step` restano None, perché il giardiniere
+        innaffia direttamente sul vaso e non c'è intercezione.
     """
 
     event_date: date
@@ -324,6 +333,11 @@ class FertigationResult:
     ph_before: float
     ph_after: float
     ph_delta: float
+    # Campi aggiunti in sotto-tappa F: documentano la frazione di
+    # pioggia intercettata da strutture sopra il vaso (tetti, alberi).
+    # Solo per eventi di pioggia naturale; None per fertirrigazioni.
+    volume_intercepted_l: Optional[float] = None
+    volume_intercepted_mm: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -440,6 +454,31 @@ class Pot:
     pot_color: PotColor = PotColor.MEDIUM
     sun_exposure: SunExposure = SunExposure.FULL_SUN
     active_depth_fraction: float = 1.0
+    # ----- Esposizione alla pioggia (sotto-tappa F tappa 3 fascia 2) -----
+    # Frazione [0, 1] della pioggia che effettivamente raggiunge il vaso
+    # rispetto a quanto cade sull'area aperta. È una caratteristica del
+    # POSIZIONAMENTO geometrico del vaso rispetto a strutture sopra di
+    # esso (tetti, balconi superiori, alberi, tettoie). Valori indicativi:
+    #
+    #   1.0   vaso completamente esposto al cielo (terrazzo scoperto)
+    #   0.7   vaso in posizione semi-aperta (sotto un balcone alto ma
+    #         con pioggia obliqua che arriva)
+    #   0.5   vaso vicino alla ringhiera di un terrazzo coperto
+    #   0.3   vaso sotto la chioma di un albero o sotto sporgenza
+    #         significativa
+    #   0.0   vaso sotto tettoia chiusa, mai bagnato dalla pioggia
+    #
+    # IMPORTANTE: questo coefficiente modella SOLO l'esposizione
+    # geometrica all'aperto. NON modella l'intercezione della chioma
+    # fogliare della pianta stessa, che è un fenomeno dinamico
+    # dipendente dallo stadio fenologico e di entità marginale per
+    # un balcone domestico (vedi discussione di scope del progetto).
+    # Il campo si applica solo agli eventi di pioggia naturale via
+    # `apply_rainfall_step`; le bagnature manuali tramite
+    # `apply_fertigation_step` ricevono il volume pieno
+    # indipendentemente da questo coefficiente, perché il giardiniere
+    # punta direttamente sul vaso.
+    rainfall_exposure: float = 1.0
     # ----- Sottovaso (opzionale) -----
     # Se saucer_capacity_mm è None, il vaso non ha sottovaso e si
     # comporta esattamente come prima dell'estensione (compatibilità
@@ -501,6 +540,19 @@ class Pot:
             raise ValueError(
                 f"Vaso '{self.label}': active_depth_fraction deve "
                 f"stare in (0, 1] (ricevuto {self.active_depth_fraction})."
+            )
+        # Validazione di rainfall_exposure: deve essere una frazione
+        # in [0, 1]. Il limite inferiore è chiuso (0 è ammesso, indica
+        # un vaso che non vede mai la pioggia, equivalente a indoor);
+        # il limite superiore è chiuso (1 è il default, vaso completa-
+        # mente esposto). Valori sopra 1 sarebbero non fisici (la
+        # pioggia caduta sopra il vaso non può essere "amplificata").
+        if not 0.0 <= self.rainfall_exposure <= 1.0:
+            raise ValueError(
+                f"Vaso '{self.label}': rainfall_exposure deve stare "
+                f"in [0, 1] (ricevuto {self.rainfall_exposure}). "
+                f"È la frazione di pioggia che effettivamente entra "
+                f"nel vaso rispetto a quanto cade sull'area aperta."
             )
         # Forme non-rotonde richiedono pot_width_cm.
         if self.pot_shape in (PotShape.RECTANGULAR, PotShape.OVAL):
@@ -1450,26 +1502,79 @@ class Pot:
         è abbondante. È esattamente il fenomeno della "lisciviazione
         naturale" che lava progressivamente i substrati outdoor.
 
+        Coefficiente di esposizione (sotto-tappa F tappa 3 fascia 2)
+        ------------------------------------------------------------
+
+        Il volume di pioggia che effettivamente raggiunge il substrato
+        è modulato dal campo `rainfall_exposure` del Pot, che è una
+        frazione [0, 1] del volume nominale ricevuto. Vasi sotto un
+        balcone superiore, sotto la chioma di un albero, o vicino a
+        ringhiere coperte ricevono solo una frazione della pioggia
+        caduta sull'area aperta. Il volume "intercettato" (volume
+        nominale × (1 - rainfall_exposure)) viene riportato nei due
+        campi diagnostici `volume_intercepted_l` e
+        `volume_intercepted_mm` del FertigationResult per il logging
+        del giardiniere.
+
+        Esempio: se piove 10 mm su un'area di 0.025 m² (vaso da 18 cm
+        di diametro) il volume nominale è 0.25 L; con rainfall_exposure
+        di 0.5 il vaso riceve 0.125 L di pioggia effettiva e altri
+        0.125 L sono intercettati dalla copertura sopra il vaso.
+
         Parametri
         ---------
         volume_l : float
-            Volume di pioggia raccolta dal vaso, in litri. Va calcolato
-            dal chiamante moltiplicando i mm di pioggia caduti per
-            l'area di intercettazione del vaso (`surface_area_m2`).
+            Volume di pioggia caduta sull'area del vaso al cielo
+            aperto, in litri. È la quantità "nominale" prima
+            dell'applicazione del coefficiente di esposizione. Va
+            calcolato dal chiamante moltiplicando i mm di pioggia
+            caduti per l'area di intercettazione del vaso
+            (`surface_area_m2`).
         current_date : date
             Data dell'evento.
 
         Ritorna
         -------
         FertigationResult
-            Stesso tipo di risultato di apply_fertigation_step.
+            Stesso tipo di risultato di apply_fertigation_step, con
+            in più i campi `volume_intercepted_l` e
+            `volume_intercepted_mm` valorizzati che documentano
+            l'eventuale frazione di pioggia intercettata.
         """
+        from dataclasses import replace
         from fitosim.science.fertigation import RAINFALL_EC_MSCM, RAINFALL_PH
-        return self.apply_fertigation_step(
-            volume_l=volume_l,
+
+        # Calcolo del volume effettivamente entrato nel vaso e di
+        # quello intercettato dalla copertura sopra. Il caso degenere
+        # rainfall_exposure = 1.0 (default) produce volume_effective
+        # uguale al nominale e volume_intercepted zero — comportamento
+        # identico a prima della sotto-tappa F.
+        volume_effective_l = volume_l * self.rainfall_exposure
+        volume_intercepted_l = volume_l - volume_effective_l
+        volume_intercepted_mm = (
+            volume_intercepted_l / self.surface_area_m2
+            if self.surface_area_m2 > 0 else 0.0
+        )
+
+        # Chiamata della logica chimica con il volume effettivo, non
+        # con quello nominale. Internamente apply_fertigation_step
+        # tratterà volume_effective come il volume entrante "vero"
+        # del bilancio chimico.
+        result = self.apply_fertigation_step(
+            volume_l=volume_effective_l,
             ec_mscm=RAINFALL_EC_MSCM,
             ph=RAINFALL_PH,
             current_date=current_date,
+        )
+
+        # Arricchimento del result con i due campi diagnostici della
+        # pioggia. dataclasses.replace produce una nuova istanza
+        # immutabile con solo i due campi aggiuntivi popolati,
+        # preservando tutti gli altri campi del result originale.
+        return replace(
+            result,
+            volume_intercepted_l=volume_intercepted_l,
+            volume_intercepted_mm=volume_intercepted_mm,
         )
 
     def apply_step(
