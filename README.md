@@ -367,13 +367,41 @@ hanno aggiunto in totale 179 test verdi:
 | D: forecast e eventi | Eventi pianificati e proiezione dello stato a N giorni | +36 |
 | E: sistema di allerte | Allerte derivate dallo stato per dashboard proattivo | +38 |
 
-**Tappa 5 — Penman-Monteith e indoor (da iniziare).** Chiuderà la fascia 2
-con due raffinamenti complementari del modello scientifico: il modello
-Penman-Monteith completo per il calcolo di ET₀ (più accurato della formula
-di Hargreaves che la libreria usa attualmente per i casi di backup), e il
-modello dei vasi indoor che dipendono dal microclima della stanza
-(alimentato dal sensore WN31 CH1 di Ecowitt, specifico per le piante in
-appartamento).
+**Tappa 5 — Penman-Monteith fisico e modello indoor (work in progress).**
+Chiuderà la fascia 2 con un raffinamento sostanziale del modello scientifico,
+articolato in cinque sotto-tappe progressive. Il design è stato discusso e
+le decisioni architetturali principali sono state prese; l'implementazione
+è in pianificazione.
+
+Il primo raffinamento è l'introduzione del Penman-Monteith come formula di
+calcolo dell'evapotraspirazione, in due varianti: quella FAO-56 standard
+che produce ET₀ da moltiplicare per il Kc della specie, e quella fisica che
+applica direttamente l'equazione usando la resistenza stomatica e produce
+ET senza bisogno del Kc. Un meccanismo a tre vie selezionerà automaticamente
+la formula migliore disponibile (Penman-Monteith fisico → Penman-Monteith
+FAO-56 standard → Hargreaves) in funzione dei dati meteo e dei parametri
+della specie disponibili, seguendo il pattern "best available" raccomandato
+da FAO-56.
+
+Il secondo raffinamento è il modello dei vasi indoor, con l'introduzione
+di una nuova entità di dominio chiamata `Room` che rappresenta lo spazio
+fisico in cui vivono uno o più vasi indoor con il loro microclima
+condiviso. La Room sarà mappata al sensore ambientale WN31 di Ecowitt
+(che è un trasmettitore di stanza, non una sonda dedicata al singolo vaso).
+La tappa 5 introdurrà anche il supporto al sensore WH52, l'upgrade del
+WH51 che misura anche temperatura ed EC del substrato; il WH51 continuerà
+ad essere supportato indefinitamente per chi ce l'ha già installato. Le
+raffinatezze del modello indoor (riscaldamento, ventilazione minima
+convettiva, esposizione luminosa parametrizzata a tre livelli) saranno
+affrontate fin dalla tappa 5 con fallback automatico verso formule più
+semplici quando i parametri non sono disponibili.
+
+La tappa 5 è stimata in **80-100 test nuovi** che porteranno la suite finale
+a circa 945-965 test totali. Per i dettagli architetturali e l'articolazione
+delle cinque sotto-tappe (A: Penman-Monteith come funzione pura, B:
+selezione automatica, C: integrazione nel Pot/Garden, D: modello indoor con
+Room e WH52, E: demo end-to-end dell'appartamento invernale), vedi lo
+status report del progetto.
 
 ## Documentazione
 
