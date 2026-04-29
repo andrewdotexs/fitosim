@@ -56,6 +56,9 @@ Riferimenti:
 """
 
 import math
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional
 
 from fitosim.science.radiation import extraterrestrial_radiation
 
@@ -698,3 +701,314 @@ def compute_et0_penman_monteith(
         elevation_m=elevation_m,
         soil_heat_flux_mj_m2_day=soil_heat_flux_mj_m2_day,
     )
+
+
+# =====================================================================
+#  Selettore "best available" tra le tre formule di evapotraspirazione.
+#
+#  Le tre formule che la libreria implementa (Penman-Monteith fisico,
+#  Penman-Monteith FAO-56 standard, Hargreaves-Samani) hanno requisiti
+#  di input diversi e producono stime di accuratezza diversa. Il
+#  selettore introdotto in questa sezione orchestra la scelta della
+#  formula migliore disponibile in funzione dei dati che il chiamante
+#  riesce a fornire, e traccia esplicitamente quale formula è stata
+#  usata in modo che il chiamante possa fare diagnostica.
+# =====================================================================
+
+
+class EtMethod(Enum):
+    """
+    Enumerazione delle tre formule di evapotraspirazione che il
+    selettore può scegliere.
+
+    Distinzione cruciale ET₀ vs ET: i tre valori di questa enum si
+    dividono in due categorie semantiche distinte che il chiamante
+    deve interpretare correttamente per evitare errori grossolani.
+
+    HARGREAVES_SAMANI e PENMAN_MONTEITH_STANDARD producono ET₀
+    (evapotraspirazione di riferimento), che è la "domanda atmosferica"
+    comune a tutte le piante in quel sito. Per ottenere l'ET effettiva
+    della tua specie, ET₀ va moltiplicata per il coefficiente colturale
+    Kc del catalogo, esattamente come si fa con la formula di
+    Hargreaves storica della libreria.
+
+    PENMAN_MONTEITH_PHYSICAL produce direttamente ET (evapotraspirazione
+    effettiva della specie), perché la specificità della specie è già
+    stata incorporata attraverso la sua resistenza stomatica e altezza
+    colturale. NON va moltiplicata per il Kc, altrimenti si introdurrebbe
+    un errore del 100-200%.
+
+    Il chiamante che consuma il risultato del selettore deve guardare
+    il metodo restituito per decidere se moltiplicare per Kc o no.
+    L'integrazione col Pot della sotto-tappa C gestirà questa logica
+    automaticamente, ma per il consumo diretto delle funzioni del
+    layer scientifico è una distinzione che il chiamante deve
+    conoscere.
+    """
+
+    PENMAN_MONTEITH_PHYSICAL = "penman_monteith_physical"
+    """
+    Penman-Monteith applicato direttamente alla specie con resistenza
+    stomatica e altezza colturale reali. Produce ET, non ET₀: NON
+    moltiplicare per Kc.
+    """
+
+    PENMAN_MONTEITH_STANDARD = "penman_monteith_standard"
+    """
+    Penman-Monteith con i parametri della coltura di riferimento
+    standard FAO-56 (rs=70 s/m, h=0.12 m). Produce ET₀: moltiplica
+    per Kc per ottenere l'ET effettiva della specie.
+    """
+
+    HARGREAVES_SAMANI = "hargreaves_samani"
+    """
+    Formula di Hargreaves-Samani 1985, fallback di emergenza quando
+    mancano dati meteo per Penman-Monteith. Produce ET₀: moltiplica
+    per Kc per ottenere l'ET effettiva della specie.
+    """
+
+
+@dataclass(frozen=True)
+class EtResult:
+    """
+    Risultato del selettore di evapotraspirazione con tracciabilità
+    del metodo usato.
+
+    La tracciabilità è il pezzo concettualmente importante di questa
+    struttura. Senza di essa il chiamante riceverebbe un numero
+    "magico" senza sapere se è una stima accurata Penman-Monteith o
+    un fallback Hargreaves di emergenza, e questo è inaccettabile
+    perché Penman-Monteith e Hargreaves possono differire del 10-20%
+    sullo stesso scenario meteo. Avere il metodo nel risultato permette
+    al chiamante di fare diagnostica, di calibrare il modello, e di
+    decidere se la stima è abbastanza affidabile per le decisioni
+    operative del momento.
+
+    La struttura è una dataclass frozen perché un risultato di calcolo
+    non deve essere mutabile dopo la sua produzione. Se il chiamante
+    vuole un risultato diverso deve chiamare di nuovo il selettore
+    con parametri diversi, non modificare il risultato precedente.
+
+    Campi
+    -----
+    value_mm : float
+        Valore numerico dell'evapotraspirazione in mm/giorno. La
+        semantica del valore (ET₀ vs ET) dipende dal metodo: vedi la
+        docstring di `EtMethod` per la distinzione e per le sue
+        conseguenze sulla moltiplicazione per Kc.
+    method : EtMethod
+        Quale formula è stata effettivamente usata per produrre il
+        valore. Permette al chiamante di interpretare correttamente
+        il valore e di fare diagnostica del modello.
+    """
+
+    value_mm: float
+    method: EtMethod
+
+
+def compute_et(
+    t_min: float,
+    t_max: float,
+    latitude_deg: float,
+    j: int,
+    humidity_relative: Optional[float] = None,
+    wind_speed_m_s: Optional[float] = None,
+    net_radiation_mj_m2_day: Optional[float] = None,
+    stomatal_resistance_s_m: Optional[float] = None,
+    crop_height_m: Optional[float] = None,
+    elevation_m: float = 0.0,
+) -> EtResult:
+    """
+    Selettore "best available" tra le tre formule di evapotraspirazione
+    della libreria. Sceglie automaticamente la formula migliore
+    applicabile in base ai parametri forniti, e traccia esplicitamente
+    quale formula è stata usata.
+
+    Logica di selezione, applicata in ordine di priorità decrescente:
+
+    1. PENMAN_MONTEITH_PHYSICAL: usato quando il chiamante fornisce
+       tutti e tre i dati meteo aggiuntivi (humidity_relative,
+       wind_speed_m_s, net_radiation_mj_m2_day) E entrambi i parametri
+       fisiologici della specie (stomatal_resistance_s_m, crop_height_m).
+       Produce direttamente ET (non ET₀): non va moltiplicato per Kc.
+       È la stima più accurata quando tutti i dati sono disponibili.
+
+    2. PENMAN_MONTEITH_STANDARD: usato quando i tre dati meteo aggiuntivi
+       sono presenti ma mancano i parametri fisiologici della specie
+       (uno dei due o entrambi). Applica Penman-Monteith con i parametri
+       della coltura di riferimento standard FAO-56 (rs=70 s/m, h=0.12 m).
+       Produce ET₀: moltiplica per Kc per ottenere l'ET effettiva.
+
+    3. HARGREAVES_SAMANI: fallback usato quando manca anche solo uno
+       dei tre dati meteo aggiuntivi. Richiede solo le temperature
+       minima e massima e calcola tutto il resto dalla geometria
+       astronomica. Produce ET₀: moltiplica per Kc per ottenere l'ET.
+
+    La logica di selezione è "tutto o niente" sui gruppi di parametri
+    correlati. Se il chiamante fornisce solo due dei tre dati meteo
+    aggiuntivi (per esempio umidità e vento ma non radiazione netta)
+    questo viene trattato come "dati meteo incompleti" e si ricade
+    su Hargreaves, perché Penman-Monteith ha bisogno di tutti e tre
+    per funzionare correttamente. Lo stesso vale per i parametri della
+    specie: se manca anche solo uno tra resistenza stomatica e altezza
+    colturale, si tratta come "parametri specie incompleti" e si usa
+    Penman-Monteith standard.
+
+    Parametri
+    ---------
+    t_min, t_max : float
+        Temperatura minima e massima giornaliera, in °C. Obbligatori
+        perché servono come fallback Hargreaves quando le altre
+        formule non sono applicabili.
+    latitude_deg : float
+        Latitudine del sito in gradi decimali. Positiva a nord.
+        Obbligatoria perché serve per il calcolo della radiazione
+        extra-atmosferica usata da Hargreaves.
+    j : int
+        Giorno dell'anno (1-366). Obbligatorio per la stessa ragione
+        della latitudine.
+    humidity_relative : float, opzionale
+        Umidità relativa media giornaliera, frazione 0..1. Necessaria
+        per Penman-Monteith.
+    wind_speed_m_s : float, opzionale
+        Velocità del vento a 2 metri di altezza, in m/s. Necessaria
+        per Penman-Monteith.
+    net_radiation_mj_m2_day : float, opzionale
+        Radiazione netta giornaliera, in MJ/m²/giorno. Necessaria per
+        Penman-Monteith. Si calcola via
+        `fitosim.science.radiation.net_radiation` dalla radiazione
+        globale Rs misurata e dai dati meteo.
+    stomatal_resistance_s_m : float, opzionale
+        Resistenza stomatica della specie, in s/m. Necessaria per la
+        versione fisica di Penman-Monteith. Per la coltura di
+        riferimento è 70 s/m; per il basilico circa 100; per il
+        rosmarino circa 200; per le succulente CAM 500+.
+    crop_height_m : float, opzionale
+        Altezza colturale della specie, in metri. Necessaria per la
+        versione fisica di Penman-Monteith. Influenza la resistenza
+        aerodinamica.
+    elevation_m : float, default 0.0
+        Quota del sito sul livello del mare, in metri. Influenza la
+        pressione atmosferica e la costante psicrometrica per
+        Penman-Monteith. Non usata da Hargreaves.
+
+    Ritorna
+    -------
+    EtResult
+        Dataclass frozen con `value_mm` (il valore numerico in
+        mm/giorno) e `method` (l'enum `EtMethod` che identifica quale
+        formula è stata effettivamente usata). La semantica del valore
+        (ET₀ vs ET) dipende dal metodo: vedi la docstring di
+        `EtMethod`.
+
+    Solleva
+    -------
+    ValueError
+        Se uno dei quattro parametri obbligatori (t_min, t_max,
+        latitude_deg, j) è None. Il messaggio dell'eccezione identifica
+        esplicitamente il parametro mancante per facilitare il debug
+        del codice chiamante.
+
+    Esempi
+    ------
+    Tutti i dati disponibili: usa Penman-Monteith fisico.
+
+        >>> result = compute_et(
+        ...     t_min=20, t_max=32, latitude_deg=45.47, j=200,
+        ...     humidity_relative=0.6, wind_speed_m_s=1.5,
+        ...     net_radiation_mj_m2_day=14.5,
+        ...     stomatal_resistance_s_m=100, crop_height_m=0.30,
+        ...     elevation_m=150,
+        ... )
+        >>> result.method == EtMethod.PENMAN_MONTEITH_PHYSICAL
+        True
+
+    Solo dati meteo, no parametri specie: usa Penman-Monteith standard.
+
+        >>> result = compute_et(
+        ...     t_min=20, t_max=32, latitude_deg=45.47, j=200,
+        ...     humidity_relative=0.6, wind_speed_m_s=1.5,
+        ...     net_radiation_mj_m2_day=14.5, elevation_m=150,
+        ... )
+        >>> result.method == EtMethod.PENMAN_MONTEITH_STANDARD
+        True
+
+    Solo temperature: ricade su Hargreaves.
+
+        >>> result = compute_et(
+        ...     t_min=20, t_max=32, latitude_deg=45.47, j=200,
+        ... )
+        >>> result.method == EtMethod.HARGREAVES_SAMANI
+        True
+    """
+    # Validazione dei parametri minimi obbligatori. Identifichiamo
+    # esplicitamente quale parametro manca per facilitare il debug
+    # del codice chiamante: ricevere "ValueError: t_min is None" è
+    # molto più utile di un generico "dati insufficienti".
+    if t_min is None:
+        raise ValueError("t_min è obbligatorio ma è stato passato None")
+    if t_max is None:
+        raise ValueError("t_max è obbligatorio ma è stato passato None")
+    if latitude_deg is None:
+        raise ValueError(
+            "latitude_deg è obbligatorio ma è stato passato None"
+        )
+    if j is None:
+        raise ValueError("j (giorno dell'anno) è obbligatorio ma è stato passato None")
+
+    # Determina la disponibilità dei due gruppi di parametri opzionali.
+    # I gruppi sono "tutto o niente": Penman-Monteith ha bisogno di
+    # tutti e tre i dati meteo aggiuntivi per funzionare; la versione
+    # fisica ha bisogno di entrambi i parametri della specie.
+    weather_complete = (
+        humidity_relative is not None
+        and wind_speed_m_s is not None
+        and net_radiation_mj_m2_day is not None
+    )
+    species_params_complete = (
+        stomatal_resistance_s_m is not None
+        and crop_height_m is not None
+    )
+
+    # Applica la logica di selezione in ordine di priorità decrescente.
+
+    if weather_complete and species_params_complete:
+        # Caso migliore: Penman-Monteith fisico con tutti i parametri.
+        # Usiamo la temperatura media perché Penman-Monteith opera su
+        # T media giornaliera, non su min/max separati come Hargreaves.
+        t_mean = (t_min + t_max) / 2.0
+        value = compute_et_penman_monteith_physical(
+            temperature_c=t_mean,
+            humidity_relative=humidity_relative,
+            wind_speed_m_s=wind_speed_m_s,
+            net_radiation_mj_m2_day=net_radiation_mj_m2_day,
+            stomatal_resistance_s_m=stomatal_resistance_s_m,
+            crop_height_m=crop_height_m,
+            elevation_m=elevation_m,
+        )
+        return EtResult(
+            value_mm=value, method=EtMethod.PENMAN_MONTEITH_PHYSICAL,
+        )
+
+    if weather_complete:
+        # Dati meteo completi ma parametri specie mancanti o incompleti:
+        # Penman-Monteith FAO-56 standard.
+        t_mean = (t_min + t_max) / 2.0
+        value = compute_et0_penman_monteith(
+            temperature_c=t_mean,
+            humidity_relative=humidity_relative,
+            wind_speed_m_s=wind_speed_m_s,
+            net_radiation_mj_m2_day=net_radiation_mj_m2_day,
+            elevation_m=elevation_m,
+        )
+        return EtResult(
+            value_mm=value, method=EtMethod.PENMAN_MONTEITH_STANDARD,
+        )
+
+    # Fallback: dati meteo aggiuntivi assenti o incompleti, usiamo
+    # Hargreaves-Samani che richiede solo temperature e dati astronomici.
+    value = et0_hargreaves_samani(
+        t_min=t_min, t_max=t_max,
+        latitude_deg=latitude_deg, j=j,
+    )
+    return EtResult(value_mm=value, method=EtMethod.HARGREAVES_SAMANI)

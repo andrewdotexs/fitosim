@@ -19,9 +19,12 @@ from datetime import date
 
 from fitosim.science.et0 import (
     LATENT_HEAT_VAPORIZATION,
+    EtMethod,
+    EtResult,
     actual_vapor_pressure,
     aerodynamic_resistance,
     atmospheric_pressure,
+    compute_et,
     compute_et0_penman_monteith,
     compute_et_penman_monteith_physical,
     et0_hargreaves_samani,
@@ -523,6 +526,235 @@ class TestPenmanMonteithPhysical(unittest.TestCase):
                 compute_et_penman_monteith_physical(
                     crop_height_m=invalid_h, **common,
                 )
+
+
+# =====================================================================
+#  Test della dataclass EtResult e dell'enum EtMethod.
+#
+#  Strutture di dato pure introdotte dalla sotto-tappa B come valore
+#  di ritorno del selettore. I test verificano le proprietà strutturali
+#  (frozen, accesso ai campi, valori dell'enum) senza ancora coinvolgere
+#  la logica di selezione.
+# =====================================================================
+
+
+class TestEtMethodAndResult(unittest.TestCase):
+
+    def test_enum_has_three_methods(self):
+        # L'enum deve esporre esattamente i tre membri previsti dal
+        # design della sotto-tappa B. Questo test fallirebbe se in
+        # futuro qualcuno aggiungesse un quarto membro senza aggiornare
+        # la documentazione e i chiamanti.
+        self.assertEqual(
+            {m.name for m in EtMethod},
+            {
+                "PENMAN_MONTEITH_PHYSICAL",
+                "PENMAN_MONTEITH_STANDARD",
+                "HARGREAVES_SAMANI",
+            },
+        )
+
+    def test_result_holds_value_and_method(self):
+        # Verifica della struttura base: i due campi sono accessibili
+        # e contengono i valori passati al costruttore.
+        result = EtResult(value_mm=5.5, method=EtMethod.PENMAN_MONTEITH_PHYSICAL)
+        self.assertEqual(result.value_mm, 5.5)
+        self.assertEqual(result.method, EtMethod.PENMAN_MONTEITH_PHYSICAL)
+
+    def test_result_is_frozen(self):
+        # La dataclass è frozen: assegnare un nuovo valore a un campo
+        # deve sollevare FrozenInstanceError. Questo è importante perché
+        # un risultato di calcolo non deve essere modificabile dopo la
+        # produzione (richiederebbe di rifare il calcolo, e questo è
+        # responsabilità del chiamante).
+        from dataclasses import FrozenInstanceError
+        result = EtResult(value_mm=5.0, method=EtMethod.HARGREAVES_SAMANI)
+        with self.assertRaises(FrozenInstanceError):
+            result.value_mm = 6.0
+
+
+# =====================================================================
+#  Test del selettore compute_et.
+#
+#  Verifichiamo tre famiglie di proprietà:
+#    1. Logica di selezione corretta in base ai parametri forniti.
+#    2. Non-regressione: il valore prodotto coincide con quello della
+#       formula sottostante chiamata direttamente.
+#    3. Gestione degli errori per i parametri obbligatori mancanti.
+# =====================================================================
+
+
+class TestComputeEtSelector(unittest.TestCase):
+
+    def setUp(self):
+        # Scenario meteo condiviso: balcone milanese in luglio.
+        # Calcolato una volta sola in setUp per non ripeterlo in ogni
+        # test e per assicurare che tutti i test usino esattamente lo
+        # stesso scenario (variazioni accidentali nascondono bug).
+        self.common = dict(
+            t_min=20.0, t_max=32.0,
+            latitude_deg=45.47, j=200,
+            elevation_m=150.0,
+        )
+        # Calcoliamo Rn per i casi che hanno bisogno di tutti i dati
+        # meteo aggiuntivi. Questo richiede importare le funzioni del
+        # modulo radiation, che fanno parte del layer scientifico già
+        # testato dalla sotto-tappa A.
+        from fitosim.science.radiation import (
+            extraterrestrial_radiation, net_radiation,
+        )
+        ra = extraterrestrial_radiation(45.47, 200)
+        ea = actual_vapor_pressure(26.0, 0.60)
+        self.rn = net_radiation(
+            solar_radiation_mj=24.0,
+            extraterrestrial_radiation_mj=ra,
+            t_max_c=32.0, t_min_c=20.0,
+            actual_vapor_pressure_kpa=ea,
+            elevation_m=150.0,
+        )
+
+    # ---- Famiglia 1: logica di selezione ----
+
+    def test_full_data_selects_physical(self):
+        # Tutti i dati meteo + parametri specie disponibili: deve usare
+        # Penman-Monteith fisico. È il caso "best" del best-available.
+        result = compute_et(
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            net_radiation_mj_m2_day=self.rn,
+            stomatal_resistance_s_m=100.0, crop_height_m=0.30,
+            **self.common,
+        )
+        self.assertEqual(result.method, EtMethod.PENMAN_MONTEITH_PHYSICAL)
+
+    def test_weather_only_selects_standard(self):
+        # Dati meteo completi ma parametri specie assenti: deve usare
+        # Penman-Monteith standard FAO-56 (con parametri della coltura
+        # di riferimento).
+        result = compute_et(
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            net_radiation_mj_m2_day=self.rn,
+            **self.common,
+        )
+        self.assertEqual(result.method, EtMethod.PENMAN_MONTEITH_STANDARD)
+
+    def test_minimal_data_selects_hargreaves(self):
+        # Solo le temperature minime obbligatorie: deve ricadere su
+        # Hargreaves come fallback finale.
+        result = compute_et(**self.common)
+        self.assertEqual(result.method, EtMethod.HARGREAVES_SAMANI)
+
+    def test_partial_weather_falls_back_to_hargreaves(self):
+        # Quando manca anche solo uno dei tre dati meteo aggiuntivi
+        # (qui manca la radiazione netta), la logica "tutto o niente"
+        # ricade su Hargreaves. Questo è un test importante perché
+        # Penman-Monteith con dati parziali produrrebbe risultati di
+        # qualità imprevedibile, e preferiamo il fallback robusto.
+        result = compute_et(
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            # net_radiation_mj_m2_day mancante intenzionalmente
+            **self.common,
+        )
+        self.assertEqual(result.method, EtMethod.HARGREAVES_SAMANI)
+
+    def test_partial_species_params_falls_back_to_standard(self):
+        # Quando manca anche solo uno dei due parametri della specie
+        # (qui manca crop_height_m), la logica "tutto o niente" ricade
+        # su Penman-Monteith standard invece di fisico. Stessa filosofia
+        # del test precedente: meglio un calcolo robusto su parametri
+        # standardizzati che un calcolo "fisico" con parametri inventati.
+        result = compute_et(
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            net_radiation_mj_m2_day=self.rn,
+            stomatal_resistance_s_m=100.0,
+            # crop_height_m mancante intenzionalmente
+            **self.common,
+        )
+        self.assertEqual(result.method, EtMethod.PENMAN_MONTEITH_STANDARD)
+
+    # ---- Famiglia 2: non-regressione contro le formule sottostanti ----
+
+    def test_hargreaves_path_matches_direct_call(self):
+        # Quando il selettore sceglie Hargreaves, il valore numerico
+        # deve coincidere bit-per-bit con la chiamata diretta della
+        # funzione sottostante. Questa proprietà verifica che il
+        # selettore non aggiunga distorsioni al risultato.
+        result = compute_et(**self.common)
+        direct = et0_hargreaves_samani(
+            t_min=20.0, t_max=32.0, latitude_deg=45.47, j=200,
+        )
+        self.assertEqual(result.value_mm, direct)
+
+    def test_pm_standard_path_matches_direct_call(self):
+        # Stessa verifica per Penman-Monteith standard.
+        result = compute_et(
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            net_radiation_mj_m2_day=self.rn,
+            **self.common,
+        )
+        direct = compute_et0_penman_monteith(
+            temperature_c=26.0,
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            net_radiation_mj_m2_day=self.rn,
+            elevation_m=150.0,
+        )
+        self.assertEqual(result.value_mm, direct)
+
+    def test_pm_physical_path_matches_direct_call(self):
+        # Stessa verifica per Penman-Monteith fisico.
+        result = compute_et(
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            net_radiation_mj_m2_day=self.rn,
+            stomatal_resistance_s_m=100.0, crop_height_m=0.30,
+            **self.common,
+        )
+        direct = compute_et_penman_monteith_physical(
+            temperature_c=26.0,
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            net_radiation_mj_m2_day=self.rn,
+            stomatal_resistance_s_m=100.0, crop_height_m=0.30,
+            elevation_m=150.0,
+        )
+        self.assertEqual(result.value_mm, direct)
+
+    # ---- Famiglia 3: gestione degli errori ----
+
+    def test_missing_t_min_raises_with_explicit_message(self):
+        # Manca t_min: il messaggio dell'eccezione deve identificare
+        # esplicitamente il parametro mancante per facilitare il debug
+        # del codice chiamante.
+        with self.assertRaises(ValueError) as ctx:
+            compute_et(
+                t_min=None, t_max=32.0,
+                latitude_deg=45.47, j=200,
+            )
+        self.assertIn("t_min", str(ctx.exception))
+
+    def test_missing_t_max_raises_with_explicit_message(self):
+        # Stesso pattern per t_max.
+        with self.assertRaises(ValueError) as ctx:
+            compute_et(
+                t_min=20.0, t_max=None,
+                latitude_deg=45.47, j=200,
+            )
+        self.assertIn("t_max", str(ctx.exception))
+
+    def test_missing_latitude_raises_with_explicit_message(self):
+        # Stesso pattern per la latitudine.
+        with self.assertRaises(ValueError) as ctx:
+            compute_et(
+                t_min=20.0, t_max=32.0,
+                latitude_deg=None, j=200,
+            )
+        self.assertIn("latitude_deg", str(ctx.exception))
+
+    def test_missing_j_raises_with_explicit_message(self):
+        # Stesso pattern per il giorno dell'anno.
+        with self.assertRaises(ValueError) as ctx:
+            compute_et(
+                t_min=20.0, t_max=32.0,
+                latitude_deg=45.47, j=None,
+            )
+        self.assertIn("j", str(ctx.exception))
 
 
 if __name__ == "__main__":
