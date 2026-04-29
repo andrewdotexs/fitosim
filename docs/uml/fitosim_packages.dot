@@ -1,0 +1,164 @@
+// Diagramma dei package di fitosim — struttura architetturale a tre layer.
+//
+// Layout: io in alto (adapter di ingresso/uscita), domain al centro
+// (logica di business), science in basso (fondamenta matematiche).
+// Le dipendenze vanno tutte verso il basso, riflettendo il principio
+// "domain dipende da science, io dipende da domain, mai il contrario".
+//
+// Per rigenerarlo: dot -Tpng fitosim_packages.dot -o fitosim_packages.png
+
+digraph fitosim_packages {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, style="filled,rounded", shape=box,
+          margin="0.15,0.08"];
+    edge [fontname="Helvetica", fontsize=8, color="#666666"];
+    graph [fontname="Helvetica", fontsize=11];
+    bgcolor="white";
+    nodesep=0.35;
+    ranksep=0.55;
+    compound=true;
+    splines=true;
+
+    // ============================================================
+    //  Layer IO — adapter di ingresso/uscita (in alto)
+    // ============================================================
+    subgraph cluster_io {
+        label="io/  —  adapter di ingresso/uscita";
+        style="filled,rounded";
+        fillcolor="#FAF0E8";
+        color="#E8923C";
+        fontcolor="#8C4A0F";
+        fontsize=12;
+        margin=14;
+
+        persistence [label="persistence\n(SQLite, schema v3)", fillcolor="#FCE5CD"];
+        serialization [label="serialization\n(JSON v2)", fillcolor="#FCE5CD"];
+
+        subgraph cluster_sensors {
+            label="io/sensors/";
+            style="filled,rounded";
+            fillcolor="#FCF1E5";
+            color="#E8923C";
+            fontcolor="#8C4A0F";
+            fontsize=10;
+            margin=10;
+
+            sensor_protocols [label="protocols\n(SoilSensor,\nEnvironmentSensor)", fillcolor="#FCE5CD"];
+            sensor_types [label="types\n(SoilReading,\nEnvironmentReading)", fillcolor="#FCE5CD"];
+            sensor_errors [label="errors\n(3 livelli\neccezioni)", fillcolor="#FCE5CD"];
+
+            sensor_ecowitt [label="ecowitt\n(WH51)", fillcolor="#FCE5CD"];
+            sensor_openmeteo [label="openmeteo", fillcolor="#FCE5CD"];
+            sensor_http [label="http_json\n(gateway ESP32)", fillcolor="#FCE5CD"];
+            sensor_fixtures [label="fixtures\n(CSV)", fillcolor="#FCE5CD"];
+
+            { rank=same; sensor_ecowitt; sensor_openmeteo; sensor_http; sensor_fixtures; }
+            { rank=same; sensor_protocols; sensor_types; sensor_errors; }
+
+            sensor_ecowitt -> sensor_protocols [arrowhead=empty, color="#E8923C"];
+            sensor_openmeteo -> sensor_protocols [arrowhead=empty, color="#E8923C"];
+            sensor_http -> sensor_protocols [arrowhead=empty, color="#E8923C"];
+            sensor_fixtures -> sensor_protocols [arrowhead=empty, color="#E8923C"];
+            sensor_protocols -> sensor_types [style=dashed];
+        }
+
+        { rank=same; persistence; serialization; sensor_protocols; }
+    }
+
+    // ============================================================
+    //  Layer DOMAIN — oggetti di dominio (al centro)
+    // ============================================================
+    subgraph cluster_domain {
+        label="domain/  —  oggetti di dominio e orchestrazione";
+        style="filled,rounded";
+        fillcolor="#E8F1F8";
+        color="#2E75B6";
+        fontcolor="#1F3864";
+        fontsize=12;
+        margin=14;
+
+        garden [label="garden\n(Garden)", fillcolor="#1F3864", fontcolor="white",
+                fontsize=11];
+        pot [label="pot\n(Pot, Location,\nPotShape)", fillcolor="#D5E8F0"];
+        species [label="species\n(Species, catalogo)", fillcolor="#D5E8F0"];
+        alerts [label="alerts\n(Alert, regole pure)", fillcolor="#D5E8F0"];
+        scheduling [label="scheduling\n(ScheduledEvent,\nWeatherDayForecast)", fillcolor="#D5E8F0"];
+        scheduler [label="scheduler\n(pianificatore\nirrigazione fascia 1)", fillcolor="#D5E8F0"];
+
+        { rank=same; pot; species; alerts; scheduling; scheduler; }
+    }
+
+    // ============================================================
+    //  Layer SCIENCE — modello matematico (in basso)
+    // ============================================================
+    subgraph cluster_science {
+        label="science/  —  modello matematico FAO-56 esteso";
+        style="filled,rounded";
+        fillcolor="#F0F4E8";
+        color="#7CB342";
+        fontcolor="#33691E";
+        fontsize=12;
+        margin=14;
+
+        substrate [label="substrate\n(Substrate,\nBaseMaterial,\ncompose_substrate)", fillcolor="#E8F0D8"];
+        balance [label="balance\n(bilancio idrico\nFAO-56)", fillcolor="#E8F0D8"];
+        et0 [label="et0\n(calcolo ET₀)", fillcolor="#E8F0D8"];
+        dual_kc [label="dual_kc\n(FAO-56\ncap. 7)", fillcolor="#E8F0D8"];
+        pot_physics [label="pot_physics\n(Kp, geometrie)", fillcolor="#E8F0D8"];
+        saucer [label="saucer\n(modello\nsottovaso)", fillcolor="#E8F0D8"];
+        nutrition [label="nutrition\n(Kn,\nstato chimico)", fillcolor="#E8F0D8"];
+        fertigation [label="fertigation", fillcolor="#E8F0D8"];
+        calibration [label="calibration\n(da sensore)", fillcolor="#E8F0D8"];
+        radiation [label="radiation", fillcolor="#E8F0D8"];
+
+        { rank=same; substrate; balance; pot_physics; nutrition; saucer; }
+        { rank=same; et0; dual_kc; fertigation; calibration; radiation; }
+    }
+
+    // ============================================================
+    //  DIPENDENZE TRA LAYER (sempre verso il basso)
+    // ============================================================
+
+    persistence -> garden [label="save/load"];
+    serialization -> garden [label="export/import"];
+    sensor_protocols -> pot [style=dashed, label="letture"];
+
+    pot -> substrate;
+    pot -> balance;
+    pot -> dual_kc;
+    pot -> pot_physics;
+    pot -> saucer;
+    pot -> nutrition;
+    pot -> fertigation;
+    pot -> calibration;
+    species -> dual_kc [style=dashed];
+
+    garden -> pot;
+    garden -> alerts;
+    garden -> scheduling;
+    alerts -> pot [style=dashed, label="legge stato"];
+    scheduler -> pot [style=dashed];
+
+    // ============================================================
+    //  LEGENDA
+    // ============================================================
+    subgraph cluster_legend {
+        label="Legenda";
+        style="filled,rounded";
+        fillcolor="#F5F5F5";
+        color="#999999";
+        fontsize=10;
+        margin=8;
+        node [shape=plaintext, fillcolor=none, style=none, fontsize=9];
+
+        legend [label=<
+            <table border="0" cellborder="0" cellspacing="3">
+                <tr><td align="left"><font color="#666666">→</font></td><td align="left">dipendenza diretta (import Python)</td></tr>
+                <tr><td align="left"><font color="#666666">- - →</font></td><td align="left">dipendenza opzionale o indiretta</td></tr>
+                <tr><td align="left"><font color="#E8923C">▷</font></td><td align="left">implementa il Protocol</td></tr>
+                <tr><td align="left">■ scuro</td><td align="left">classe principale del layer</td></tr>
+            </table>
+        >];
+    }
+}

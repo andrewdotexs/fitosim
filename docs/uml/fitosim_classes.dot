@@ -1,0 +1,186 @@
+// Diagramma delle classi del dominio fitosim.
+//
+// Mostra le entità di dominio principali con i loro attributi, metodi
+// pubblici e relazioni. Il taglio è "zoom sul cuore del sistema": le
+// classi che vivono in domain/ e le loro principali dipendenze verso
+// science/. Sono escluse le dataclass di ritorno (FullStepResult,
+// SensorUpdateResult, ForecastResult) per non sovraccaricare il
+// diagramma; sono menzionate nei tipi di ritorno dei metodi.
+//
+// Convenzioni di notazione UML:
+//   - Composizione (rombo pieno):  Garden ◆── Pot
+//   - Aggregazione (rombo vuoto):  Pot ◇── Species
+//   - Dipendenza (freccia tratteg.): Garden ─ ─> Alert
+//   - Realizzazione (freccia vuota): non usata qui
+//
+// Per rigenerarlo: dot -Tpng fitosim_classes.dot -o fitosim_classes.png
+
+digraph fitosim_classes {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=record, style=filled];
+    edge [fontname="Helvetica", fontsize=9, color="#444444"];
+    graph [fontname="Helvetica", fontsize=11];
+    bgcolor="white";
+    nodesep=0.5;
+    ranksep=0.7;
+
+    // ============================================================
+    //  CLASSE PRINCIPALE: Garden
+    // ============================================================
+    Garden [
+        fillcolor="#1F3864", fontcolor="white", fontsize=11,
+        label="{\<\<dataclass\>\>\nGarden|+ name: str\l+ location_description: str\l+ pots: dict\<str, Pot\>\l+ scheduled_events: list\<ScheduledEvent\>\l+ channel_id_map: dict\<str, str\>\l|+ add_pot(pot: Pot)\l+ get_pot(label: str) → Pot\l+ remove_pot(label: str)\l+ apply_step_all(et_0_mm, current_date, rainfall_mm)\l+ update_all_from_sensors(sensor: SoilSensor) → dict\l+ set_channel_id(label: str, channel_id: str)\l+ add_scheduled_event(event: ScheduledEvent)\l+ events_due_today(date: date) → list\l+ forecast(weather: list) → ForecastResult\l+ current_alerts(date: date) → list\<Alert\>\l+ forecast_alerts(weather: list) → list\<Alert\>\l}"
+    ];
+
+    // ============================================================
+    //  Pot: la classe più centrale del modello scientifico
+    // ============================================================
+    Pot [
+        fillcolor="#D5E8F0",
+        label="{\<\<dataclass\>\>\nPot|+ label: str\l+ species: Species\l+ substrate: Substrate\l+ pot_volume_l: float\l+ pot_diameter_cm: float\l+ pot_shape: PotShape\l+ pot_material: PotMaterial\l+ location: Location\l+ planting_date: date\l+ rainfall_exposure: float\l+ saucer_capacity_l: float\l+ state_mm: float\l+ salt_mass_meq: float\l+ ph_substrate: float\l+ saucer_state_mm: float\l|+ state_theta: float (property)\l+ ec_substrate_mscm: float (property)\l+ fc_mm / pwp_mm / alert_mm: float (property)\l+ kp: float (property)\l+ apply_balance_step(et_0_mm, water_input_mm, date)\l+ apply_step(et_0_mm, current_date, rainfall_volume_l)\l+ apply_fertigation_step(volume_l, ec_mscm, ph, date)\l+ apply_rainfall_step(rainfall_mm, current_date)\l+ update_from_sensor(theta_observed) → SensorUpdateResult\l}"
+    ];
+
+    // ============================================================
+    //  Species: caratterizzazione della pianta
+    // ============================================================
+    Species [
+        fillcolor="#D5E8F0",
+        label="{\<\<dataclass frozen\>\>\nSpecies|+ common_name: str\l+ scientific_name: str\l+ kc_initial: float\l+ kc_mid: float\l+ kc_late: float\l+ kcb_initial / kcb_mid / kcb_late: float?\l+ depletion_fraction: float\l+ ec_optimal_min_mscm: float?\l+ ec_optimal_max_mscm: float?\l+ ph_optimal_min: float?\l+ ph_optimal_max: float?\l|+ supports_chemistry_model: bool (property)\l+ supports_dual_kc: bool (property)\l}"
+    ];
+
+    // ============================================================
+    //  Substrate: caratterizzazione del substrato
+    // ============================================================
+    Substrate [
+        fillcolor="#E8F0D8",
+        label="{\<\<dataclass frozen\>\>\nSubstrate|+ name: str\l+ theta_fc: float\l+ theta_pwp: float\l+ rew_mm: float?\l+ tew_mm: float?\l+ cec_meq_per_100g: float\l+ ph_typical: float\l+ density_kg_l: float\l|+ taw_mm: float (property)\l}"
+    ];
+
+    BaseMaterial [
+        fillcolor="#E8F0D8",
+        label="{\<\<dataclass frozen\>\>\nBaseMaterial|+ name: str\l+ theta_fc: float\l+ theta_pwp: float\l+ density_kg_l: float\l+ cec_meq_per_100g: float\l+ ph_typical: float\l}"
+    ];
+
+    // ============================================================
+    //  Alert: comunicazione strutturata al giardiniere
+    // ============================================================
+    Alert [
+        fillcolor="#D5E8F0",
+        label="{\<\<dataclass frozen\>\>\nAlert|+ alert_id: str (hash)\l+ severity: AlertSeverity\l+ pot_label: str\l+ category: AlertCategory\l+ message: str\l+ recommended_action: str\l+ triggered_date: date\l}"
+    ];
+
+    AlertSeverity [
+        fillcolor="#F0F0F0",
+        label="{\<\<enum\>\>\nAlertSeverity|INFO\lWARNING\lCRITICAL\l}"
+    ];
+
+    AlertCategory [
+        fillcolor="#F0F0F0",
+        label="{\<\<enum\>\>\nAlertCategory|IRRIGATION_NEEDED\lFERTILIZATION_DUE\lEC_TOO_HIGH\lEC_TOO_LOW\lPH_OUT_OF_RANGE\l}"
+    ];
+
+    // ============================================================
+    //  ScheduledEvent e WeatherDayForecast (modulo scheduling)
+    // ============================================================
+    ScheduledEvent [
+        fillcolor="#D5E8F0",
+        label="{\<\<dataclass frozen\>\>\nScheduledEvent|+ event_id: str\l+ pot_label: str\l+ event_type: str\l+ scheduled_date: date\l+ payload: dict\l}"
+    ];
+
+    WeatherDayForecast [
+        fillcolor="#D5E8F0",
+        label="{\<\<dataclass frozen\>\>\nWeatherDayForecast|+ date_: date\l+ et_0_mm: float\l+ rainfall_mm: float\l}"
+    ];
+
+    // ============================================================
+    //  Enum del Pot
+    // ============================================================
+    Location [
+        fillcolor="#F0F0F0",
+        label="{\<\<enum\>\>\nLocation|OUTDOOR\lINDOOR\l}"
+    ];
+
+    PotShape [
+        fillcolor="#F0F0F0",
+        label="{\<\<enum\>\>\nPotShape|CYLINDRICAL\lTRUNCATED_CONE\lRECTANGULAR\lOVAL\l}"
+    ];
+
+    // ============================================================
+    //  Sensori (dal layer io/sensors)
+    // ============================================================
+    SoilSensor [
+        fillcolor="#FCE5CD",
+        label="{\<\<Protocol\>\>\nSoilSensor|+ current_state(channel_id: str) → SoilReading\l}"
+    ];
+
+    SoilReading [
+        fillcolor="#FCE5CD",
+        label="{\<\<dataclass frozen\>\>\nSoilReading|+ timestamp: datetime\l+ theta_volumetric: float\l+ ec_mscm: float?\l+ temperature_c: float?\l+ ph: float?\l}"
+    ];
+
+    // ============================================================
+    //  PERSISTENCE — entry point del layer io
+    // ============================================================
+    GardenPersistence [
+        fillcolor="#FCE5CD",
+        label="{GardenPersistence\n(io/persistence)|+ db_path: str\l|+ register_species(s: Species)\l+ register_substrate(s: Substrate)\l+ register_base_material(m: BaseMaterial)\l+ save_garden(g: Garden, snapshot_timestamp)\l+ load_garden(name: str) → Garden\l+ query_states(garden, pot, start, end) → list\l+ close()\l}"
+    ];
+
+    // ============================================================
+    //  RELAZIONI
+    // ============================================================
+
+    // Composizione: il Garden contiene i Pot. Se distruggi il Garden,
+    // i Pot non hanno più senso (il loro stato vive nel Garden).
+    Garden -> Pot [arrowtail=diamond, dir=back, label="contiene 1..*",
+                    color="#1F3864", penwidth=1.5];
+
+    // Composizione: il Garden contiene gli ScheduledEvent.
+    Garden -> ScheduledEvent [arrowtail=diamond, dir=back, label="pianifica 0..*",
+                               color="#1F3864"];
+
+    // Aggregazione: il Pot riferisce a una Species (ma una Species può
+    // essere condivisa tra più Pot, vive autonomamente).
+    Pot -> Species [arrowtail=odiamond, dir=back, label="ha-una"];
+
+    // Aggregazione: stessa cosa per Substrate.
+    Pot -> Substrate [arrowtail=odiamond, dir=back, label="ha-uno"];
+
+    // Aggregazione: il Substrate può essere composto da BaseMaterial
+    // (mistura).
+    Substrate -> BaseMaterial [arrowtail=odiamond, dir=back, label="composto da 0..*",
+                                style=dashed];
+
+    // Composizione: Alert ha campi typed con AlertSeverity e AlertCategory.
+    Alert -> AlertSeverity [arrowhead=none, style=dashed, label="usa"];
+    Alert -> AlertCategory [arrowhead=none, style=dashed, label="usa"];
+
+    // Pot usa le sue enum.
+    Pot -> Location [arrowhead=none, style=dashed];
+    Pot -> PotShape [arrowhead=none, style=dashed];
+
+    // Dipendenza: Garden produce Alert (chiamando current_alerts/forecast_alerts).
+    Garden -> Alert [style=dashed, label="produce", color="#666666"];
+
+    // Dipendenza: Garden usa WeatherDayForecast come input di forecast.
+    Garden -> WeatherDayForecast [style=dashed, label="usa", color="#666666"];
+
+    // Dipendenza: Garden interroga il SoilSensor (Protocol).
+    Garden -> SoilSensor [style=dashed, label="legge da", color="#666666"];
+    SoilSensor -> SoilReading [style=dashed, label="ritorna"];
+
+    // Dipendenza: Pot riceve update da SoilReading.
+    Pot -> SoilReading [style=dashed, color="#666666", label="update_from_sensor"];
+
+    // Dipendenza: GardenPersistence persiste Garden (e il suo catalogo).
+    GardenPersistence -> Garden [style=dashed, label="persiste", color="#E8923C",
+                                  penwidth=1.5];
+    GardenPersistence -> Species [style=dashed, color="#E8923C"];
+    GardenPersistence -> Substrate [style=dashed, color="#E8923C"];
+
+    // Layout hints per migliorare la disposizione.
+    { rank=same; AlertSeverity; AlertCategory; }
+    { rank=same; Location; PotShape; }
+    { rank=same; SoilSensor; SoilReading; }
+}
