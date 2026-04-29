@@ -20,9 +20,11 @@ import unittest
 from datetime import date
 
 from fitosim.science.radiation import (
+    clear_sky_radiation,
     day_of_year,
     extraterrestrial_radiation,
     inverse_relative_distance,
+    net_radiation,
     solar_declination,
     sunset_hour_angle,
 )
@@ -141,6 +143,116 @@ class TestExtraterrestrialRadiation(unittest.TestCase):
                 with self.subTest(latitude=latitude, j=j):
                     ra = extraterrestrial_radiation(latitude, j)
                     self.assertGreater(ra, 0.0)
+
+
+# =====================================================================
+#  Test delle funzioni di radiazione netta introdotte in tappa 5.
+#
+#  Le due funzioni clear_sky_radiation e net_radiation completano
+#  la catena della radiazione fino al valore Rn che il Penman-Monteith
+#  consuma. Le testiamo per coerenza fisica e per i casi limite
+#  significativi.
+# =====================================================================
+
+
+class TestClearSkyRadiation(unittest.TestCase):
+    """
+    Radiazione di cielo sereno R_so. È una frazione della radiazione
+    extra-atmosferica R_a, modulata dalla quota.
+    """
+
+    def test_sea_level_default_transmissivity(self):
+        # A z=0 il coefficiente è esattamente 0.75 (trasmissività media
+        # dell'atmosfera in giorno sereno al livello del mare).
+        ra = 40.0
+        rso = clear_sky_radiation(ra, elevation_m=0.0)
+        self.assertAlmostEqual(rso / ra, 0.75, places=4)
+
+    def test_higher_elevation_increases_transmissivity(self):
+        # A quote più alte la trasmissività cresce leggermente perché
+        # l'aria è meno densa e più trasparente.
+        ra = 40.0
+        rso_sea = clear_sky_radiation(ra, elevation_m=0.0)
+        rso_mountain = clear_sky_radiation(ra, elevation_m=2000.0)
+        self.assertGreater(rso_mountain, rso_sea)
+        # Per 2000 m l'incremento è 2e-5 × 2000 = 0.04, quindi 79% di Ra.
+        self.assertAlmostEqual(rso_mountain / ra, 0.79, places=3)
+
+    def test_proportional_to_extraterrestrial(self):
+        # A parità di quota, R_so è proporzionale a R_a.
+        rso_low = clear_sky_radiation(20.0, elevation_m=100.0)
+        rso_high = clear_sky_radiation(40.0, elevation_m=100.0)
+        self.assertAlmostEqual(rso_high / rso_low, 2.0, places=4)
+
+
+class TestNetRadiation(unittest.TestCase):
+    """
+    Radiazione netta R_n: bilancio energetico tra radiazione solare
+    assorbita e radiazione termica netta verso il cielo.
+    """
+
+    def test_milan_summer_in_realistic_range(self):
+        """
+        Scenario tipico Milano in luglio: R_n deve cadere nell'intervallo
+        agronomicamente plausibile 8-15 MJ/m²/d per giornata serena.
+        """
+        ra = extraterrestrial_radiation(45.47, 200)
+        # ea per T_max 32, T_min 20, RH 60%.
+        ea_at_t_min = 0.6108 * math.exp(17.27 * 20 / (20 + 237.3)) * 0.60
+        ea_at_t_max = 0.6108 * math.exp(17.27 * 32 / (32 + 237.3)) * 0.60
+        ea = (ea_at_t_min + ea_at_t_max) / 2
+        rn = net_radiation(
+            solar_radiation_mj=24.0,
+            extraterrestrial_radiation_mj=ra,
+            t_max_c=32.0, t_min_c=20.0,
+            actual_vapor_pressure_kpa=ea,
+            elevation_m=150.0,
+        )
+        self.assertGreater(rn, 8.0)
+        self.assertLess(rn, 15.0)
+
+    def test_higher_albedo_reduces_rn(self):
+        """
+        Albedo maggiore (superficie più riflettente) → meno energia
+        assorbita → R_n minore. Questo è fisicamente fondamentale e
+        spiega perché terreni nudi chiari evaporano meno di copertura
+        verde scura.
+        """
+        common = dict(
+            solar_radiation_mj=20.0,
+            extraterrestrial_radiation_mj=35.0,
+            t_max_c=25.0, t_min_c=15.0,
+            actual_vapor_pressure_kpa=1.5,
+            elevation_m=100.0,
+        )
+        rn_dark = net_radiation(albedo=0.10, **common)
+        rn_grass = net_radiation(albedo=0.23, **common)
+        rn_snow = net_radiation(albedo=0.85, **common)
+        self.assertGreater(rn_dark, rn_grass)
+        self.assertGreater(rn_grass, rn_snow)
+
+    def test_overcast_sky_reduces_rn(self):
+        """
+        Una giornata molto nuvolosa (Rs ridotta a una frazione della
+        radiazione di cielo sereno) deve produrre R_n significativamente
+        ridotta rispetto alla stessa giornata serena. Non necessariamente
+        negativa: la formula FAO-56 per la radiazione netta a onde lunghe
+        è ben definita solo per Rs/Rso ≥ 0.26 circa, e nella realtà fisica
+        anche le giornate più nuvolose mantengono Rs almeno a quella
+        soglia per via della luce diffusa dalle nuvole.
+        """
+        common = dict(
+            extraterrestrial_radiation_mj=35.0,
+            t_max_c=15.0, t_min_c=5.0,
+            actual_vapor_pressure_kpa=1.0,
+            elevation_m=0.0,
+        )
+        # Cielo sereno: Rs = 0.75 × Ra (massima trasmissività).
+        rn_clear = net_radiation(solar_radiation_mj=26.0, **common)
+        # Cielo molto nuvoloso: Rs = 0.30 × Ra (luce diffusa minima).
+        rn_overcast = net_radiation(solar_radiation_mj=10.5, **common)
+        self.assertGreater(rn_clear, rn_overcast)
+        self.assertGreater(rn_clear - rn_overcast, 5.0)  # differenza significativa
 
 
 if __name__ == "__main__":

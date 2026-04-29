@@ -192,3 +192,177 @@ def extraterrestrial_radiation(latitude_deg: float, j: int) -> float:
     )
 
     return factor * bracket
+
+
+def clear_sky_radiation(
+    extraterrestrial_radiation_mj: float, elevation_m: float = 0.0,
+) -> float:
+    """
+    Radiazione solare in giornata di cielo sereno R_so, in MJ m⁻² giorno⁻¹.
+
+    Significato fisico: quanta radiazione solare arriverebbe al suolo in
+    un giorno di cielo perfettamente sereno (niente nuvole, niente
+    foschia significativa) a partire dalla radiazione extra-atmosferica
+    R_a. È la "soglia massima" che la radiazione globale misurata Rs
+    può raggiungere: misure di Rs sistematicamente superiori a R_so
+    indicano un sensore mal calibrato o un errore di unità di misura.
+
+    R_so si usa anche all'interno del calcolo della radiazione netta
+    a onde lunghe: il rapporto Rs/R_so è il "coefficiente di copertura
+    del cielo" (cloud cover factor) che modula quanto la superficie
+    irraggia calore verso lo spazio. Cielo sereno (Rs/R_so → 1)
+    significa molta perdita di calore radiativo notturno; cielo nuvoloso
+    (Rs/R_so piccolo) significa che le nuvole rimandano indietro
+    parte di quel calore.
+
+    Formula (FAO-56 equazione 37):
+
+        R_so = (0.75 + 2 × 10⁻⁵ × z) × R_a
+
+    dove z è la quota in metri sul livello del mare. Il coefficiente
+    base 0.75 rappresenta la trasmissività media dell'atmosfera in
+    giorno sereno al livello del mare (il 75% della radiazione
+    extra-atmosferica raggiunge il suolo); il termine z corregge per
+    il fatto che a quote più alte l'aria attraversata è meno densa e
+    la trasmissività cresce leggermente.
+
+    Parametri
+    ---------
+    extraterrestrial_radiation_mj : float
+        R_a in MJ/m²/giorno, calcolata via `extraterrestrial_radiation`.
+    elevation_m : float, default 0.0
+        Quota del sito in metri sul livello del mare. Per Milano usare
+        circa 150 m, per le località costiere usare 0.
+
+    Ritorna
+    -------
+    float
+        R_so in MJ/m²/giorno.
+    """
+    return (0.75 + 2e-5 * elevation_m) * extraterrestrial_radiation_mj
+
+
+def net_radiation(
+    solar_radiation_mj: float,
+    extraterrestrial_radiation_mj: float,
+    t_max_c: float,
+    t_min_c: float,
+    actual_vapor_pressure_kpa: float,
+    elevation_m: float = 0.0,
+    albedo: float = 0.23,
+) -> float:
+    """
+    Radiazione netta R_n giornaliera, in MJ m⁻² giorno⁻¹.
+
+    Significato fisico: il bilancio energetico tra l'energia solare a
+    onde corte assorbita dalla superficie e l'energia termica a onde
+    lunghe netta scambiata con l'atmosfera. È la componente che
+    effettivamente alimenta l'evapotraspirazione: non tutta la
+    radiazione solare che arriva (Rs) finisce in vapor d'acqua, perché
+    una parte viene riflessa (albedo) e una parte viene riemessa come
+    radiazione termica verso lo spazio.
+
+    Il calcolo si articola in due termini distinti che rispecchiano
+    fisiche diverse:
+
+      R_n = R_ns − R_nl
+
+    dove R_ns è la radiazione netta a onde corte (energia solare
+    assorbita, al netto della riflessione) e R_nl è la radiazione netta
+    a onde lunghe (energia termica netta scambiata con il cielo).
+
+    Per R_ns la formula è semplice (FAO-56 equazione 38):
+
+        R_ns = (1 − α) × Rs
+
+    dove α è l'albedo della superficie (0.23 per la coltura di
+    riferimento erbosa, valore raccomandato da FAO-56). Una frazione
+    α della radiazione solare viene riflessa; il complemento (1 − α)
+    viene assorbita.
+
+    Per R_nl la formula è più articolata (FAO-56 equazione 39) perché
+    il bilancio termico dipende dalla temperatura della superficie,
+    dall'umidità dell'aria (vapor d'acqua è un gas serra), e dalla
+    copertura del cielo:
+
+        R_nl = σ × ((T_max⁴ + T_min⁴)/2) ×
+               (0.34 − 0.14 × √ea) ×
+               (1.35 × Rs/R_so − 0.35)
+
+    dove σ = 4.903 × 10⁻⁹ MJ K⁻⁴ m⁻² giorno⁻¹ è la costante di
+    Stefan-Boltzmann nelle unità FAO, T_max e T_min sono le temperature
+    estreme in Kelvin, ea è l'umidità attuale in kPa, e Rs/R_so è il
+    coefficiente di copertura del cielo.
+
+    L'interpretazione dei tre fattori del prodotto è significativa.
+    Il primo è il termine di Stefan-Boltzmann sulla quarta potenza
+    della temperatura: superfici più calde irraggiano molto di più.
+    Il secondo cattura l'effetto serra del vapore acqueo: aria più
+    umida (ea grande) trattiene più calore vicino al suolo, riducendo
+    la perdita radiativa netta. Il terzo è la modulazione delle nuvole:
+    Rs/R_so vicino a 1 significa cielo sereno e perdita massima; piccolo
+    significa cielo coperto e perdita ridotta perché le nuvole rimandano
+    indietro il calore.
+
+    Parametri
+    ---------
+    solar_radiation_mj : float
+        Radiazione solare globale Rs misurata o stimata, in MJ/m²/giorno.
+    extraterrestrial_radiation_mj : float
+        Radiazione extra-atmosferica R_a, in MJ/m²/giorno.
+    t_max_c, t_min_c : float
+        Temperatura massima e minima giornaliera, in °C.
+    actual_vapor_pressure_kpa : float
+        Umidità attuale ea, in kPa.
+    elevation_m : float, default 0.0
+        Quota del sito in metri sul livello del mare.
+    albedo : float, default 0.23
+        Riflettività della superficie. Il default 0.23 è il valore FAO-56
+        per la coltura di riferimento erbosa. Variazioni tipiche: 0.15
+        per coperture vegetali dense scure, 0.30 per terreno nudo
+        chiaro, fino a 0.85 per neve fresca.
+
+    Ritorna
+    -------
+    float
+        R_n in MJ/m²/giorno. Valori tipici a latitudini medie:
+        circa 5-8 in giornata estiva serena, 1-3 in giornata invernale
+        nuvolosa. Può scendere a valori negativi in giornate molto
+        nuvolose dove la perdita termica notturna supera l'apporto
+        solare diurno (rare ma fisicamente possibili).
+    """
+    # Costante di Stefan-Boltzmann nelle unità FAO-56.
+    sigma = 4.903e-9  # MJ K⁻⁴ m⁻² giorno⁻¹
+
+    # Termine 1: radiazione netta a onde corte. Quanto della radiazione
+    # solare globale viene effettivamente assorbita.
+    rns = (1.0 - albedo) * solar_radiation_mj
+
+    # Termine 2: radiazione netta a onde lunghe. Bilancio termico
+    # tra emissione della superficie e contro-emissione del cielo.
+    # Le temperature vanno convertite in Kelvin perché Stefan-Boltzmann
+    # è una legge sulla quarta potenza della temperatura assoluta.
+    t_max_k = t_max_c + 273.16
+    t_min_k = t_min_c + 273.16
+    stefan_boltzmann_term = sigma * (t_max_k ** 4 + t_min_k ** 4) / 2.0
+
+    # Fattore di emissione netta dipendente dall'umidità: aria umida
+    # trattiene il calore (effetto serra del vapore d'acqua).
+    humidity_factor = 0.34 - 0.14 * math.sqrt(actual_vapor_pressure_kpa)
+
+    # Fattore di copertura del cielo. Calcoliamo R_so internamente
+    # invece di chiederlo all'esterno: il chiamante ha già passato R_a
+    # e la quota, dai quali R_so è derivabile, e questa scelta riduce
+    # il numero di parametri della funzione.
+    rso = (0.75 + 2e-5 * elevation_m) * extraterrestrial_radiation_mj
+    # Limitiamo Rs/R_so a 1.0 per gestire la situazione (rara ma
+    # possibile) in cui il sensore di radiazione misura più della
+    # radiazione di cielo sereno teorica, cosa che produrrebbe un
+    # cloudiness factor maggiore di 1 con conseguente sovrastima della
+    # perdita radiativa.
+    cloudiness_ratio = min(solar_radiation_mj / rso, 1.0) if rso > 0 else 0.0
+    cloudiness_factor = 1.35 * cloudiness_ratio - 0.35
+
+    rnl = stefan_boltzmann_term * humidity_factor * cloudiness_factor
+
+    return rns - rnl
