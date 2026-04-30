@@ -44,6 +44,7 @@ from fitosim.domain.species import (
     actual_et_c,
     kc_for_stage,
 )
+from fitosim.domain.room import LightExposure
 from fitosim.domain.weather import WeatherDay
 from fitosim.science.balance import (
     BalanceStepResult,
@@ -450,6 +451,19 @@ class Pot:
         `apply_balance_step_from_weather` per la stima di pressione
         atmosferica e radiazione di cielo sereno. Stesso comportamento
         di latitude_deg quando assente.
+    room_id : str | None, opzionale
+        Identificatore della Room del giardino a cui il vaso indoor
+        appartiene (sotto-tappa D fase 1 tappa 5). Per i vasi outdoor
+        resta None e il modello indoor non si attiva. Quando è
+        valorizzato, il bilancio idrico indoor (fase D2) leggerà il
+        microclima dalla Room corrispondente del Garden invece di
+        richiederlo come parametro esplicito.
+    light_exposure : LightExposure | None, opzionale
+        Livello qualitativo di esposizione luminosa del vaso
+        (DARK, INDIRECT_BRIGHT, DIRECT_SUN). Usato dal bilancio idrico
+        indoor della fase D2 per stimare la radiazione solare media
+        giornaliera ricevuta dal vaso. Per i vasi outdoor resta None
+        (la radiazione viene dal piranometro della stazione meteo).
     notes : str, opzionale
         Note libere (es. "trapiantato dal balcone alla veranda
         a settembre", "potatura il 15/3", ecc.).
@@ -565,6 +579,26 @@ class Pot:
     # La quota va espressa in metri sul livello del mare.
     latitude_deg: float | None = None
     elevation_m: float | None = None
+    # ----- Modello indoor (sotto-tappa D fase 1 tappa 5) -----
+    # Quando il vaso è indoor (Location.INDOOR) viene tipicamente
+    # associato a una Room del giardino tramite room_id, e ha un
+    # livello di esposizione luminosa che il giardiniere attribuisce
+    # in base alla posizione del vaso rispetto alle finestre.
+    #
+    # Per i vasi outdoor entrambi i campi restano None: il modello
+    # indoor non si attiva e il bilancio idrico continua a usare il
+    # WeatherDay esterno come prima.
+    #
+    # Quando un vaso indoor non ha una room_id associata, il bilancio
+    # idrico indoor (fase D2) richiederà al chiamante di passare
+    # esplicitamente i dati ambientali; quando ha la room_id il
+    # giardino fa la mappatura automatica.
+    #
+    # Quando un vaso indoor non ha light_exposure specificato, la
+    # fase D2 userà un default conservativo (probabilmente
+    # INDIRECT_BRIGHT, ma la decisione è rimandata alla fase D2).
+    room_id: str | None = None
+    light_exposure: Optional[LightExposure] = None
     notes: str = ""
 
     def __post_init__(self) -> None:

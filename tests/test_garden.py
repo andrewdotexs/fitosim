@@ -1179,5 +1179,132 @@ class TestGardenApplyStepAllFromWeather(unittest.TestCase):
             )
 
 
+# =====================================================================
+#  Test della collezione di Room (sotto-tappa D fase 1 tappa 5)
+#
+#  La fase D1 ha esteso il Garden con un dict interno _rooms parallelo
+#  ai _pots, e con metodi di gestione standard (add, get, has, remove,
+#  ids, iter, num) più la utility specifica pots_in_room. Verifichiamo
+#  ognuno di questi metodi e in particolare la validazione di
+#  remove_room che blocca la rimozione quando ci sono ancora vasi
+#  associati.
+# =====================================================================
+
+
+class TestGardenRooms(unittest.TestCase):
+
+    def _make_basic_garden(self):
+        """Helper: costruisce un giardino con due Room di base."""
+        from fitosim.domain.room import Room
+        garden = Garden(name="Casa di Andrea")
+        garden.add_room(Room(room_id="salotto", name="Salotto"))
+        garden.add_room(Room(room_id="camera", name="Camera da letto"))
+        return garden
+
+    def test_add_and_get_room(self):
+        # add_room aggiunge correttamente una Room e get_room la
+        # recupera per room_id.
+        from fitosim.domain.room import Room
+        garden = Garden(name="Test")
+        salotto = Room(room_id="salotto", name="Salotto")
+        garden.add_room(salotto)
+
+        retrieved = garden.get_room("salotto")
+        self.assertIs(retrieved, salotto)
+
+    def test_add_duplicate_room_raises(self):
+        # Aggiungere una Room con room_id già presente solleva ValueError.
+        from fitosim.domain.room import Room
+        garden = self._make_basic_garden()
+        with self.assertRaises(ValueError):
+            garden.add_room(Room(room_id="salotto", name="Altro salotto"))
+
+    def test_get_nonexistent_room_raises(self):
+        # get_room di room_id inesistente solleva ValueError.
+        garden = self._make_basic_garden()
+        with self.assertRaises(ValueError):
+            garden.get_room("garage")
+
+    def test_has_room(self):
+        # has_room ritorna True per Room esistenti, False altrimenti.
+        garden = self._make_basic_garden()
+        self.assertTrue(garden.has_room("salotto"))
+        self.assertFalse(garden.has_room("garage"))
+
+    def test_room_ids_property(self):
+        # room_ids è una property che ritorna la lista degli identificatori
+        # in ordine di inserimento.
+        garden = self._make_basic_garden()
+        self.assertEqual(garden.room_ids, ["salotto", "camera"])
+
+    def test_num_rooms(self):
+        # num_rooms ritorna il numero corrente di Room.
+        from fitosim.domain.room import Room
+        garden = Garden(name="Test")
+        self.assertEqual(garden.num_rooms(), 0)
+        garden.add_room(Room(room_id="r1", name="R1"))
+        self.assertEqual(garden.num_rooms(), 1)
+        garden.add_room(Room(room_id="r2", name="R2"))
+        self.assertEqual(garden.num_rooms(), 2)
+
+    def test_iter_rooms(self):
+        # iter_rooms itera in ordine di inserimento.
+        garden = self._make_basic_garden()
+        ids = [r.room_id for r in garden.iter_rooms()]
+        self.assertEqual(ids, ["salotto", "camera"])
+
+    def test_pots_in_room(self):
+        # pots_in_room ritorna i Pot con room_id corrispondente.
+        from fitosim.domain.species import BASIL
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+        garden = self._make_basic_garden()
+        pot1 = Pot(
+            label="P1", species=BASIL, substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.INDOOR, planting_date=date(2026, 6, 1),
+            room_id="salotto",
+        )
+        pot2 = Pot(
+            label="P2", species=BASIL, substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.INDOOR, planting_date=date(2026, 6, 1),
+            room_id="camera",
+        )
+        garden.add_pot(pot1)
+        garden.add_pot(pot2)
+
+        vasi_salotto = garden.pots_in_room("salotto")
+        self.assertEqual([p.label for p in vasi_salotto], ["P1"])
+        vasi_camera = garden.pots_in_room("camera")
+        self.assertEqual([p.label for p in vasi_camera], ["P2"])
+
+    def test_remove_room_with_associated_pots_raises(self):
+        # remove_room blocca la rimozione quando ci sono vasi associati,
+        # per evitare di lasciare vasi con room_id orfani.
+        from fitosim.domain.species import BASIL
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+        garden = self._make_basic_garden()
+        pot = Pot(
+            label="P1", species=BASIL, substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.INDOOR, planting_date=date(2026, 6, 1),
+            room_id="salotto",
+        )
+        garden.add_pot(pot)
+
+        with self.assertRaises(ValueError) as ctx:
+            garden.remove_room("salotto")
+        # Il messaggio di errore deve menzionare il vaso bloccante.
+        self.assertIn("P1", str(ctx.exception))
+
+    def test_remove_room_without_pots_succeeds(self):
+        # Senza vasi associati la rimozione va a buon fine.
+        garden = self._make_basic_garden()
+        removed = garden.remove_room("salotto")
+        self.assertEqual(removed.room_id, "salotto")
+        self.assertFalse(garden.has_room("salotto"))
+        self.assertEqual(garden.num_rooms(), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

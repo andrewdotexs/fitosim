@@ -66,6 +66,7 @@ from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 from fitosim.domain.alerts import ALL_RULES, Alert
 from fitosim.domain.pot import FullStepResult, Pot, SensorUpdateResult
+from fitosim.domain.room import Room
 from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
 from fitosim.domain.weather import WeatherDay
 from fitosim.io.sensors import (
@@ -137,6 +138,13 @@ class Garden:
     # default_factory=dict per evitare il classico bug del default
     # mutabile condiviso tra istanze.
     _pots: Dict[str, Pot] = field(default_factory=dict, repr=False)
+    # Dict interno delle Room indicizzato per room_id (sotto-tappa D
+    # fase 1 tappa 5). Le Room rappresentano gli spazi indoor del
+    # giardino e sono parallele ai Pot: un giardino può avere zero
+    # Room (caso tipico per il balcone outdoor di Andrea) oppure
+    # diverse Room (caso del giardino indoor multi-stanza). I Pot
+    # indoor si associano alla loro Room tramite il campo room_id.
+    _rooms: Dict[str, "Room"] = field(default_factory=dict, repr=False)
     # Mappa label → channel_id del gateway hardware. È una proprietà
     # configurativa del giardino: collega ogni vaso al canale del
     # sensore reale che lo monitora. Vasi senza mapping continuano
@@ -363,6 +371,187 @@ class Garden:
         set_channel_id, remove_channel_id.
         """
         return dict(self._channel_mapping)
+
+    # ----- Gestione della collezione di Room (sotto-tappa D fase 1 tappa 5) -----
+    #
+    # Le Room rappresentano gli spazi indoor del giardino con
+    # microclima condiviso (tipicamente una stanza di casa coperta
+    # da un sensore WN31 ambientale). I metodi seguenti seguono lo
+    # stesso pattern dei vasi: add, get, remove, has, iter, len.
+    # Aggiungiamo anche la utility pots_in_room che è specifica delle
+    # Room e serve a recuperare tutti i vasi associati a una Room
+    # tramite il campo room_id del Pot.
+
+    def add_room(self, room: "Room") -> None:
+        """
+        Aggiunge una Room al giardino.
+
+        Solleva ValueError se una Room con lo stesso room_id esiste
+        già: vogliamo che gli identificatori siano univoci per evitare
+        ambiguità nelle associazioni Pot → Room.
+
+        Parametri
+        ---------
+        room : Room
+            La Room da aggiungere. Il suo room_id deve essere univoco
+            nel giardino.
+
+        Solleva
+        -------
+        ValueError
+            Se room.room_id è già presente nel giardino.
+        """
+        if room.room_id in self._rooms:
+            raise ValueError(
+                f"Garden '{self.name}': Room con room_id "
+                f"'{room.room_id}' già presente. Per modificarla "
+                f"recuperala con get_room e mutala direttamente, "
+                f"oppure rimuovila prima con remove_room."
+            )
+        self._rooms[room.room_id] = room
+
+    def get_room(self, room_id: str) -> "Room":
+        """
+        Recupera la Room con il room_id specificato.
+
+        Parametri
+        ---------
+        room_id : str
+            L'identificatore della Room da recuperare.
+
+        Ritorna
+        -------
+        Room
+            La Room corrispondente al room_id.
+
+        Solleva
+        -------
+        ValueError
+            Se non esiste una Room con quel room_id.
+        """
+        if room_id not in self._rooms:
+            raise ValueError(
+                f"Garden '{self.name}': nessuna Room con room_id "
+                f"'{room_id}'. Room presenti: "
+                f"{list(self._rooms.keys())}"
+            )
+        return self._rooms[room_id]
+
+    def has_room(self, room_id: str) -> bool:
+        """True se esiste una Room con il room_id specificato."""
+        return room_id in self._rooms
+
+    def remove_room(self, room_id: str) -> "Room":
+        """
+        Rimuove la Room dal giardino e la restituisce.
+
+        Verifica che nessun vaso indoor sia ancora associato alla
+        Room prima di rimuoverla, perché lasciare vasi con
+        room_id orfani produrrebbe errori a runtime nel bilancio
+        idrico indoor della fase D2.
+
+        Parametri
+        ---------
+        room_id : str
+            L'identificatore della Room da rimuovere.
+
+        Ritorna
+        -------
+        Room
+            La Room rimossa, utile per chi vuole conservarne un
+            riferimento.
+
+        Solleva
+        -------
+        ValueError
+            Se non esiste una Room con quel room_id, oppure se
+            esistono ancora vasi associati a quella Room.
+        """
+        if room_id not in self._rooms:
+            raise ValueError(
+                f"Garden '{self.name}': nessuna Room con room_id "
+                f"'{room_id}'. Room presenti: "
+                f"{list(self._rooms.keys())}"
+            )
+        # Verifica che nessun vaso sia ancora associato.
+        vasi_associati = [
+            pot.label for pot in self._pots.values()
+            if pot.room_id == room_id
+        ]
+        if vasi_associati:
+            raise ValueError(
+                f"Garden '{self.name}': impossibile rimuovere Room "
+                f"'{room_id}' perché vi sono ancora associati i vasi "
+                f"{vasi_associati}. Disassociali prima (impostando "
+                f"il loro room_id a None) o rimuovili dal giardino."
+            )
+        return self._rooms.pop(room_id)
+
+    @property
+    def room_ids(self) -> list[str]:
+        """
+        Lista degli identificatori delle Room nel giardino, in ordine
+        di inserimento.
+
+        Ritorna una **lista**, non il dict interno: il chiamante può
+        modificarla liberamente (filtri, ordinamenti) senza alterare
+        lo stato del giardino.
+        """
+        return list(self._rooms.keys())
+
+    def iter_rooms(self) -> Iterator["Room"]:
+        """
+        Itera sulle Room del giardino, in ordine di inserimento.
+
+        Pattern simmetrico a __iter__ del Garden che itera sui Pot.
+        Ho preferito un metodo dedicato `iter_rooms` invece di un
+        secondo `__iter__` per evitare ambiguità sull'iterazione di
+        default del Garden, che resta sui Pot.
+        """
+        return iter(self._rooms.values())
+
+    def pots_in_room(self, room_id: str) -> list[Pot]:
+        """
+        Lista dei vasi del giardino associati alla Room specificata.
+
+        È una utility tipica del bilancio idrico indoor (fase D2): per
+        applicare un IndoorMicroclimate a una stanza, vogliamo
+        iterare sui vasi che condividono quel microclima.
+
+        Parametri
+        ---------
+        room_id : str
+            Identificatore della Room. Deve esistere nel giardino,
+            altrimenti il metodo solleva ValueError per coerenza con
+            get_room (un errore chiaro è meglio di una lista vuota
+            silenziosa che potrebbe nascondere bug).
+
+        Ritorna
+        -------
+        list[Pot]
+            Lista dei vasi con pot.room_id == room_id, in ordine di
+            inserimento nel giardino. Lista vuota se la Room esiste
+            ma non ha vasi associati.
+
+        Solleva
+        -------
+        ValueError
+            Se room_id non corrisponde a una Room presente.
+        """
+        if room_id not in self._rooms:
+            raise ValueError(
+                f"Garden '{self.name}': nessuna Room con room_id "
+                f"'{room_id}'. Room presenti: "
+                f"{list(self._rooms.keys())}"
+            )
+        return [
+            pot for pot in self._pots.values()
+            if pot.room_id == room_id
+        ]
+
+    def num_rooms(self) -> int:
+        """Numero di Room nel giardino."""
+        return len(self._rooms)
 
     # ----- Orchestratore: aggiornamento dai sensori reali -----
 

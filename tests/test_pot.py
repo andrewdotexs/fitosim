@@ -2690,5 +2690,58 @@ class TestPotApplyBalanceStepFromWeather(unittest.TestCase):
         self.assertIsNone(result.et_method)
 
 
+# =====================================================================
+#  Test dei nuovi campi room_id e light_exposure (sotto-tappa D fase 1)
+#
+#  La fase D1 della sotto-tappa D ha aggiunto due campi opzionali al
+#  Pot: room_id per associare il vaso a una Room indoor, e
+#  light_exposure per il livello di esposizione luminosa. Verifichiamo
+#  che i Pot esistenti senza questi campi continuano a funzionare
+#  (retrocompatibilità) e che i nuovi campi siano accessibili quando
+#  popolati.
+# =====================================================================
+
+
+class TestPotRoomAndLightFields(unittest.TestCase):
+
+    def _make_basil_pot(self, **overrides):
+        from fitosim.domain.species import BASIL
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+        defaults = dict(
+            label="Basilico-test", species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 6, 1),
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    def test_pot_without_room_fields_works(self):
+        # Pot senza room_id né light_exposure: i campi prendono il
+        # default None e il vaso si comporta esattamente come prima
+        # dell'introduzione dei nuovi campi.
+        pot = self._make_basil_pot()
+        self.assertIsNone(pot.room_id)
+        self.assertIsNone(pot.light_exposure)
+
+    def test_pot_with_room_id_populated(self):
+        # Pot con room_id popolato: il valore è accessibile.
+        pot = self._make_basil_pot(
+            location=Location.INDOOR,
+            room_id="salotto",
+        )
+        self.assertEqual(pot.room_id, "salotto")
+
+    def test_pot_with_light_exposure_populated(self):
+        # Pot con light_exposure popolato: il valore è accessibile.
+        from fitosim.domain.room import LightExposure
+        pot = self._make_basil_pot(
+            location=Location.INDOOR,
+            light_exposure=LightExposure.INDIRECT_BRIGHT,
+        )
+        self.assertEqual(pot.light_exposure, LightExposure.INDIRECT_BRIGHT)
+
+
 if __name__ == "__main__":
     unittest.main()
