@@ -2548,5 +2548,147 @@ class TestPotRainfallExposure(unittest.TestCase):
         self.assertAlmostEqual(result.volume_intercepted_l, 0.7, places=9)
 
 
+# =====================================================================
+#  Test del nuovo metodo apply_balance_step_from_weather (sotto-tappa C tappa 5)
+#
+#  Verifichiamo che il Pot scelga correttamente la formula di
+#  evapotraspirazione in base ai dati meteo del WeatherDay, propaghi
+#  correttamente la tracciabilità del metodo nel BalanceStepResult,
+#  e gestisca esplicitamente l'errore quando le coordinate del sito
+#  non sono disponibili.
+# =====================================================================
+
+
+class TestPotApplyBalanceStepFromWeather(unittest.TestCase):
+
+    def _make_basil_pot(self, **overrides):
+        """Helper: costruisce un vaso di basilico con coordinate Milano."""
+        from fitosim.domain.species import BASIL
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+        defaults = dict(
+            label="Basilico-test", species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 6, 1),
+            latitude_deg=45.47, elevation_m=150.0,
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    def test_full_weather_selects_physical(self):
+        # Con tutti i dati meteo presenti e una specie con parametri
+        # fisiologici popolati (basilico ha rs=100, h=0.30 dalla
+        # estensione della sotto-tappa C), il selettore deve scegliere
+        # Penman-Monteith fisico.
+        from fitosim.domain.weather import WeatherDay
+        from fitosim.science.et0 import EtMethod
+
+        pot = self._make_basil_pot()
+        weather = WeatherDay(
+            date_=date(2026, 7, 19),
+            t_min=20.0, t_max=32.0,
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            solar_radiation_mj_m2_day=24.0,
+        )
+        result = pot.apply_balance_step_from_weather(
+            weather=weather,
+            water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        self.assertEqual(result.et_method, EtMethod.PENMAN_MONTEITH_PHYSICAL)
+
+    def test_minimal_weather_falls_back_to_hargreaves(self):
+        # Con solo le temperature, il selettore ricade su Hargreaves
+        # come fallback robusto.
+        from fitosim.domain.weather import WeatherDay
+        from fitosim.science.et0 import EtMethod
+
+        pot = self._make_basil_pot()
+        weather = WeatherDay(
+            date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+        )
+        result = pot.apply_balance_step_from_weather(
+            weather=weather,
+            water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        self.assertEqual(result.et_method, EtMethod.HARGREAVES_SAMANI)
+
+    def test_state_evolves_correctly(self):
+        # Lo stato del vaso deve evolvere: partendo da fc_mm e con
+        # zero input idrico, dopo un giorno di sole estivo deve
+        # essere strettamente minore di fc_mm (l'ET ha consumato
+        # acqua dal vaso).
+        from fitosim.domain.weather import WeatherDay
+
+        pot = self._make_basil_pot()
+        initial_state = pot.state_mm
+        weather = WeatherDay(
+            date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            solar_radiation_mj_m2_day=24.0,
+        )
+        result = pot.apply_balance_step_from_weather(
+            weather=weather,
+            water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        self.assertLess(result.new_state, initial_state)
+        self.assertEqual(pot.state_mm, result.new_state)  # mutato in-place
+
+    def test_missing_latitude_raises_explicit_error(self):
+        # Pot senza latitudine + chiamata senza latitude_deg esplicito:
+        # deve sollevare ValueError con messaggio che identifica
+        # esplicitamente il parametro mancante.
+        from fitosim.domain.weather import WeatherDay
+
+        pot = self._make_basil_pot(latitude_deg=None, elevation_m=None)
+        weather = WeatherDay(
+            date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            pot.apply_balance_step_from_weather(
+                weather=weather,
+                water_input_mm=0.0,
+                current_date=date(2026, 7, 19),
+            )
+        self.assertIn("latitude_deg", str(ctx.exception))
+
+    def test_explicit_coordinates_override_pot_defaults(self):
+        # I parametri espliciti del metodo devono prevalere sui valori
+        # del Pot: passiamo coordinate diverse e verifichiamo che il
+        # metodo gira senza errori (validando che le coordinate
+        # esplicite vengono usate).
+        from fitosim.domain.weather import WeatherDay
+        from fitosim.science.et0 import EtMethod
+
+        pot = self._make_basil_pot(latitude_deg=None, elevation_m=None)
+        weather = WeatherDay(
+            date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+        )
+        # Funziona perché passiamo le coordinate al metodo.
+        result = pot.apply_balance_step_from_weather(
+            weather=weather,
+            water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+            latitude_deg=45.47,
+            elevation_m=150.0,
+        )
+        self.assertEqual(result.et_method, EtMethod.HARGREAVES_SAMANI)
+
+    def test_old_method_returns_none_for_et_method(self):
+        # Il vecchio apply_balance_step continua a funzionare e il
+        # BalanceStepResult ritornato ha et_method=None, segnalando
+        # che la tracciabilità del metodo non è disponibile per i
+        # chiamanti che usano l'API legacy.
+        pot = self._make_basil_pot()
+        result = pot.apply_balance_step(
+            et_0_mm=5.0, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        self.assertIsNone(result.et_method)
+
+
 if __name__ == "__main__":
     unittest.main()

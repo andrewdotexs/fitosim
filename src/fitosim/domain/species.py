@@ -174,6 +174,31 @@ class Species:
     ec_optimal_max_mscm: float | None = None
     ph_optimal_min: float | None = None
     ph_optimal_max: float | None = None
+    # ----- Parametri fisiologici per Penman-Monteith fisico (tappa 5 sotto-tappa C) -----
+    # Questi due parametri caratterizzano la specie ai fini del modello
+    # fisico di Penman-Monteith, che applica direttamente l'equazione
+    # alla coltura reale invece di usare la coltura di riferimento
+    # standardizzata di FAO-56. Quando entrambi sono valorizzati, il
+    # selettore "best available" del modulo science/et0.py userà
+    # Penman-Monteith fisico se anche i dati meteo sono completi; se
+    # uno solo è valorizzato (o nessuno) ricadrà su Penman-Monteith
+    # standard FAO-56 + Kc.
+    #
+    # Valori indicativi per le specie del catalogo, da letteratura:
+    #   - coltura erbacea di riferimento: rs=70 s/m, h=0.12 m
+    #   - basilico:                       rs=100 s/m, h=0.30 m
+    #   - lattuga:                        rs=100 s/m, h=0.20 m
+    #   - pomodoro:                       rs=130 s/m, h=0.60 m
+    #   - rosmarino (semi-mediterraneo):  rs=200 s/m, h=0.60 m
+    #   - agrumi (sempreverdi):           rs=140 s/m, h=2.00 m
+    #   - succulente CAM:                 rs=500+ s/m, h=0.10 m
+    #
+    # La resistenza stomatica varia di un fattore 5-10 tra mesofile e
+    # xerofile, e riflette quanto la pianta "tiene chiusi" gli stomi
+    # in condizioni standard. È il parametro fisiologico più importante
+    # per differenziare le specie nel modello.
+    stomatal_resistance_s_m: float | None = None
+    crop_height_m: float | None = None
 
     def __post_init__(self) -> None:
         # Validazione dei Kc: scorriamo la terna con zip per un
@@ -423,6 +448,8 @@ BASIL = Species(
         "l'anno, outdoor da maggio a settembre a latitudini padane. "
         "Ciclo colturale tipico: 20+50+30 giorni dalla semina."
     ),
+    stomatal_resistance_s_m=100.0,
+    crop_height_m=0.30,
 )
 
 TOMATO = Species(
@@ -440,6 +467,8 @@ TOMATO = Species(
         "quando i frutti stanno maturando. Sensibile al marciume apicale "
         "in caso di irrigazione irregolare. Durate da FAO-56 Tab. 11."
     ),
+    stomatal_resistance_s_m=130.0,
+    crop_height_m=0.60,
 )
 
 LETTUCE = Species(
@@ -458,6 +487,8 @@ LETTUCE = Species(
         "Ciclo colturale breve (15+25+10 ≈ 50 giorni), Kc_late alto "
         "perché la coltura è ancora pienamente verde alla raccolta."
     ),
+    stomatal_resistance_s_m=100.0,
+    crop_height_m=0.20,
 )
 
 CITRUS = Species(
@@ -477,6 +508,8 @@ CITRUS = Species(
         "ricovero invernale al riparo dal gelo a latitudini padane. "
         "Per le perenni le durate sono convenzionali, riferite all'anno."
     ),
+    stomatal_resistance_s_m=140.0,
+    crop_height_m=2.00,
 )
 
 ROSEMARY = Species(
@@ -495,6 +528,8 @@ ROSEMARY = Species(
         "l'altra. Substrato drenante obbligatorio per evitare marciume "
         "radicale. Perenne outdoor a latitudini italiane."
     ),
+    stomatal_resistance_s_m=200.0,
+    crop_height_m=0.60,
 )
 
 

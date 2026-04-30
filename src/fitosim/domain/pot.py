@@ -42,7 +42,9 @@ from fitosim.domain.species import (
     PhenologicalStage,
     Species,
     actual_et_c,
+    kc_for_stage,
 )
+from fitosim.domain.weather import WeatherDay
 from fitosim.science.balance import (
     BalanceStepResult,
     water_balance_step_mm,
@@ -53,11 +55,21 @@ from fitosim.science.dual_kc import (
     soil_evaporation_coefficient,
     update_de,
 )
+from fitosim.science.et0 import (
+    EtMethod,
+    actual_vapor_pressure,
+    compute_et,
+)
 from fitosim.science.pot_physics import (
     PotColor,
     PotMaterial,
     SunExposure,
     pot_correction_factor,
+)
+from fitosim.science.radiation import (
+    day_of_year,
+    extraterrestrial_radiation,
+    net_radiation,
 )
 from fitosim.science.saucer import (
     capillary_transfer,
@@ -426,6 +438,18 @@ class Pot:
         fondo. 1.0 = nessuno strato drenante (default); 0.85 =
         drenaggio standard di pomice/argilla espansa di ~15% del
         volume; 0.70 = drenaggio importante tipico del bonsai.
+    latitude_deg : float | None, opzionale
+        Latitudine del sito in gradi decimali, positiva a nord. Usata
+        dal metodo `apply_balance_step_from_weather` (sotto-tappa C
+        della tappa 5) per il calcolo della radiazione extra-atmosferica
+        nel selettore di evapotraspirazione. Quando è None il chiamante
+        deve passarla esplicitamente in ogni chiamata, oppure usare il
+        vecchio `apply_balance_step` che non ne ha bisogno.
+    elevation_m : float | None, opzionale
+        Quota del sito sul livello del mare, in metri. Usata dal metodo
+        `apply_balance_step_from_weather` per la stima di pressione
+        atmosferica e radiazione di cielo sereno. Stesso comportamento
+        di latitude_deg quando assente.
     notes : str, opzionale
         Note libere (es. "trapiantato dal balcone alla veranda
         a settembre", "potatura il 15/3", ecc.).
@@ -523,6 +547,24 @@ class Pot:
     # precedenza; quando lascia il default si usa il ph_typical del
     # Substrate; in ultima istanza si ricade sul neutro 7.0.
     ph_substrate: float = -1.0
+    # ----- Coordinate geografiche per Penman-Monteith (tappa 5 sotto-tappa C) -----
+    # Latitudine e quota del sito sul livello del mare. Sono opzionali
+    # perché il vecchio metodo apply_balance_step (che riceve ET₀ già
+    # calcolata) non ne ha bisogno, mentre il nuovo
+    # apply_balance_step_from_weather le richiede per orchestrare le
+    # chiamate al selettore science.et0.compute_et e al calcolo della
+    # radiazione netta.
+    #
+    # Valori indicativi:
+    #   - Milano: latitude_deg=45.47, elevation_m=150.0 (centro città)
+    #   - Roma: latitude_deg=41.90, elevation_m=20.0
+    #   - balcone alto in città: aggiungi qualche metro alla quota della
+    #     città per il piano dell'edificio (ininfluente sotto i 100 m)
+    #
+    # Convenzione: positiva a nord, negativa a sud per la latitudine.
+    # La quota va espressa in metri sul livello del mare.
+    latitude_deg: float | None = None
+    elevation_m: float | None = None
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -1350,6 +1392,210 @@ class Pot:
         return self.water_to_field_capacity() * self.surface_area_m2
 
     # ===================================================================
+    #  Sotto-tappa C tappa 5 fascia 2: bilancio idrico dai dati meteo grezzi
+    # ===================================================================
+    #
+    # Il metodo apply_balance_step_from_weather che segue è il punto di
+    # incontro tra il layer scientifico raffinato della tappa 5 (selettore
+    # "best available" delle tre formule di evapotraspirazione) e il
+    # bilancio idrico applicativo costruito nelle tappe precedenti.
+    #
+    # Il chiamante che oggi calcola ET₀ esternamente (con la formula di
+    # sua scelta o dal forecast Open-Meteo) e poi chiama il vecchio
+    # apply_balance_step continua a poterlo fare; nessuna API esistente
+    # è cambiata. Il nuovo metodo aggiunge la possibilità di delegare al
+    # Pot la scelta della formula stessa, passando i dati meteo grezzi
+    # del giorno e lasciando che il Pot orchestri internamente la
+    # chiamata al selettore science.et0.compute_et.
+
+    def apply_balance_step_from_weather(
+        self,
+        weather: WeatherDay,
+        water_input_mm: float,
+        current_date: date,
+        latitude_deg: Optional[float] = None,
+        elevation_m: Optional[float] = None,
+    ) -> BalanceStepResult:
+        """
+        Esegue un passo di bilancio idrico (giornaliero) sul vaso a
+        partire dai dati meteo grezzi del giorno, scegliendo
+        automaticamente la formula migliore disponibile per ET.
+
+        È il "fratello" di apply_balance_step che riceve invece ET₀
+        già calcolata. Il flusso interno è in cinque passi:
+
+          1. Raccoglie tutti i parametri necessari al selettore: le
+             temperature dal WeatherDay, latitudine e quota da self
+             (o dai parametri espliciti se passati), parametri della
+             specie da self.species.
+          2. Se i dati meteo aggiuntivi sono completi (umidità, vento,
+             radiazione globale), calcola la radiazione netta Rn
+             tramite la funzione net_radiation del modulo radiation.
+             Altrimenti passa None al selettore per quel parametro.
+          3. Chiama il selettore compute_et che produce un EtResult
+             con valore numerico e tracciabilità del metodo.
+          4. Applica il Kc dello stadio fenologico corrente se il
+             selettore ha usato Hargreaves o Penman-Monteith standard
+             (entrambi producono ET₀); lascia il valore inalterato se
+             il selettore ha usato Penman-Monteith fisico (che produce
+             direttamente ET).
+          5. Delega al vecchio apply_balance_step passandogli il valore
+             di ET appena calcolato. Il BalanceStepResult ritornato
+             viene arricchito col campo et_method valorizzato col
+             metodo del selettore.
+
+        La logica della distinzione ET vs ET₀ è incapsulata dentro al
+        metodo: il chiamante non deve saperla. Per chi consuma
+        direttamente le funzioni del layer scientifico (come visto
+        nella demo della sotto-tappa B) la stessa logica va
+        implementata manualmente.
+
+        Parametri
+        ---------
+        weather : WeatherDay
+            Dati meteo grezzi del giorno. Le temperature sono sempre
+            obbligatorie; gli altri tre dati (umidità, vento, radiazione
+            solare globale) sono opzionali. Se sono tutti presenti il
+            selettore userà Penman-Monteith; se anche uno manca
+            ricadrà su Hargreaves.
+        water_input_mm : float
+            Acqua entrata nel vaso oggi (irrigazione + pioggia
+            efficace), in mm. Non negativo.
+        current_date : date
+            Data corrente, usata per determinare lo stadio fenologico
+            della specie (e quindi il Kc da applicare).
+        latitude_deg : float, opzionale
+            Latitudine del sito. Se None, viene preso da self.latitude_deg;
+            se anche quello è None solleva ValueError esplicativo.
+        elevation_m : float, opzionale
+            Quota del sito. Se None, viene preso da self.elevation_m;
+            se anche quello è None solleva ValueError esplicativo.
+
+        Ritorna
+        -------
+        BalanceStepResult
+            Stesso significato del ritorno di apply_balance_step, con
+            il campo et_method valorizzato col metodo che il selettore
+            ha effettivamente usato (uno dei tre valori dell'enum
+            EtMethod).
+
+        Solleva
+        -------
+        ValueError
+            Se latitude_deg ed elevation_m non sono disponibili (né da
+            self né dai parametri espliciti). Il messaggio identifica
+            esplicitamente quale parametro manca.
+        """
+        # Risoluzione di latitude_deg ed elevation_m: il chiamante può
+        # passarli esplicitamente, altrimenti il metodo usa quelli del
+        # Pot stesso. Se nessuno dei due è disponibile, errore esplicito.
+        effective_latitude = (
+            latitude_deg if latitude_deg is not None else self.latitude_deg
+        )
+        if effective_latitude is None:
+            raise ValueError(
+                f"Vaso '{self.label}': latitude_deg non è disponibile. "
+                f"Va passata come parametro esplicito al metodo, oppure "
+                f"valorizzata sul Pot al momento della costruzione."
+            )
+
+        effective_elevation = (
+            elevation_m if elevation_m is not None else self.elevation_m
+        )
+        if effective_elevation is None:
+            raise ValueError(
+                f"Vaso '{self.label}': elevation_m non è disponibile. "
+                f"Va passata come parametro esplicito al metodo, oppure "
+                f"valorizzata sul Pot al momento della costruzione."
+            )
+
+        # Calcolo di Rn dalla radiazione globale Rs, se Rs è disponibile.
+        # La conversione richiede anche umidità e temperature, quindi è
+        # ben definita solo quando il dato meteo è "completo per
+        # Penman-Monteith". Nei casi parziali passiamo None e il
+        # selettore ricadrà su Hargreaves.
+        rn_mj_m2_day: Optional[float] = None
+        if weather.has_full_weather:
+            t_mean = (weather.t_min + weather.t_max) / 2.0
+            j = day_of_year(weather.date_)
+            ra = extraterrestrial_radiation(effective_latitude, j)
+            ea = actual_vapor_pressure(t_mean, weather.humidity_relative)
+            rn_mj_m2_day = net_radiation(
+                solar_radiation_mj=weather.solar_radiation_mj_m2_day,
+                extraterrestrial_radiation_mj=ra,
+                t_max_c=weather.t_max,
+                t_min_c=weather.t_min,
+                actual_vapor_pressure_kpa=ea,
+                elevation_m=effective_elevation,
+            )
+
+        # Chiamata al selettore "best available". Il selettore decide
+        # internamente quale formula usare in base ai parametri
+        # presenti/assenti, e restituisce un EtResult con valore
+        # numerico e tracciabilità del metodo.
+        et_result = compute_et(
+            t_min=weather.t_min,
+            t_max=weather.t_max,
+            latitude_deg=effective_latitude,
+            j=day_of_year(weather.date_),
+            humidity_relative=weather.humidity_relative,
+            wind_speed_m_s=weather.wind_speed_m_s,
+            net_radiation_mj_m2_day=rn_mj_m2_day,
+            stomatal_resistance_s_m=self.species.stomatal_resistance_s_m,
+            crop_height_m=self.species.crop_height_m,
+            elevation_m=effective_elevation,
+        )
+
+        # Se il selettore ha usato Penman-Monteith fisico, il valore è
+        # già ET effettiva della specie (perché la versione fisica
+        # incorpora resistenza stomatica e altezza colturale specifiche).
+        # Se ha usato uno degli altri due metodi, il valore è ET₀ e va
+        # moltiplicato per il Kc dello stadio fenologico corrente.
+        if et_result.method == EtMethod.PENMAN_MONTEITH_PHYSICAL:
+            # Il valore è già ET. Per usare la stessa interfaccia del
+            # vecchio apply_balance_step, dobbiamo passargli un "ET₀
+            # equivalente" che, moltiplicato per Kc, ridia il valore
+            # corretto di ET. Ma il vecchio metodo internamente applica
+            # actual_et_c che usa Kc, Ks (stress idrico), Kn (nutrizione)
+            # eccetera. Il modo cleanest è di applicare la divisione
+            # inversa così che il flusso del vecchio metodo riproduca
+            # esattamente il valore ET fisico.
+            #
+            # Recupero del Kc corrente per la divisione inversa.
+            stage = self.current_stage(current_date)
+            kc_current = kc_for_stage(self.species, stage)
+            # Difesa contro Kc=0 (improbabile ma possibile): in quel
+            # caso il vecchio metodo darebbe sempre ET=0, quindi
+            # passare un et_0_mm qualunque produrrebbe il risultato
+            # corretto. Usiamo et_0_mm = et_value per semplicità.
+            if kc_current > 0:
+                et_0_for_legacy_method = et_result.value_mm / kc_current
+            else:
+                et_0_for_legacy_method = et_result.value_mm
+        else:
+            # Hargreaves o Penman-Monteith standard: il valore è
+            # già ET₀, lo passiamo direttamente.
+            et_0_for_legacy_method = et_result.value_mm
+
+        # Delega al vecchio apply_balance_step per il bilancio idrico.
+        legacy_result = self.apply_balance_step(
+            et_0_mm=et_0_for_legacy_method,
+            water_input_mm=water_input_mm,
+            current_date=current_date,
+        )
+
+        # Arricchisco il risultato col campo et_method. Visto che
+        # BalanceStepResult è frozen, costruisco un nuovo BalanceStepResult
+        # invece di mutare quello esistente.
+        return BalanceStepResult(
+            new_state=legacy_result.new_state,
+            drainage=legacy_result.drainage,
+            under_alert=legacy_result.under_alert,
+            deficit=legacy_result.deficit,
+            et_method=et_result.method,
+        )
+
+    # ===================================================================
     #  Sotto-tappa C tappa 3 fascia 2: metodi di fertirrigazione
     # ===================================================================
 
@@ -1679,6 +1925,93 @@ class Pot:
             et_0_mm=et_0_mm,
             water_input_mm=0.0,
             current_date=current_date,
+        )
+
+        return FullStepResult(
+            event_date=current_date,
+            balance_result=balance_result,
+            rainfall_result=rainfall_result,
+            fertigation_result=fertigation_result,
+        )
+
+    def apply_step_from_weather(
+        self,
+        weather: WeatherDay,
+        current_date: date,
+        fertigation_volume_l: float = 0.0,
+        fertigation_ec_mscm: float = 0.0,
+        fertigation_ph: float = 7.0,
+        rainfall_volume_l: float = 0.0,
+        latitude_deg: Optional[float] = None,
+        elevation_m: Optional[float] = None,
+    ) -> "FullStepResult":
+        """
+        Orchestratore completo del passo giornaliero a partire dai dati
+        meteo grezzi.
+
+        È il "fratello" di apply_step che riceve invece et_0_mm già
+        calcolata. Mantiene identica la sequenza degli eventi (pioggia
+        → fertirrigazione → bilancio idrico) ma usa internamente
+        apply_balance_step_from_weather per lo step 3, lasciando al
+        selettore di evapotraspirazione la scelta della formula
+        migliore disponibile.
+
+        La tracciabilità del metodo usato è propagata attraverso il
+        BalanceStepResult interno al FullStepResult. Il chiamante che
+        vuole sapere quale formula è stata usata può accedervi come
+        `result.balance_result.et_method`.
+
+        Parametri
+        ---------
+        weather : WeatherDay
+            Dati meteo grezzi del giorno. Vedi apply_balance_step_from_weather
+            per la semantica dei campi e il comportamento del selettore.
+        current_date : date
+            Data corrente per il calcolo dello stadio fenologico.
+        fertigation_volume_l, fertigation_ec_mscm, fertigation_ph : float, opzionali
+            Stessa semantica di apply_step.
+        rainfall_volume_l : float, opzionale
+            Stessa semantica di apply_step.
+        latitude_deg, elevation_m : float, opzionali
+            Stessa semantica di apply_balance_step_from_weather.
+
+        Ritorna
+        -------
+        FullStepResult
+            Risultato aggregato del passo, con il BalanceStepResult
+            interno che porta il campo et_method valorizzato col
+            metodo del selettore.
+        """
+        rainfall_result = None
+        fertigation_result = None
+
+        # Step 1: pioggia naturale (se presente). Identico al vecchio
+        # apply_step.
+        if rainfall_volume_l > 0:
+            rainfall_result = self.apply_rainfall_step(
+                volume_l=rainfall_volume_l,
+                current_date=current_date,
+            )
+
+        # Step 2: fertirrigazione (se presente). Identico al vecchio
+        # apply_step.
+        if fertigation_volume_l > 0:
+            fertigation_result = self.apply_fertigation_step(
+                volume_l=fertigation_volume_l,
+                ec_mscm=fertigation_ec_mscm,
+                ph=fertigation_ph,
+                current_date=current_date,
+            )
+
+        # Step 3: bilancio idrico tramite il nuovo metodo che orchestra
+        # internamente la chiamata al selettore di evapotraspirazione.
+        # Qui sta la differenza concettuale rispetto ad apply_step.
+        balance_result = self.apply_balance_step_from_weather(
+            weather=weather,
+            water_input_mm=0.0,
+            current_date=current_date,
+            latitude_deg=latitude_deg,
+            elevation_m=elevation_m,
         )
 
         return FullStepResult(

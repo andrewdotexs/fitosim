@@ -1053,5 +1053,131 @@ class TestGardenForecastAlerts(unittest.TestCase):
         self.assertEqual(len(dates), len(irrigation))
 
 
+# =====================================================================
+#  Test del nuovo metodo apply_step_all_from_weather (sotto-tappa C tappa 5)
+#
+#  Verifichiamo che il Garden orchestri correttamente la chiamata del
+#  selettore per ogni vaso, che ogni vaso possa finire per usare una
+#  formula diversa in base ai propri parametri, e che la non-regressione
+#  con apply_step_all sia preservata negli scenari sovrapposti.
+# =====================================================================
+
+
+class TestGardenApplyStepAllFromWeather(unittest.TestCase):
+
+    def _make_garden_with_two_pots(self):
+        """
+        Helper: costruisce un giardino con basilico e rosmarino, entrambi
+        con coordinate Milano e parametri fisiologici popolati dalla
+        sotto-tappa C (le specie del catalogo li hanno).
+        """
+        from fitosim.domain.species import BASIL, ROSEMARY
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+
+        garden = Garden(name="Test garden")
+        garden.add_pot(Pot(
+            label="Basilico-1", species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 6, 1),
+            latitude_deg=45.47, elevation_m=150.0,
+        ))
+        garden.add_pot(Pot(
+            label="Rosmarino-1", species=ROSEMARY,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=5.0, pot_diameter_cm=22.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2025, 5, 1),
+            latitude_deg=45.47, elevation_m=150.0,
+        ))
+        return garden
+
+    def test_returns_one_result_per_pot(self):
+        # Il dizionario di ritorno ha una entry per ogni vaso del
+        # giardino, indicizzato dal label.
+        from fitosim.domain.weather import WeatherDay
+
+        garden = self._make_garden_with_two_pots()
+        weather = WeatherDay(
+            date_=date(2026, 7, 19),
+            t_min=20.0, t_max=32.0,
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            solar_radiation_mj_m2_day=24.0,
+        )
+        results = garden.apply_step_all_from_weather(weather=weather)
+        self.assertEqual(set(results.keys()), {"Basilico-1", "Rosmarino-1"})
+
+    def test_each_pot_gets_its_own_method_traced(self):
+        # Ogni FullStepResult del dizionario porta al suo interno un
+        # BalanceStepResult con et_method valorizzato. In questo
+        # scenario tutti i vasi hanno parametri specie completi e dati
+        # meteo completi, quindi tutti useranno PM fisico, ma ognuno
+        # con i propri parametri specifici.
+        from fitosim.domain.weather import WeatherDay
+        from fitosim.science.et0 import EtMethod
+
+        garden = self._make_garden_with_two_pots()
+        weather = WeatherDay(
+            date_=date(2026, 7, 19),
+            t_min=20.0, t_max=32.0,
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            solar_radiation_mj_m2_day=24.0,
+        )
+        results = garden.apply_step_all_from_weather(weather=weather)
+        for label, result in results.items():
+            with self.subTest(pot=label):
+                self.assertEqual(
+                    result.balance_result.et_method,
+                    EtMethod.PENMAN_MONTEITH_PHYSICAL,
+                )
+
+    def test_different_species_produce_different_et(self):
+        # Stesso meteo ma specie diverse → ET diverse. Questa è la
+        # proprietà fisica fondamentale catturata dal selettore: il
+        # rosmarino (rs=200, xerofita semi-mediterranea) traspira meno
+        # del basilico (rs=100, mesofila) a parità di tutto il resto.
+        # Lo verifichiamo confrontando la variazione di stato dei due
+        # vasi: il rosmarino dovrebbe perdere meno acqua del basilico.
+        from fitosim.domain.weather import WeatherDay
+
+        garden = self._make_garden_with_two_pots()
+        # Salva gli stati iniziali prima dell'applicazione del passo.
+        initial_basilico = garden.get_pot("Basilico-1").state_mm
+        initial_rosmarino = garden.get_pot("Rosmarino-1").state_mm
+
+        weather = WeatherDay(
+            date_=date(2026, 7, 19),
+            t_min=20.0, t_max=32.0,
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            solar_radiation_mj_m2_day=24.0,
+        )
+        results = garden.apply_step_all_from_weather(weather=weather)
+
+        loss_basilico = initial_basilico - results["Basilico-1"].balance_result.new_state
+        loss_rosmarino = initial_rosmarino - results["Rosmarino-1"].balance_result.new_state
+
+        # Il rosmarino ha resistenza stomatica doppia (200 vs 100) ma
+        # altezza colturale doppia (0.60 vs 0.30) che migliora
+        # l'aerodinamica. Il risultato netto è che il rosmarino perde
+        # meno acqua per evapotraspirazione, ma la differenza è
+        # modesta. Testiamo solo l'ordinamento qualitativo perché la
+        # quantità esatta dipende dalla geometria del vaso.
+        self.assertLess(loss_rosmarino, loss_basilico)
+
+    def test_negative_rainfall_raises(self):
+        # Validazione del rainfall: deve essere non negativa.
+        from fitosim.domain.weather import WeatherDay
+
+        garden = self._make_garden_with_two_pots()
+        weather = WeatherDay(
+            date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+        )
+        with self.assertRaises(ValueError):
+            garden.apply_step_all_from_weather(
+                weather=weather, rainfall_mm=-1.0,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -67,6 +67,7 @@ from typing import Dict, Iterator, List, Optional, Tuple, Union
 from fitosim.domain.alerts import ALL_RULES, Alert
 from fitosim.domain.pot import FullStepResult, Pot, SensorUpdateResult
 from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
+from fitosim.domain.weather import WeatherDay
 from fitosim.io.sensors import (
     SensorTemporaryError,
     SoilSensor,
@@ -536,6 +537,95 @@ class Garden:
                 et_0_mm=et_0_mm,
                 current_date=current_date,
                 rainfall_volume_l=rainfall_volume_l,
+            )
+            results[label] = result
+
+        return results
+
+    def apply_step_all_from_weather(
+        self,
+        weather: WeatherDay,
+        rainfall_mm: float = 0.0,
+        latitude_deg: Optional[float] = None,
+        elevation_m: Optional[float] = None,
+    ) -> Dict[str, FullStepResult]:
+        """
+        Applica un passo giornaliero a tutti i vasi del giardino a
+        partire dai dati meteo grezzi.
+
+        È il "fratello" di apply_step_all che riceve invece et_0_mm
+        già calcolata. Per ogni vaso del giardino chiama
+        Pot.apply_step_from_weather, lasciando al selettore di
+        evapotraspirazione la scelta della formula migliore disponibile
+        per quel vaso. Vasi diversi nello stesso giardino possono
+        finire per usare formule diverse: un vaso con specie ben
+        caratterizzata fisiologicamente userà Penman-Monteith fisico,
+        un vaso con specie generica userà Penman-Monteith standard,
+        anche se lo scenario meteo è identico. Il `WeatherDay` passato
+        è uguale per tutti perché è una grandezza ambientale del
+        giardino, ma la traduzione in ET dipende dai parametri della
+        singola specie.
+
+        Una conseguenza pratica: il dizionario di ritorno avrà
+        FullStepResult con `balance_result.et_method` potenzialmente
+        diversi per ogni vaso. Il chiamante che vuole fare diagnostica
+        della qualità delle stime può iterare sui risultati e contare
+        quali metodi sono stati selezionati per quale vaso.
+
+        Parametri
+        ---------
+        weather : WeatherDay
+            Dati meteo grezzi del giorno, validi per tutto il giardino.
+            La data del WeatherDay (`weather.date_`) è anche la data
+            del passo simulato. Le temperature sono sempre obbligatorie;
+            gli altri tre dati (umidità, vento, radiazione globale)
+            sono opzionali e influenzano la scelta della formula.
+        rainfall_mm : float, opzionale
+            Quantità di pioggia caduta sull'area aperta, in mm. Default
+            0.0 (giorno asciutto). Stessa semantica di apply_step_all:
+            convertita in litri per ogni vaso usando la sua surface_area_m2,
+            poi modulata internamente dal rainfall_exposure del vaso.
+            Lo manteniamo come parametro separato perché concettualmente
+            la pioggia "del giorno" non è un dato meteo strumentale come
+            T/RH/vento/radiazione: il piranometro non la misura, e nei
+            sistemi reali viene tipicamente da un pluviometro distinto
+            o da un'osservazione del giardiniere.
+        latitude_deg, elevation_m : float, opzionali
+            Coordinate geografiche del giardino. Se None, ogni Pot
+            deve avere queste informazioni nei propri campi. Nota: il
+            Garden non ha attualmente un campo location proprio, quindi
+            le coordinate vivono al livello dei singoli Pot. In futuro
+            potremmo aggiungere campi `latitude_deg` e `elevation_m`
+            anche al Garden per evitare di replicarli su ogni Pot, ma
+            per la sotto-tappa C lo lasciamo a livello di Pot.
+
+        Ritorna
+        -------
+        Dict[str, FullStepResult]
+            Dizionario {label: FullStepResult} con il risultato del
+            passo per ogni vaso. L'ordine delle chiavi corrisponde
+            all'ordine di inserimento dei vasi nel giardino. Ogni
+            FullStepResult porta al suo interno un BalanceStepResult
+            con `et_method` valorizzato col metodo che il selettore
+            ha effettivamente usato per quel vaso.
+        """
+        if rainfall_mm < 0:
+            raise ValueError(
+                f"rainfall_mm deve essere non-negativa "
+                f"(ricevuto {rainfall_mm})."
+            )
+
+        results: Dict[str, FullStepResult] = {}
+        for label, pot in self._pots.items():
+            # Conversione mm → litri identica a apply_step_all.
+            rainfall_volume_l = rainfall_mm * pot.surface_area_m2
+
+            result = pot.apply_step_from_weather(
+                weather=weather,
+                current_date=weather.date_,
+                rainfall_volume_l=rainfall_volume_l,
+                latitude_deg=latitude_deg,
+                elevation_m=elevation_m,
             )
             results[label] = result
 

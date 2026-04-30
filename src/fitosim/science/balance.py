@@ -42,7 +42,9 @@ informazioni sullo stato di allerta.
 """
 
 from dataclasses import dataclass
+from typing import Optional
 
+from fitosim.science.et0 import EtMethod
 from fitosim.science.substrate import (
     DEFAULT_DEPLETION_FRACTION,
     Substrate,
@@ -72,12 +74,22 @@ class BalanceStepResult:
         Quanto, in unità di input, lo stato è sotto la soglia di allerta.
         Zero se under_alert è False. Utile come indicatore di "urgenza"
         quando l'allerta è già scattata.
+    et_method : EtMethod | None, opzionale
+        Metodo effettivamente usato per calcolare ET₀ in questo passo.
+        Popolato dal metodo `Pot.apply_balance_step_from_weather`
+        (sotto-tappa C tappa 5) che orchestra il selettore "best
+        available". Resta None per il vecchio `Pot.apply_balance_step`
+        che riceve ET₀ già calcolata dall'esterno e non sa quale
+        formula sia stata usata. La distinzione None vs valore esplicito
+        permette al chiamante di sapere se la tracciabilità del metodo
+        è disponibile per quel risultato specifico.
     """
 
     new_state: float
     drainage: float
     under_alert: bool
     deficit: float
+    et_method: Optional[EtMethod] = None
 
 
 def water_balance_step(
