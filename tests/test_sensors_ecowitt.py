@@ -444,3 +444,195 @@ class Test_WH51_protocol_conformance:
     def test_isinstance_check(self):
         sensor = EcowittWH51SoilSensor("x", "y", "z")
         assert isinstance(sensor, SoilSensor)
+
+
+# =====================================================================
+#  Test del supporto WH52 (sotto-tappa D fase 3 tappa 5)
+#
+#  Il parametro model del costruttore distingue tra WH51 (default) e
+#  WH52. Il WH52 popola anche temperatura ed EC del substrato nel
+#  SoilReading quando i dati sono disponibili dalla observation.
+# =====================================================================
+
+
+class TestWH52SupportInSoilSensor:
+
+    def test_default_model_is_wh51(self):
+        sensor = EcowittWH51SoilSensor("x", "y", "z")
+        assert sensor._model == "WH51"
+
+    def test_model_wh52_explicit(self):
+        sensor = EcowittWH51SoilSensor("x", "y", "z", model="WH52")
+        assert sensor._model == "WH52"
+
+    def test_invalid_model_raises(self):
+        import pytest
+        with pytest.raises(ValueError) as excinfo:
+            EcowittWH51SoilSensor("x", "y", "z", model="WH99")
+        assert "WH99" in str(excinfo.value)
+
+    def test_wh51_does_not_populate_temperature_or_ec(self):
+        # Per il WH51 (default) i campi T ed EC del SoilReading
+        # restano None anche se la observation li contiene.
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        from fitosim.io.ecowitt import EcowittObservation
+
+        fake_obs = EcowittObservation(
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            soil_moisture_pct={1: 35.0},
+            soil_temperature_c={1: 21.5},  # presente ma WH51 lo ignora
+            soil_ec_mscm={1: 2.3},  # presente ma WH51 lo ignora
+        )
+        sensor = EcowittWH51SoilSensor("x", "y", "z", model="WH51")
+        with patch(
+            "fitosim.io.sensors.ecowitt.fetch_real_time",
+            return_value=fake_obs,
+        ):
+            reading = sensor.current_state(channel_id="1")
+        assert reading.theta_volumetric == 0.35
+        assert reading.temperature_c is None
+        assert reading.ec_mscm is None
+
+    def test_wh52_populates_temperature_and_ec(self):
+        # Per il WH52 i campi T ed EC vengono propagati nel SoilReading.
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        from fitosim.io.ecowitt import EcowittObservation
+
+        fake_obs = EcowittObservation(
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            soil_moisture_pct={1: 35.0},
+            soil_temperature_c={1: 21.5},
+            soil_ec_mscm={1: 2.3},
+        )
+        sensor = EcowittWH51SoilSensor("x", "y", "z", model="WH52")
+        with patch(
+            "fitosim.io.sensors.ecowitt.fetch_real_time",
+            return_value=fake_obs,
+        ):
+            reading = sensor.current_state(channel_id="1")
+        assert reading.theta_volumetric == 0.35
+        assert reading.temperature_c == 21.5
+        assert reading.ec_mscm == 2.3
+
+    def test_canonical_alias_exists(self):
+        # L'alias canonico EcowittSoilSensor punta a EcowittWH51SoilSensor.
+        from fitosim.io.sensors.ecowitt import EcowittSoilSensor
+        assert EcowittSoilSensor is EcowittWH51SoilSensor
+
+
+# =====================================================================
+#  Test del nuovo EcowittAmbientSensor (sotto-tappa D fase 3 tappa 5)
+#
+#  L'adapter espone i sensori WN31 e produce IndoorMicroclimate. Due
+#  metodi: current_state per il dato istantaneo (kind=INSTANT),
+#  daily_aggregate per il dato giornaliero aggregato (kind=DAILY).
+# =====================================================================
+
+
+class TestEcowittAmbientSensor:
+
+    def test_construction_requires_credentials(self):
+        import pytest
+        from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
+        with pytest.raises(ValueError):
+            EcowittAmbientSensor("", "y", "z")
+        with pytest.raises(ValueError):
+            EcowittAmbientSensor("x", "", "z")
+        with pytest.raises(ValueError):
+            EcowittAmbientSensor("x", "y", "")
+
+    def test_current_state_returns_instant_microclimate(self):
+        # current_state chiama fetch_real_time, estrae T e RH del
+        # canale, e produce un IndoorMicroclimate INSTANT.
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        from fitosim.io.ecowitt import EcowittObservation
+        from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
+        from fitosim.domain.room import MicroclimateKind
+
+        fake_obs = EcowittObservation(
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            extra_temp_c={1: 22.5},
+            extra_humidity_pct={1: 55.0},
+        )
+        sensor = EcowittAmbientSensor("x", "y", "z")
+        with patch(
+            "fitosim.io.sensors.ecowitt.fetch_real_time",
+            return_value=fake_obs,
+        ):
+            m = sensor.current_state(channel_id="1")
+        assert m.kind == MicroclimateKind.INSTANT
+        assert m.temperature_c == 22.5
+        assert m.humidity_relative == 0.55
+        # Il timestamp è quello dell'observation, non None.
+        assert m.timestamp is not None
+
+    def test_current_state_missing_channel_raises(self):
+        # Canale mancante nei dati della stazione → SensorPermanentError.
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        from fitosim.io.ecowitt import EcowittObservation
+        from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
+        from fitosim.io.sensors.errors import SensorPermanentError
+        import pytest
+
+        fake_obs = EcowittObservation(
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            extra_temp_c={2: 22.5},  # solo canale 2 disponibile
+            extra_humidity_pct={2: 55.0},
+        )
+        sensor = EcowittAmbientSensor("x", "y", "z")
+        with patch(
+            "fitosim.io.sensors.ecowitt.fetch_real_time",
+            return_value=fake_obs,
+        ):
+            with pytest.raises(SensorPermanentError):
+                sensor.current_state(channel_id="1")
+
+    def test_daily_aggregate_returns_daily_microclimate(self):
+        # daily_aggregate chiama fetch_history_aggregation e produce
+        # un IndoorMicroclimate DAILY con t_min, t_max, RH media.
+        from datetime import date
+        from unittest.mock import patch
+        from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
+        from fitosim.domain.room import MicroclimateKind
+
+        fake_data = {
+            "t_min": 19.5,
+            "t_max": 22.5,
+            "humidity_relative": 0.55,
+        }
+        sensor = EcowittAmbientSensor("x", "y", "z")
+        with patch(
+            "fitosim.io.sensors.ecowitt.fetch_history_aggregation",
+            return_value=fake_data,
+        ):
+            m = sensor.daily_aggregate(
+                channel_id="1", target_date=date(2026, 7, 19),
+            )
+        assert m.kind == MicroclimateKind.DAILY
+        assert m.t_min == 19.5
+        assert m.t_max == 22.5
+        # La temperature_c del DAILY è la media (t_min + t_max) / 2.
+        assert m.temperature_c == 21.0
+        assert m.humidity_relative == 0.55
+
+    def test_daily_aggregate_temporary_error_on_unreachable(self):
+        # Errore di rete propagato come SensorTemporaryError.
+        from datetime import date
+        from unittest.mock import patch
+        from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
+        from fitosim.io.sensors.errors import SensorTemporaryError
+        import pytest
+
+        sensor = EcowittAmbientSensor("x", "y", "z")
+        with patch(
+            "fitosim.io.sensors.ecowitt.fetch_history_aggregation",
+            side_effect=OSError("network unreachable"),
+        ):
+            with pytest.raises(SensorTemporaryError):
+                sensor.daily_aggregate(
+                    channel_id="1", target_date=date(2026, 7, 19),
+                )

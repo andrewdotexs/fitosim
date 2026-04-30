@@ -823,7 +823,7 @@ class TestChannelIdPersistence(unittest.TestCase):
                     "SELECT version FROM schema_metadata "
                     "ORDER BY id DESC LIMIT 1"
                 )
-                self.assertEqual(cursor.fetchone()["version"], 3)
+                self.assertEqual(cursor.fetchone()["version"], 4)
                 # E la colonna channel_id esiste:
                 cursor = p._conn.execute("PRAGMA table_info(pots)")
                 cols = [r["name"] for r in cursor.fetchall()]
@@ -847,12 +847,12 @@ class TestScheduledEventsPersistence(unittest.TestCase):
     def tearDown(self):
         self.persistence.close()
 
-    def test_schema_version_is_3(self):
+    def test_schema_version_is_4(self):
         cursor = self.persistence._conn.execute(
             "SELECT version FROM schema_metadata "
             "ORDER BY id DESC LIMIT 1"
         )
-        self.assertEqual(cursor.fetchone()["version"], 3)
+        self.assertEqual(cursor.fetchone()["version"], 4)
 
     def test_round_trip_with_scheduled_events(self):
         garden = Garden(name="balcone")
@@ -963,6 +963,12 @@ class TestScheduledEventsPersistence(unittest.TestCase):
 
     def test_v2_database_migrates_to_v3_automatically(self):
         # Crea un database v2 a mano e verifica che venga migrato.
+        # Lo schema v2 simulato include la tabella pots con channel_id
+        # (introdotto in v2) ma senza le quattro colonne nuove
+        # introdotte da v4 (latitude_deg, elevation_m, room_id,
+        # light_exposure). La cascata di migrazioni v2→v3 e v3→v4
+        # deve applicarsi correttamente e portare il database alla
+        # versione corrente del codice.
         import sqlite3, tempfile, os
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
             tmp_path = tmp.name
@@ -975,25 +981,216 @@ class TestScheduledEventsPersistence(unittest.TestCase):
                     version INTEGER NOT NULL
                 )
             """)
+            # Schema pots v2 minimo: include channel_id ma niente delle
+            # colonne aggiunte dalla v4. La migrazione v3→v4 farà
+            # ALTER TABLE su questa.
+            conn.execute("""
+                CREATE TABLE pots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    label TEXT NOT NULL,
+                    channel_id TEXT
+                )
+            """)
             conn.execute("INSERT INTO schema_metadata (version) VALUES (2)")
             conn.commit()
             conn.close()
 
-            # Apri con il codice v3: deve creare scheduled_events.
+            # Apri con il codice v4: deve applicare entrambe le
+            # migrazioni v2→v3 (crea scheduled_events) e v3→v4
+            # (crea rooms + ALTER TABLE pots).
             with GardenPersistence(tmp_path) as p:
                 cursor = p._conn.execute(
                     "SELECT version FROM schema_metadata "
                     "ORDER BY id DESC LIMIT 1"
                 )
-                self.assertEqual(cursor.fetchone()["version"], 3)
+                self.assertEqual(cursor.fetchone()["version"], 4)
                 # La tabella scheduled_events esiste.
                 cursor = p._conn.execute(
                     "SELECT name FROM sqlite_master "
                     "WHERE type='table' AND name='scheduled_events'"
                 )
                 self.assertIsNotNone(cursor.fetchone())
+                # La tabella rooms esiste.
+                cursor = p._conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='rooms'"
+                )
+                self.assertIsNotNone(cursor.fetchone())
+                # Le quattro nuove colonne pots esistono.
+                cursor = p._conn.execute("PRAGMA table_info(pots)")
+                cols = [r["name"] for r in cursor.fetchall()]
+                for new_col in (
+                    "latitude_deg", "elevation_m",
+                    "room_id", "light_exposure",
+                ):
+                    self.assertIn(new_col, cols)
         finally:
             os.unlink(tmp_path)
+
+
+# =======================================================================
+#  Famiglia 9: persistenza Room e campi indoor del Pot (fase D3)
+# =======================================================================
+
+
+class TestRoomsAndIndoorPotPersistence(unittest.TestCase):
+    """
+    Persistenza SQLite delle Room introdotte dalla fase D3 della
+    sotto-tappa D, e dei nuovi campi indoor del Pot (room_id,
+    light_exposure) più i campi della sotto-tappa C
+    (latitude_deg, elevation_m).
+    """
+
+    def setUp(self):
+        self.persistence = GardenPersistence(":memory:")
+        self.persistence.register_species(_make_basil())
+        self.persistence.register_substrate(_make_universal_substrate())
+
+    def tearDown(self):
+        self.persistence.close()
+
+    def _make_garden_with_room(self):
+        """Helper: garden con una Room e un vaso indoor."""
+        from fitosim.domain.garden import Garden
+        from fitosim.domain.room import (
+            Room, IndoorMicroclimate, MicroclimateKind, LightExposure,
+        )
+        from fitosim.domain.pot import Pot, Location
+        from datetime import date
+
+        garden = Garden(name="Casa di Andrea")
+        salotto = Room(
+            room_id="salotto", name="Salotto principale",
+            wn31_channel_id="ch1", default_wind_m_s=0.6,
+        )
+        garden.add_room(salotto)
+        garden.add_pot(Pot(
+            label="Basilico-cucina", species=_make_basil(),
+            substrate=_make_universal_substrate(),
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.INDOOR,
+            planting_date=date(2026, 6, 1),
+            room_id="salotto",
+            light_exposure=LightExposure.INDIRECT_BRIGHT,
+        ))
+        return garden
+
+    def test_round_trip_room_basic(self):
+        # Salva e ricarica un garden con una Room base (senza
+        # microclima corrente).
+        garden = self._make_garden_with_room()
+        self.persistence.save_garden(garden)
+
+        loaded = self.persistence.load_garden("Casa di Andrea")
+        self.assertEqual(loaded.room_ids, ["salotto"])
+
+        room = loaded.get_room("salotto")
+        self.assertEqual(room.name, "Salotto principale")
+        self.assertEqual(room.wn31_channel_id, "ch1")
+        self.assertEqual(room.default_wind_m_s, 0.6)
+        self.assertIsNone(room.current_microclimate)
+
+    def test_round_trip_room_with_microclimate(self):
+        # Salva e ricarica una Room con current_microclimate popolato.
+        from fitosim.domain.room import (
+            IndoorMicroclimate, MicroclimateKind,
+        )
+        garden = self._make_garden_with_room()
+        garden.get_room("salotto").update_current_microclimate(
+            IndoorMicroclimate(
+                kind=MicroclimateKind.INSTANT,
+                temperature_c=22.5, humidity_relative=0.55,
+            )
+        )
+        self.persistence.save_garden(garden)
+
+        loaded = self.persistence.load_garden("Casa di Andrea")
+        room = loaded.get_room("salotto")
+        self.assertIsNotNone(room.current_microclimate)
+        mc = room.current_microclimate
+        self.assertEqual(mc.kind, MicroclimateKind.INSTANT)
+        self.assertEqual(mc.temperature_c, 22.5)
+        self.assertEqual(mc.humidity_relative, 0.55)
+
+    def test_round_trip_pot_with_indoor_fields(self):
+        # Salva e ricarica un Pot con room_id e light_exposure.
+        from fitosim.domain.room import LightExposure
+        garden = self._make_garden_with_room()
+        self.persistence.save_garden(garden)
+
+        loaded = self.persistence.load_garden("Casa di Andrea")
+        pot = loaded.get_pot("Basilico-cucina")
+        self.assertEqual(pot.room_id, "salotto")
+        self.assertEqual(
+            pot.light_exposure, LightExposure.INDIRECT_BRIGHT,
+        )
+
+    def test_round_trip_pot_with_geographic_fields(self):
+        # Salva e ricarica un Pot outdoor con latitude_deg ed elevation_m
+        # (introdotti dalla sotto-tappa C, persistiti dalla fase D3).
+        from fitosim.domain.garden import Garden
+        from fitosim.domain.pot import Pot, Location
+        from datetime import date
+
+        garden = Garden(name="Balcone")
+        garden.add_pot(Pot(
+            label="Basilico-balcone", species=_make_basil(),
+            substrate=_make_universal_substrate(),
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 6, 1),
+            latitude_deg=45.47, elevation_m=150.0,
+        ))
+        self.persistence.save_garden(garden)
+
+        loaded = self.persistence.load_garden("Balcone")
+        pot = loaded.get_pot("Basilico-balcone")
+        self.assertEqual(pot.latitude_deg, 45.47)
+        self.assertEqual(pot.elevation_m, 150.0)
+        # Niente room_id né light_exposure per vaso outdoor.
+        self.assertIsNone(pot.room_id)
+        self.assertIsNone(pot.light_exposure)
+
+    def test_room_removal_synced_to_database(self):
+        # Aggiungo una seconda Room, salvo, rimuovo, salvo di nuovo:
+        # la Room rimossa non è più nel database.
+        from fitosim.domain.room import Room
+        garden = self._make_garden_with_room()
+        garden.add_room(Room(room_id="camera", name="Camera"))
+        self.persistence.save_garden(garden)
+
+        # Verifica che la camera sia salvata.
+        loaded = self.persistence.load_garden("Casa di Andrea")
+        self.assertIn("camera", loaded.room_ids)
+
+        # Rimuovi la camera e salva di nuovo.
+        garden.remove_room("camera")
+        self.persistence.save_garden(garden)
+
+        # Adesso non è più nel database.
+        reloaded = self.persistence.load_garden("Casa di Andrea")
+        self.assertNotIn("camera", reloaded.room_ids)
+        self.assertIn("salotto", reloaded.room_ids)
+
+    def test_corrupted_microclimate_json_handled_gracefully(self):
+        # Se il JSON del current_microclimate è corrotto nel database,
+        # il caricamento continua con current_microclimate=None
+        # ("best effort", quarta decisione del design).
+        garden = self._make_garden_with_room()
+        self.persistence.save_garden(garden)
+
+        # Scrivi JSON corrotto direttamente nel database.
+        self.persistence._conn.execute(
+            "UPDATE rooms SET current_microclimate_json = ? "
+            "WHERE room_id = ?",
+            ("not valid json {{{", "salotto"),
+        )
+        self.persistence._conn.commit()
+
+        # Il load non deve sollevare; la Room esiste ma senza microclima.
+        loaded = self.persistence.load_garden("Casa di Andrea")
+        room = loaded.get_room("salotto")
+        self.assertIsNone(room.current_microclimate)
 
 
 if __name__ == "__main__":

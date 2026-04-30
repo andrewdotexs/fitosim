@@ -298,6 +298,12 @@ class EcowittObservation:
     extra_temp_c: dict = field(default_factory=dict)
     extra_humidity_pct: dict = field(default_factory=dict)
     soil_moisture_pct: dict = field(default_factory=dict)
+    # Campi del WH52 (sotto-tappa D fase 3 tappa 5): temperatura ed
+    # EC del substrato per ciascun canale. Popolati solo quando il
+    # sensore li espone (WH52 sì, WH51 no). Il WH51 lascia entrambi
+    # i dict vuoti, mantenendo la retrocompatibilità.
+    soil_temperature_c: dict = field(default_factory=dict)
+    soil_ec_mscm: dict = field(default_factory=dict)
 
 
 # -----------------------------------------------------------------------
@@ -426,8 +432,13 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         if h is not None:
             extra_humid[ch] = h
 
-    # ---------- Sensori umidità substrato (WH51) ----------
+    # ---------- Sensori umidità substrato (WH51 / WH52) ----------
+    # WH51 espone solo soilmoisture; WH52 espone anche soiltemp e soilad
+    # (l'EC del substrato). Leggiamo tutti i campi quando presenti, e
+    # popoliamo i dict corrispondenti solo per i canali che li espongono.
     soil = {}
+    soil_temp = {}
+    soil_ec = {}
     for ch in range(1, _MAX_SOIL_CHANNELS + 1):
         section = data.get(f"soil_ch{ch}")
         if section is None:
@@ -437,6 +448,16 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         moisture = _parse_pure_float(section.get("soilmoisture"))
         if moisture is not None:
             soil[ch] = moisture
+        # Campi WH52 (presenti solo se il sensore è un WH52).
+        # "soiltemp" è la temperatura del substrato in °C (formato
+        # standard Ecowitt). "soilad" è l'EC del substrato espresso
+        # come "soil AD value" che convertiamo in mS/cm.
+        soiltemp = _parse_pure_float(section.get("soiltemp"))
+        if soiltemp is not None:
+            soil_temp[ch] = soiltemp
+        soilad = _parse_pure_float(section.get("soilad"))
+        if soilad is not None:
+            soil_ec[ch] = soilad
 
     return EcowittObservation(
         timestamp=timestamp,
@@ -459,6 +480,8 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         extra_temp_c=extra_temp,
         extra_humidity_pct=extra_humid,
         soil_moisture_pct=soil,
+        soil_temperature_c=soil_temp,
+        soil_ec_mscm=soil_ec,
     )
 
 
@@ -549,6 +572,125 @@ def fetch_real_time(
         ) from exc
 
     return parse_ecowitt_response(payload)
+
+
+def fetch_history_aggregation(
+    application_key: str,
+    api_key: str,
+    mac: str,
+    channel: int,
+    target_date: date,
+    *,
+    fetcher=None,
+) -> dict:
+    """
+    Recupera l'aggregazione giornaliera di un canale ambientale (WN31)
+    per una data specifica, dall'API history di Ecowitt.
+
+    L'endpoint `/api/v3/device/history/aggregation` di Ecowitt
+    restituisce min, max e media di temperatura e umidità per un
+    canale specifico in un intervallo temporale. Per il bilancio
+    idrico indoor giornaliero ci servono t_min, t_max e umidità
+    relativa media: questa funzione fa la chiamata e restituisce
+    un dict semplice con questi tre valori.
+
+    Parametri
+    ---------
+    application_key, api_key, mac : str
+        Credenziali della stazione.
+    channel : int
+        Numero del canale del WN31 (1-8).
+    target_date : date
+        Data del giorno per cui ottenere l'aggregato.
+    fetcher : callable, opzionale
+        Iniettabile per i test, stesso pattern di fetch_real_time.
+
+    Ritorna
+    -------
+    dict
+        Dict con chiavi: 't_min' (float, °C), 't_max' (float, °C),
+        'humidity_relative' (float, frazione 0-1). Per il momento la
+        funzione si limita alla forma minimale richiesta dal bilancio
+        idrico; una versione futura potrà esporre anche min/max
+        d'umidità o altre statistiche.
+
+    Solleva
+    -------
+    OSError
+        Se la stazione/server non è raggiungibile.
+    ValueError
+        Se la risposta è malformata.
+    """
+    if fetcher is None:
+        fetcher = _http_get_json
+
+    # Costruzione dell'URL dell'API history aggregation. La struttura
+    # esatta dei parametri segue la documentazione Ecowitt v3:
+    # /api/v3/device/history/aggregation con start_date e end_date
+    # uguali alla data target, e call_back che chiede temperatura e
+    # umidità del canale extra (WN31).
+    iso_date = target_date.isoformat()
+    callback = f"temp_and_humidity_ch{channel}.daily"
+    url = (
+        f"https://api.ecowitt.net/api/v3/device/history/aggregation"
+        f"?application_key={application_key}"
+        f"&api_key={api_key}"
+        f"&mac={mac}"
+        f"&start_date={iso_date}%2000:00:00"
+        f"&end_date={iso_date}%2023:59:59"
+        f"&call_back={callback}"
+    )
+
+    try:
+        payload = fetcher(url)
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        raise OSError(
+            f"Impossibile contattare Ecowitt per la history del "
+            f"dispositivo {mac}. Errore originale: {exc}"
+        ) from exc
+
+    # Estrazione della struttura aggregata. Il payload Ecowitt ha il
+    # formato:
+    #   {
+    #     "code": 0,
+    #     "data": {
+    #       "temp_and_humidity_chN": {
+    #         "temperature": {"min": ..., "max": ..., "avg": ...},
+    #         "humidity": {"min": ..., "max": ..., "avg": ...}
+    #       }
+    #     }
+    #   }
+    # Estraiamo i valori che il bilancio idrico richiede.
+    code = payload.get("code")
+    if code != 0:
+        msg = payload.get("msg", "errore sconosciuto")
+        raise ValueError(
+            f"Ecowitt API ha restituito codice di errore {code}: {msg}"
+        )
+
+    data = payload.get("data", {})
+    section = data.get(f"temp_and_humidity_ch{channel}")
+    if section is None:
+        raise ValueError(
+            f"Risposta Ecowitt non contiene dati per il canale "
+            f"{channel} alla data {iso_date}."
+        )
+
+    try:
+        t_min = float(section["temperature"]["min"])
+        t_max = float(section["temperature"]["max"])
+        humid_avg_pct = float(section["humidity"]["avg"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Risposta Ecowitt malformata per canale {channel} "
+            f"alla data {iso_date}: {exc}"
+        ) from exc
+
+    return {
+        "t_min": t_min,
+        "t_max": t_max,
+        "humidity_relative": humid_avg_pct / 100.0,  # % → frazione
+    }
 
 
 # -----------------------------------------------------------------------
@@ -657,6 +799,9 @@ class EcowittSeriesPoint:
     extra_temp_c: dict = field(default_factory=dict)
     extra_humidity_pct: dict = field(default_factory=dict)
     soil_moisture_pct: dict = field(default_factory=dict)
+    # Campi del WH52 (sotto-tappa D fase 3 tappa 5).
+    soil_temperature_c: dict = field(default_factory=dict)
+    soil_ec_mscm: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

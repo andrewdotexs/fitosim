@@ -86,6 +86,12 @@ from typing import Any, Dict, List, Optional
 
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot, PotMaterial, PotColor, PotShape, SunExposure
+from fitosim.domain.room import (
+    IndoorMicroclimate,
+    LightExposure,
+    MicroclimateKind,
+    Room,
+)
 from fitosim.domain.scheduling import ScheduledEvent
 from fitosim.domain.species import Species
 from fitosim.science.substrate import (
@@ -110,7 +116,7 @@ from fitosim.science.substrate import (
 # scheduled_events per persistere gli eventi pianificati del Garden.
 # Database alla versione 2 vengono migrati automaticamente creando
 # la nuova tabella vuota.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 # =======================================================================
@@ -207,6 +213,21 @@ SCHEMA_STATEMENTS: List[str] = [
     )
     """,
 
+    # ----- Stanze indoor (sotto-tappa D fase 3 tappa 5) -----
+    """
+    CREATE TABLE IF NOT EXISTS rooms (
+        id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+        garden_id                   INTEGER NOT NULL,
+        room_id                     TEXT NOT NULL,
+        name                        TEXT NOT NULL,
+        wn31_channel_id             TEXT,
+        default_wind_m_s            REAL NOT NULL DEFAULT 0.5,
+        current_microclimate_json   TEXT,
+        UNIQUE (garden_id, room_id),
+        FOREIGN KEY (garden_id) REFERENCES gardens(id) ON DELETE CASCADE
+    )
+    """,
+
     # ----- Vasi -----
     """
     CREATE TABLE IF NOT EXISTS pots (
@@ -231,6 +252,10 @@ SCHEMA_STATEMENTS: List[str] = [
         planting_date            TEXT NOT NULL,
         notes                    TEXT NOT NULL DEFAULT '',
         channel_id               TEXT,
+        latitude_deg             REAL,
+        elevation_m              REAL,
+        room_id                  TEXT,
+        light_exposure           TEXT,
         UNIQUE (garden_id, label),
         FOREIGN KEY (garden_id) REFERENCES gardens(id) ON DELETE CASCADE,
         FOREIGN KEY (species_id) REFERENCES species(id) ON DELETE RESTRICT,
@@ -515,10 +540,9 @@ class GardenPersistence:
             if current < 3:
                 self._migrate_v2_to_v3()
                 current = 3
-            # In futuro:
-            # if current < 4:
-            #     self._migrate_v3_to_v4()
-            #     current = 4
+            if current < 4:
+                self._migrate_v3_to_v4()
+                current = 4
             # Aggiorna la versione registrata.
             self._conn.execute(
                 "INSERT INTO schema_metadata (version) VALUES (?)",
@@ -566,6 +590,57 @@ class GardenPersistence:
         self._conn.execute(
             "CREATE INDEX idx_scheduled_events_pot_date "
             "ON scheduled_events(pot_id, scheduled_date)"
+        )
+
+    def _migrate_v3_to_v4(self) -> None:
+        """
+        Migrazione dalla versione 3 alla versione 4.
+
+        Cambiamenti (sotto-tappa D fase 3 tappa 5):
+          1. Aggiunta tabella rooms per il modello indoor (Room come
+             entità di dominio introdotta dalla fase D1).
+          2. Estensione tabella pots con quattro nuove colonne:
+              - latitude_deg, elevation_m (sotto-tappa C tappa 5):
+                coordinate geografiche del sito per il selettore
+                "best available" di evapotraspirazione.
+              - room_id, light_exposure (fase D1 sotto-tappa D
+                tappa 5): associazione del vaso indoor alla Room
+                e livello qualitativo di esposizione luminosa.
+
+        Database alla versione 3 vengono aggiornati senza perdita di
+        dati: tutte le nuove colonne sono NULL nei vasi esistenti
+        (comportamento equivalente a quello pre-migrazione, perché
+        i vasi outdoor non usano room_id né light_exposure, e i
+        giardini esistenti non hanno ancora Room).
+        """
+        # Nuova tabella rooms.
+        self._conn.execute("""
+            CREATE TABLE rooms (
+                id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                garden_id                   INTEGER NOT NULL,
+                room_id                     TEXT NOT NULL,
+                name                        TEXT NOT NULL,
+                wn31_channel_id             TEXT,
+                default_wind_m_s            REAL NOT NULL DEFAULT 0.5,
+                current_microclimate_json   TEXT,
+                UNIQUE (garden_id, room_id),
+                FOREIGN KEY (garden_id) REFERENCES gardens(id) ON DELETE CASCADE
+            )
+        """)
+        # Estensione tabella pots: quattro ALTER TABLE separati. SQLite
+        # supporta solo un ALTER TABLE alla volta, ma sono operazioni
+        # rapide perché la tabella resta vuota di nuove colonne.
+        self._conn.execute(
+            "ALTER TABLE pots ADD COLUMN latitude_deg REAL"
+        )
+        self._conn.execute(
+            "ALTER TABLE pots ADD COLUMN elevation_m REAL"
+        )
+        self._conn.execute(
+            "ALTER TABLE pots ADD COLUMN room_id TEXT"
+        )
+        self._conn.execute(
+            "ALTER TABLE pots ADD COLUMN light_exposure TEXT"
         )
 
     # ====================================================================
@@ -1065,6 +1140,12 @@ class GardenPersistence:
             # rispecchia lo stato del Garden in-memory.
             self._sync_scheduled_events(garden_id, garden)
 
+            # Sincronizza le Room (sotto-tappa D fase 3 tappa 5):
+            # cancella quelle non più presenti, insert/update delle
+            # attuali. Stesso pattern della sincronizzazione degli
+            # eventi pianificati.
+            self._sync_rooms(garden_id, garden)
+
             return garden_id
 
     def _sync_scheduled_events(
@@ -1121,6 +1202,93 @@ class GardenPersistence:
                 ),
             )
 
+    def _sync_rooms(self, garden_id: int, garden: Garden) -> None:
+        """
+        Sincronizza le Room del database con quelle del Garden in-memory.
+
+        Strategia: cancella le Room nel database che non sono più
+        presenti nel Garden, poi insert/update di quelle correnti.
+        Lo stesso pattern usato per gli eventi pianificati.
+
+        Il current_microclimate di ogni Room viene serializzato come
+        JSON nella colonna current_microclimate_json. Se la
+        serializzazione fallisce (caso patologico, in pratica non
+        dovrebbe mai accadere perché IndoorMicroclimate è una
+        dataclass semplice), viene salvato come NULL e l'errore
+        viene ignorato silenziosamente — comportamento "best effort"
+        per evitare che un problema con lo stato volatile blocchi il
+        salvataggio dell'intero giardino.
+        """
+        current_room_ids = set(garden.room_ids)
+        # Cancella le Room non più presenti nel Garden.
+        cursor = self._conn.execute(
+            "SELECT id, room_id FROM rooms WHERE garden_id = ?",
+            (garden_id,),
+        )
+        for row in cursor.fetchall():
+            if row["room_id"] not in current_room_ids:
+                self._conn.execute(
+                    "DELETE FROM rooms WHERE id = ?", (row["id"],),
+                )
+
+        # Insert o update di ogni Room corrente.
+        for room in garden.iter_rooms():
+            # Serializza il current_microclimate (best effort).
+            mclima_json: Optional[str] = None
+            if room.current_microclimate is not None:
+                try:
+                    m = room.current_microclimate
+                    mclima_json = json.dumps({
+                        "kind": m.kind.value,
+                        "temperature_c": m.temperature_c,
+                        "humidity_relative": m.humidity_relative,
+                        "t_min": m.t_min,
+                        "t_max": m.t_max,
+                        "timestamp": (
+                            m.timestamp.isoformat()
+                            if m.timestamp is not None else None
+                        ),
+                    })
+                except (TypeError, ValueError):
+                    # Best effort: se la serializzazione fallisce,
+                    # salviamo NULL e procediamo.
+                    mclima_json = None
+
+            existing = self._conn.execute(
+                "SELECT id FROM rooms WHERE garden_id = ? AND room_id = ?",
+                (garden_id, room.room_id),
+            ).fetchone()
+
+            if existing:
+                self._conn.execute(
+                    """
+                    UPDATE rooms SET
+                        name = ?, wn31_channel_id = ?,
+                        default_wind_m_s = ?,
+                        current_microclimate_json = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        room.name, room.wn31_channel_id,
+                        room.default_wind_m_s, mclima_json,
+                        existing["id"],
+                    ),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    INSERT INTO rooms (
+                        garden_id, room_id, name, wn31_channel_id,
+                        default_wind_m_s, current_microclimate_json
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        garden_id, room.room_id, room.name,
+                        room.wn31_channel_id, room.default_wind_m_s,
+                        mclima_json,
+                    ),
+                )
+
     def _save_pot(
         self, garden_id: int, pot: Pot,
         channel_id: Optional[str] = None,
@@ -1157,6 +1325,14 @@ class GardenPersistence:
             pot.planting_date.isoformat(),
             pot.notes,
             channel_id,
+            # Quattro nuove colonne: sotto-tappa C tappa 5 e fase D1
+            # sotto-tappa D tappa 5. Tutte NULL-able per
+            # retrocompatibilità con vasi outdoor che ignorano il
+            # modello indoor.
+            pot.latitude_deg,
+            pot.elevation_m,
+            pot.room_id,
+            pot.light_exposure.value if pot.light_exposure is not None else None,
         )
 
         if existing:
@@ -1171,7 +1347,9 @@ class GardenPersistence:
                     active_depth_fraction = ?, rainfall_exposure = ?,
                     saucer_capacity_mm = ?,
                     saucer_capillary_rate = ?, saucer_evap_coef = ?,
-                    planting_date = ?, notes = ?, channel_id = ?
+                    planting_date = ?, notes = ?, channel_id = ?,
+                    latitude_deg = ?, elevation_m = ?,
+                    room_id = ?, light_exposure = ?
                 WHERE id = ?
                 """,
                 params + (existing["id"],),
@@ -1189,8 +1367,12 @@ class GardenPersistence:
                 location, sun_exposure,
                 active_depth_fraction, rainfall_exposure,
                 saucer_capacity_mm, saucer_capillary_rate, saucer_evap_coef,
-                planting_date, notes, channel_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                planting_date, notes, channel_id,
+                latitude_deg, elevation_m, room_id, light_exposure
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?
+            )
             """,
             (garden_id, pot.label) + params,
         )
@@ -1317,6 +1499,51 @@ class GardenPersistence:
             )
             garden.add_scheduled_event(event)
 
+        # Carica le Room (sotto-tappa D fase 3 tappa 5).
+        cursor = self._conn.execute(
+            """
+            SELECT room_id, name, wn31_channel_id, default_wind_m_s,
+                   current_microclimate_json
+            FROM rooms
+            WHERE garden_id = ?
+            ORDER BY id
+            """,
+            (garden_row["id"],),
+        )
+        for room_row in cursor.fetchall():
+            # Ricostruisce il current_microclimate se è stato salvato.
+            current_mc: Optional[IndoorMicroclimate] = None
+            if room_row["current_microclimate_json"] is not None:
+                try:
+                    data = json.loads(room_row["current_microclimate_json"])
+                    timestamp = (
+                        datetime.fromisoformat(data["timestamp"])
+                        if data.get("timestamp") is not None else None
+                    )
+                    current_mc = IndoorMicroclimate(
+                        kind=MicroclimateKind(data["kind"]),
+                        temperature_c=data["temperature_c"],
+                        humidity_relative=data["humidity_relative"],
+                        t_min=data.get("t_min"),
+                        t_max=data.get("t_max"),
+                        timestamp=timestamp,
+                    )
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    # Best effort: se la deserializzazione fallisce
+                    # (per esempio JSON corrotto), procediamo senza
+                    # microclima. La Room esiste comunque nel garden,
+                    # con current_microclimate=None.
+                    current_mc = None
+
+            room = Room(
+                room_id=room_row["room_id"],
+                name=room_row["name"],
+                wn31_channel_id=room_row["wn31_channel_id"],
+                current_microclimate=current_mc,
+                default_wind_m_s=room_row["default_wind_m_s"],
+            )
+            garden.add_room(room)
+
         return garden
 
     def _load_pot(self, pot_row: sqlite3.Row, as_of: Optional[datetime]) -> Pot:
@@ -1373,6 +1600,17 @@ class GardenPersistence:
             kwargs["saucer_capillary_rate"] = pot_row["saucer_capillary_rate"]
         if pot_row["saucer_evap_coef"] is not None:
             kwargs["saucer_evap_coef"] = pot_row["saucer_evap_coef"]
+        # Quattro nuove colonne (sotto-tappa C tappa 5 e fase D1
+        # sotto-tappa D tappa 5). Tutte NULL-able; le includiamo solo
+        # se popolate per non sovrascrivere i default del costruttore.
+        if pot_row["latitude_deg"] is not None:
+            kwargs["latitude_deg"] = pot_row["latitude_deg"]
+        if pot_row["elevation_m"] is not None:
+            kwargs["elevation_m"] = pot_row["elevation_m"]
+        if pot_row["room_id"] is not None:
+            kwargs["room_id"] = pot_row["room_id"]
+        if pot_row["light_exposure"] is not None:
+            kwargs["light_exposure"] = LightExposure(pot_row["light_exposure"])
         if state_row is not None:
             kwargs["state_mm"] = state_row["state_mm"]
             kwargs["salt_mass_meq"] = state_row["salt_mass_meq"]
