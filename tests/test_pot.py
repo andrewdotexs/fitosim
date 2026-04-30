@@ -2743,5 +2743,164 @@ class TestPotRoomAndLightFields(unittest.TestCase):
         self.assertEqual(pot.light_exposure, LightExposure.INDIRECT_BRIGHT)
 
 
+# =====================================================================
+#  Test del nuovo metodo apply_balance_step_from_indoor (fase D2)
+#
+#  Verifichiamo il flusso: validazione del kind del microclimate,
+#  scelta della radiazione (categoriale vs continuo), gestione del
+#  light_exposure mancante, override del vento e del light_exposure.
+# =====================================================================
+
+
+class TestPotApplyBalanceStepFromIndoor(unittest.TestCase):
+
+    def _make_indoor_basil_pot(self, **overrides):
+        """Helper: vaso indoor di basilico con light_exposure di default."""
+        from fitosim.domain.species import BASIL
+        from fitosim.domain.room import LightExposure
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+        defaults = dict(
+            label="Basilico-indoor", species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.INDOOR,
+            planting_date=date(2026, 6, 1),
+            room_id="salotto",
+            light_exposure=LightExposure.INDIRECT_BRIGHT,
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    def _make_daily_microclimate(self):
+        """Helper: microclima giornaliero estivo realistico."""
+        from fitosim.domain.room import IndoorMicroclimate, MicroclimateKind
+        return IndoorMicroclimate(
+            kind=MicroclimateKind.DAILY,
+            temperature_c=23.5,
+            humidity_relative=0.55,
+            t_min=22.0, t_max=25.0,
+        )
+
+    def test_basic_call_returns_balance_result_with_method(self):
+        # Chiamata di base con i parametri minimi: deve restituire un
+        # BalanceStepResult con et_method valorizzato (PM fisico per
+        # basilico che ha rs e h popolati).
+        from fitosim.science.et0 import EtMethod
+        pot = self._make_indoor_basil_pot()
+        microclimate = self._make_daily_microclimate()
+
+        result = pot.apply_balance_step_from_indoor(
+            microclimate=microclimate,
+            water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        self.assertEqual(result.et_method, EtMethod.PENMAN_MONTEITH_PHYSICAL)
+        self.assertLess(result.new_state, pot.fc_mm)  # ha perso acqua
+
+    def test_continuous_mode_summer_higher_than_winter(self):
+        # Modo continuo: in estate (outdoor 24) la perdita è maggiore
+        # che in inverno (outdoor 5), perché la radiazione indoor è
+        # proporzionale all'outdoor.
+        pot_summer = self._make_indoor_basil_pot()
+        pot_winter = self._make_indoor_basil_pot()
+        microclimate = self._make_daily_microclimate()
+
+        result_summer = pot_summer.apply_balance_step_from_indoor(
+            microclimate=microclimate,
+            water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+            outdoor_solar_radiation_mj_m2_day=24.0,
+        )
+        result_winter = pot_winter.apply_balance_step_from_indoor(
+            microclimate=microclimate,
+            water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+            outdoor_solar_radiation_mj_m2_day=5.0,
+        )
+        # Estate ha perso più acqua: nuovo stato più basso.
+        self.assertLess(result_summer.new_state, result_winter.new_state)
+
+    def test_instant_microclimate_raises(self):
+        # Microclimate INSTANT non è ammesso per il bilancio giornaliero
+        # perché manca t_min/t_max che il selettore richiede.
+        from fitosim.domain.room import IndoorMicroclimate, MicroclimateKind
+        pot = self._make_indoor_basil_pot()
+        m_instant = IndoorMicroclimate(
+            kind=MicroclimateKind.INSTANT,
+            temperature_c=23.5, humidity_relative=0.55,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            pot.apply_balance_step_from_indoor(
+                microclimate=m_instant,
+                water_input_mm=0.0,
+                current_date=date(2026, 7, 19),
+            )
+        self.assertIn("DAILY", str(ctx.exception))
+
+    def test_missing_light_exposure_raises(self):
+        # Pot senza light_exposure e senza override solleva ValueError.
+        pot = self._make_indoor_basil_pot(light_exposure=None)
+        microclimate = self._make_daily_microclimate()
+        with self.assertRaises(ValueError) as ctx:
+            pot.apply_balance_step_from_indoor(
+                microclimate=microclimate,
+                water_input_mm=0.0,
+                current_date=date(2026, 7, 19),
+            )
+        self.assertIn("light_exposure", str(ctx.exception))
+
+    def test_light_exposure_override_works(self):
+        # Override esplicito funziona anche se il Pot non ha light_exposure.
+        from fitosim.domain.room import LightExposure
+        pot = self._make_indoor_basil_pot(light_exposure=None)
+        microclimate = self._make_daily_microclimate()
+        # Non deve sollevare errore con l'override.
+        result = pot.apply_balance_step_from_indoor(
+            microclimate=microclimate,
+            water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+            light_exposure_override=LightExposure.DIRECT_SUN,
+        )
+        self.assertIsNotNone(result.et_method)
+
+    def test_higher_light_exposure_means_more_et(self):
+        # DIRECT_SUN dovrebbe produrre più ET di DARK a parità di
+        # tutto il resto. Verifichiamo l'ordinamento delle perdite
+        # idriche in tre vasi che differiscono solo per light_exposure.
+        from fitosim.domain.room import LightExposure
+        microclimate = self._make_daily_microclimate()
+
+        pot_dark = self._make_indoor_basil_pot(
+            light_exposure=LightExposure.DARK,
+        )
+        pot_indirect = self._make_indoor_basil_pot(
+            light_exposure=LightExposure.INDIRECT_BRIGHT,
+        )
+        pot_sun = self._make_indoor_basil_pot(
+            light_exposure=LightExposure.DIRECT_SUN,
+        )
+
+        for p in (pot_dark, pot_indirect, pot_sun):
+            p.state_mm = p.fc_mm  # reset per partire dallo stesso stato
+
+        result_dark = pot_dark.apply_balance_step_from_indoor(
+            microclimate=microclimate, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        result_indirect = pot_indirect.apply_balance_step_from_indoor(
+            microclimate=microclimate, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        result_sun = pot_sun.apply_balance_step_from_indoor(
+            microclimate=microclimate, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+
+        # Più sole = meno acqua rimasta. L'ordinamento atteso è:
+        # state_sun < state_indirect < state_dark.
+        self.assertLess(result_sun.new_state, result_indirect.new_state)
+        self.assertLess(result_indirect.new_state, result_dark.new_state)
+
+
 if __name__ == "__main__":
     unittest.main()

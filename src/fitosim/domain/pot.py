@@ -44,7 +44,12 @@ from fitosim.domain.species import (
     actual_et_c,
     kc_for_stage,
 )
-from fitosim.domain.room import LightExposure
+from fitosim.domain.room import (
+    IndoorMicroclimate,
+    LightExposure,
+    MicroclimateKind,
+    Room,
+)
 from fitosim.domain.weather import WeatherDay
 from fitosim.science.balance import (
     BalanceStepResult,
@@ -61,6 +66,7 @@ from fitosim.science.et0 import (
     actual_vapor_pressure,
     compute_et,
 )
+from fitosim.science.indoor import estimate_indoor_radiation
 from fitosim.science.pot_physics import (
     PotColor,
     PotMaterial,
@@ -1621,6 +1627,198 @@ class Pot:
         # Arricchisco il risultato col campo et_method. Visto che
         # BalanceStepResult è frozen, costruisco un nuovo BalanceStepResult
         # invece di mutare quello esistente.
+        return BalanceStepResult(
+            new_state=legacy_result.new_state,
+            drainage=legacy_result.drainage,
+            under_alert=legacy_result.under_alert,
+            deficit=legacy_result.deficit,
+            et_method=et_result.method,
+        )
+
+    def apply_balance_step_from_indoor(
+        self,
+        microclimate: IndoorMicroclimate,
+        water_input_mm: float,
+        current_date: date,
+        room: Optional[Room] = None,
+        outdoor_solar_radiation_mj_m2_day: Optional[float] = None,
+        wind_speed_m_s: Optional[float] = None,
+        light_exposure_override: Optional[LightExposure] = None,
+    ) -> BalanceStepResult:
+        """
+        Esegue un passo di bilancio idrico (giornaliero) sul vaso a
+        partire dal microclima della stanza indoor, scegliendo
+        automaticamente la formula migliore disponibile per ET.
+
+        È il "fratello indoor" di apply_balance_step_from_weather. Il
+        flusso interno è simmetrico al fratello outdoor in cinque
+        passi:
+
+          1. Valida che microclimate.kind sia DAILY (servono t_min e
+             t_max al selettore). INSTANT non è ammesso perché
+             rappresenta una lettura puntuale, non un dato giornaliero.
+          2. Risolve il light_exposure dalla cascata: parametro
+             esplicito → campo del Pot → errore esplicativo.
+          3. Stima la radiazione indoor con estimate_indoor_radiation.
+             Se outdoor_solar_radiation_mj_m2_day è popolato usa il
+             modo continuo (più accurato); altrimenti il categoriale.
+          4. Chiama il selettore compute_et con i parametri risolti.
+             Il vento è risolto con cascata: parametro esplicito →
+             Room.default_wind_m_s → costante globale 0.5.
+          5. Applica il Kc se necessario (caso PM standard) e delega
+             al vecchio apply_balance_step. Il BalanceStepResult
+             ritornato porta il campo et_method valorizzato col
+             metodo del selettore.
+
+        Una sottigliezza tecnica indoor: la conversione tra radiazione
+        globale stimata e radiazione netta è meno standardizzata
+        rispetto al caso outdoor (dove serve un calcolo articolato di
+        bilancio radiativo notturno). Per indoor il modello tratta la
+        radiazione globale stimata direttamente come Rn, semplificazione
+        accettabile perché in stanza chiusa il bilancio radiativo
+        notturno è dominato da scambi di onda lunga modesti tra pianta
+        e arredamento, non dal cielo aperto.
+
+        Parametri
+        ---------
+        microclimate : IndoorMicroclimate
+            Dati ambientali della stanza per il giorno. Deve avere
+            kind=DAILY, con t_min e t_max popolati e coerenti.
+            Tipicamente costruito dal chiamante a partire dai dati
+            storici dell'API Ecowitt history del sensore WN31.
+        water_input_mm : float
+            Acqua entrata nel vaso oggi (irrigazione manuale), in mm.
+            Non negativa. Per i vasi indoor non c'è pioggia naturale.
+        current_date : date
+            Data corrente, usata per determinare lo stadio fenologico
+            della specie.
+        room : Room, opzionale
+            La Room di appartenenza del vaso. Se None, il metodo
+            cerca di recuperarla dal contesto (TODO: in futuro,
+            attraverso il Garden); per ora se è None usa il default
+            globale del vento.
+        outdoor_solar_radiation_mj_m2_day : float, opzionale
+            Radiazione globale outdoor del giorno, dal piranometro
+            della stazione meteo esterna. Se popolata si usa il modo
+            continuo della stima della radiazione indoor (più
+            accurato); altrimenti si usa il modo categoriale fisso.
+        wind_speed_m_s : float, opzionale
+            Override del vento. Se None usa room.default_wind_m_s
+            (se presente) o la costante globale.
+        light_exposure_override : LightExposure, opzionale
+            Override del livello di esposizione luminosa del vaso.
+            Se None usa self.light_exposure; se anche quello è None
+            solleva ValueError.
+
+        Ritorna
+        -------
+        BalanceStepResult
+            Stesso significato del ritorno di apply_balance_step,
+            con il campo et_method valorizzato col metodo del
+            selettore.
+
+        Solleva
+        -------
+        ValueError
+            Se microclimate.kind non è DAILY, se né
+            light_exposure_override né self.light_exposure sono
+            popolati, o se altri parametri di base sono invalidi.
+        """
+        # Step 1: validazione del kind del microclimate.
+        if microclimate.kind != MicroclimateKind.DAILY:
+            raise ValueError(
+                f"Vaso '{self.label}': apply_balance_step_from_indoor "
+                f"richiede IndoorMicroclimate con kind=DAILY (ricevuto "
+                f"{microclimate.kind.value}). Il bilancio giornaliero "
+                f"ha bisogno di t_min e t_max della giornata, che il "
+                f"caso INSTANT non fornisce. Costruisci il microclimate "
+                f"DAILY a partire dai dati storici dell'API Ecowitt "
+                f"history del sensore WN31."
+            )
+
+        # Step 2: risoluzione del light_exposure con la cascata.
+        effective_exposure = (
+            light_exposure_override
+            if light_exposure_override is not None
+            else self.light_exposure
+        )
+        if effective_exposure is None:
+            raise ValueError(
+                f"Vaso '{self.label}': light_exposure non disponibile. "
+                f"Va specificato come campo del Pot al momento della "
+                f"costruzione (consigliato), oppure passato come "
+                f"light_exposure_override al metodo."
+            )
+
+        # Step 3: stima della radiazione indoor con la funzione "best
+        # available" del modulo science.indoor.
+        radiation_mj_m2_day = estimate_indoor_radiation(
+            exposure=effective_exposure,
+            outdoor_radiation_mj_m2_day=outdoor_solar_radiation_mj_m2_day,
+        )
+
+        # Step 4: risoluzione del vento con la cascata.
+        # Override esplicito > Room.default_wind_m_s > DEFAULT_INDOOR_WIND_M_S.
+        # La costante DEFAULT_INDOOR_WIND_M_S vive in domain.room ed è
+        # accessibile attraverso il modulo.
+        from fitosim.domain.room import DEFAULT_INDOOR_WIND_M_S
+        if wind_speed_m_s is not None:
+            effective_wind = wind_speed_m_s
+        elif room is not None:
+            effective_wind = room.default_wind_m_s
+        else:
+            effective_wind = DEFAULT_INDOOR_WIND_M_S
+
+        # Step 5: chiamata al selettore "best available" con i
+        # parametri risolti. Il selettore decide la formula in base
+        # ai parametri della specie (rs e h) e ai dati meteo.
+        # Per indoor la latitudine e la quota sono usate solo dal
+        # ramo Hargreaves, che indoor è raramente attivato perché
+        # abbiamo sempre umidità dal sensore WN31. Usiamo la
+        # latitudine del Pot se disponibile, oppure un valore di
+        # default che riflette latitudini italiane.
+        from fitosim.science.radiation import day_of_year
+        latitude_for_selector = (
+            self.latitude_deg if self.latitude_deg is not None else 45.0
+        )
+        elevation_for_selector = (
+            self.elevation_m if self.elevation_m is not None else 100.0
+        )
+
+        et_result = compute_et(
+            t_min=microclimate.t_min,
+            t_max=microclimate.t_max,
+            latitude_deg=latitude_for_selector,
+            j=day_of_year(current_date),
+            humidity_relative=microclimate.humidity_relative,
+            wind_speed_m_s=effective_wind,
+            net_radiation_mj_m2_day=radiation_mj_m2_day,
+            stomatal_resistance_s_m=self.species.stomatal_resistance_s_m,
+            crop_height_m=self.species.crop_height_m,
+            elevation_m=elevation_for_selector,
+        )
+
+        # Stessa logica della sotto-tappa C per gestire la distinzione
+        # ET vs ET₀ in base al metodo restituito dal selettore.
+        if et_result.method == EtMethod.PENMAN_MONTEITH_PHYSICAL:
+            stage = self.current_stage(current_date)
+            kc_current = kc_for_stage(self.species, stage)
+            if kc_current > 0:
+                et_0_for_legacy_method = et_result.value_mm / kc_current
+            else:
+                et_0_for_legacy_method = et_result.value_mm
+        else:
+            et_0_for_legacy_method = et_result.value_mm
+
+        # Delega al vecchio apply_balance_step per il bilancio idrico,
+        # esattamente come fa il fratello outdoor.
+        legacy_result = self.apply_balance_step(
+            et_0_mm=et_0_for_legacy_method,
+            water_input_mm=water_input_mm,
+            current_date=current_date,
+        )
+
+        # Arricchisco il risultato col campo et_method.
         return BalanceStepResult(
             new_state=legacy_result.new_state,
             drainage=legacy_result.drainage,

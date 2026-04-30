@@ -66,7 +66,7 @@ from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 from fitosim.domain.alerts import ALL_RULES, Alert
 from fitosim.domain.pot import FullStepResult, Pot, SensorUpdateResult
-from fitosim.domain.room import Room
+from fitosim.domain.room import IndoorMicroclimate, Room
 from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
 from fitosim.domain.weather import WeatherDay
 from fitosim.io.sensors import (
@@ -817,6 +817,112 @@ class Garden:
                 elevation_m=elevation_m,
             )
             results[label] = result
+
+        return results
+
+    def apply_step_all_from_indoor(
+        self,
+        microclimates_by_room: Dict[str, IndoorMicroclimate],
+        current_date: date,
+        outdoor_solar_radiation_mj_m2_day: Optional[float] = None,
+    ) -> Dict[str, FullStepResult]:
+        """
+        Applica un passo giornaliero a tutti i vasi indoor del giardino
+        a partire dai microclimi delle rispettive stanze.
+
+        È il "fratello indoor" di apply_step_all_from_weather. Per
+        ogni Room del giardino con un microclimate corrispondente
+        nel dict, il metodo recupera i vasi della stanza tramite
+        pots_in_room e per ognuno chiama Pot.apply_balance_step_from_indoor
+        passando il microclimate della stanza, la Room di
+        appartenenza, e l'eventuale radiazione outdoor del giorno.
+
+        Vasi outdoor del giardino e vasi indoor senza room_id (o con
+        room_id non corrispondente a una stanza nel dict) vengono
+        SALTATI silenziosamente. Per il giardino misto outdoor +
+        indoor il chiamante fa due chiamate distinte:
+
+            # Vasi outdoor sul balcone
+            results_outdoor = garden.apply_step_all_from_weather(
+                weather=weather_balcone,
+            )
+            # Vasi indoor in casa
+            results_indoor = garden.apply_step_all_from_indoor(
+                microclimates_by_room={
+                    "salotto": microclima_salotto,
+                    "camera": microclima_camera,
+                },
+                current_date=oggi,
+                outdoor_solar_radiation_mj_m2_day=24.0,
+            )
+
+        Una sottigliezza interessante: la radiazione outdoor è UNA
+        SOLA per tutto il giardino (è una grandezza ambientale
+        esterna, comune a tutte le stanze), mentre i microclimi
+        sono DIVERSI per stanza (ogni stanza ha il suo sensore
+        WN31 con le sue letture). Il dict microclimates_by_room
+        cattura questa asimmetria.
+
+        Parametri
+        ---------
+        microclimates_by_room : Dict[str, IndoorMicroclimate]
+            Mappa room_id → IndoorMicroclimate. Ogni microclimate
+            deve avere kind=DAILY (validato da apply_balance_step_from_indoor
+            del Pot, sollevato come ValueError altrimenti).
+        current_date : date
+            Data del passo, usata per lo stadio fenologico delle
+            specie e per il calcolo del giorno dell'anno.
+        outdoor_solar_radiation_mj_m2_day : float, opzionale
+            Radiazione globale outdoor del giorno, dal piranometro
+            esterno. Se popolata si usa il modo continuo della
+            stima della radiazione indoor (più accurato); altrimenti
+            il modo categoriale. È UNA SOLA per tutto il giardino
+            perché è una grandezza ambientale esterna.
+
+        Ritorna
+        -------
+        Dict[str, FullStepResult]
+            Dizionario {label: FullStepResult} con il risultato del
+            passo per ogni vaso indoor processato. Vasi outdoor e
+            vasi indoor non associati a Room nel dict NON sono nel
+            dizionario di ritorno. L'ordine delle chiavi corrisponde
+            all'ordine di iterazione delle stanze nel dict di input.
+        """
+        results: Dict[str, FullStepResult] = {}
+        for room_id, microclimate in microclimates_by_room.items():
+            if room_id not in self._rooms:
+                # Stanza nel dict ma non nel giardino: la saltiamo
+                # silenziosamente. Il chiamante può comunque
+                # accorgersene confrontando i room_id del dict con
+                # garden.room_ids.
+                continue
+            room = self._rooms[room_id]
+            vasi_stanza = self.pots_in_room(room_id)
+            for pot in vasi_stanza:
+                # Per ogni vaso della stanza, chiamiamo il bilancio
+                # idrico indoor. Il metodo del Pot legge il light_exposure
+                # dal Pot stesso, il vento dalla Room, e la radiazione
+                # dalla coppia (LightExposure, outdoor_radiation).
+                balance_result = pot.apply_balance_step_from_indoor(
+                    microclimate=microclimate,
+                    water_input_mm=0.0,
+                    current_date=current_date,
+                    room=room,
+                    outdoor_solar_radiation_mj_m2_day=outdoor_solar_radiation_mj_m2_day,
+                )
+                # Costruiamo un FullStepResult coerente con quello
+                # restituito dal metodo outdoor (apply_step_all_from_weather),
+                # in modo che il chiamante possa trattare i risultati
+                # in modo uniforme. Per indoor non c'è pioggia naturale
+                # né fertirrigazione orchestrata dal giardino, quindi
+                # i campi rainfall_result e fertigation_result restano
+                # None.
+                results[pot.label] = FullStepResult(
+                    event_date=current_date,
+                    balance_result=balance_result,
+                    rainfall_result=None,
+                    fertigation_result=None,
+                )
 
         return results
 

@@ -1306,5 +1306,160 @@ class TestGardenRooms(unittest.TestCase):
         self.assertEqual(garden.num_rooms(), 1)
 
 
+# =====================================================================
+#  Test del nuovo metodo apply_step_all_from_indoor (fase D2)
+#
+#  Verifichiamo l'iterazione corretta sulle stanze, il salto
+#  silenzioso di room_id non presenti, il salto dei vasi outdoor,
+#  e la propagazione dell'et_method nel FullStepResult.
+# =====================================================================
+
+
+class TestGardenApplyStepAllFromIndoor(unittest.TestCase):
+
+    def _make_indoor_garden(self):
+        """
+        Helper: giardino con due stanze e tre vasi indoor (due nel
+        salotto, uno in camera).
+        """
+        from fitosim.domain.room import Room, LightExposure
+        from fitosim.domain.species import BASIL, ROSEMARY
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+
+        garden = Garden(name="Casa di Andrea")
+        garden.add_room(Room(room_id="salotto", name="Salotto"))
+        garden.add_room(Room(room_id="camera", name="Camera"))
+
+        garden.add_pot(Pot(
+            label="Basilico-cucina", species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.INDOOR,
+            planting_date=date(2026, 6, 1),
+            room_id="salotto",
+            light_exposure=LightExposure.INDIRECT_BRIGHT,
+        ))
+        garden.add_pot(Pot(
+            label="Rosmarino-davanzale", species=ROSEMARY,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=5.0, pot_diameter_cm=22.0,
+            location=Location.INDOOR,
+            planting_date=date(2025, 5, 1),
+            room_id="salotto",
+            light_exposure=LightExposure.DIRECT_SUN,
+        ))
+        garden.add_pot(Pot(
+            label="Basilico-camera", species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.INDOOR,
+            planting_date=date(2026, 6, 1),
+            room_id="camera",
+            light_exposure=LightExposure.DARK,
+        ))
+        return garden
+
+    def _make_microclimate(self, t_min, t_max, humidity=0.55):
+        from fitosim.domain.room import IndoorMicroclimate, MicroclimateKind
+        return IndoorMicroclimate(
+            kind=MicroclimateKind.DAILY,
+            temperature_c=(t_min + t_max) / 2.0,
+            humidity_relative=humidity,
+            t_min=t_min, t_max=t_max,
+        )
+
+    def test_basic_two_room_scenario(self):
+        # Scenario base: dict con due stanze, ogni stanza riceve i
+        # suoi vasi processati. Verifichiamo che il dict di ritorno
+        # abbia esattamente i tre vasi attesi.
+        garden = self._make_indoor_garden()
+        m_salotto = self._make_microclimate(t_min=22.0, t_max=25.0)
+        m_camera = self._make_microclimate(t_min=19.5, t_max=21.5)
+
+        results = garden.apply_step_all_from_indoor(
+            microclimates_by_room={
+                "salotto": m_salotto,
+                "camera": m_camera,
+            },
+            current_date=date(2026, 7, 19),
+        )
+        self.assertEqual(
+            set(results.keys()),
+            {"Basilico-cucina", "Rosmarino-davanzale", "Basilico-camera"},
+        )
+
+    def test_unknown_room_id_skipped_silently(self):
+        # Se il dict contiene un room_id non presente nel garden,
+        # viene saltato silenziosamente senza errori.
+        garden = self._make_indoor_garden()
+        m_salotto = self._make_microclimate(t_min=22.0, t_max=25.0)
+        m_garage = self._make_microclimate(t_min=15.0, t_max=18.0)
+
+        # "garage" non esiste nel garden ma il metodo non solleva.
+        results = garden.apply_step_all_from_indoor(
+            microclimates_by_room={
+                "salotto": m_salotto,
+                "garage": m_garage,
+            },
+            current_date=date(2026, 7, 19),
+        )
+        # Solo i vasi del salotto sono nel risultato.
+        self.assertEqual(
+            set(results.keys()),
+            {"Basilico-cucina", "Rosmarino-davanzale"},
+        )
+
+    def test_outdoor_pots_skipped(self):
+        # Vasi outdoor del giardino non sono processati dal metodo
+        # indoor. Aggiungiamo un vaso outdoor e verifichiamo che non
+        # appaia nel dict di ritorno.
+        from fitosim.domain.species import BASIL
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+
+        garden = self._make_indoor_garden()
+        garden.add_pot(Pot(
+            label="Basilico-balcone", species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 6, 1),
+            # Niente room_id né light_exposure: vaso outdoor.
+        ))
+
+        m_salotto = self._make_microclimate(t_min=22.0, t_max=25.0)
+        m_camera = self._make_microclimate(t_min=19.5, t_max=21.5)
+
+        results = garden.apply_step_all_from_indoor(
+            microclimates_by_room={
+                "salotto": m_salotto,
+                "camera": m_camera,
+            },
+            current_date=date(2026, 7, 19),
+        )
+        # Il vaso outdoor non è nel dict di ritorno.
+        self.assertNotIn("Basilico-balcone", results)
+
+    def test_et_method_propagated_in_full_step_result(self):
+        # Il FullStepResult restituito ha al suo interno un
+        # BalanceStepResult con et_method valorizzato.
+        from fitosim.science.et0 import EtMethod
+
+        garden = self._make_indoor_garden()
+        m_salotto = self._make_microclimate(t_min=22.0, t_max=25.0)
+
+        results = garden.apply_step_all_from_indoor(
+            microclimates_by_room={"salotto": m_salotto},
+            current_date=date(2026, 7, 19),
+        )
+        for label, result in results.items():
+            with self.subTest(pot=label):
+                # Le specie BASIL e ROSEMARY hanno parametri rs e h
+                # popolati, quindi il selettore sceglie PM fisico.
+                self.assertEqual(
+                    result.balance_result.et_method,
+                    EtMethod.PENMAN_MONTEITH_PHYSICAL,
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
