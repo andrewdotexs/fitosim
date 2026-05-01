@@ -1,5 +1,18 @@
 // Diagramma dei package di fitosim — struttura architetturale a tre layer.
 //
+// Versione di fine tappa 5 (chiusura fascia 2). Aggiunge rispetto alla
+// versione precedente:
+//   - Layer DOMAIN: il modulo `room` (entità Room, IndoorMicroclimate)
+//     e il modulo `weather` (WeatherDay, dataclass del meteo giornaliero
+//     usata da apply_balance_step_from_weather della sotto-tappa C).
+//   - Layer SCIENCE: il modulo `indoor` (radiazione indoor categoriale
+//     e continua); il modulo `et0` ora include Penman-Monteith fisico,
+//     Penman-Monteith standard FAO-56, Hargreaves-Samani e il selettore
+//     "best available" (compute_et).
+//   - Layer IO/sensors: il file `ecowitt` fornisce tre adapter
+//     (WH51/WH52 per il substrato, WN31 per il microclima indoor, env
+//     outdoor per il meteo del balcone).
+//
 // Layout: io in alto (adapter di ingresso/uscita), domain al centro
 // (logica di business), science in basso (fondamenta matematiche).
 // Le dipendenze vanno tutte verso il basso, riflettendo il principio
@@ -16,7 +29,7 @@ digraph fitosim_packages {
     graph [fontname="Helvetica", fontsize=11];
     bgcolor="white";
     nodesep=0.35;
-    ranksep=0.55;
+    ranksep=0.6;
     compound=true;
     splines=true;
 
@@ -48,7 +61,7 @@ digraph fitosim_packages {
             sensor_types [label="types\n(SoilReading,\nEnvironmentReading)", fillcolor="#FCE5CD"];
             sensor_errors [label="errors\n(3 livelli\neccezioni)", fillcolor="#FCE5CD"];
 
-            sensor_ecowitt [label="ecowitt\n(WH51)", fillcolor="#FCE5CD"];
+            sensor_ecowitt [label="ecowitt\n(WH51/WH52,\nWN31, Env)", fillcolor="#FCE5CD"];
             sensor_openmeteo [label="openmeteo", fillcolor="#FCE5CD"];
             sensor_http [label="http_json\n(gateway ESP32)", fillcolor="#FCE5CD"];
             sensor_fixtures [label="fixtures\n(CSV)", fillcolor="#FCE5CD"];
@@ -82,11 +95,13 @@ digraph fitosim_packages {
                 fontsize=11];
         pot [label="pot\n(Pot, Location,\nPotShape)", fillcolor="#D5E8F0"];
         species [label="species\n(Species, catalogo)", fillcolor="#D5E8F0"];
+        room [label="room\n(Room, Indoor-\nMicroclimate,\nLightExposure)", fillcolor="#D5E8F0"];
+        weather [label="weather\n(WeatherDay)", fillcolor="#D5E8F0"];
         alerts [label="alerts\n(Alert, regole pure)", fillcolor="#D5E8F0"];
         scheduling [label="scheduling\n(ScheduledEvent,\nWeatherDayForecast)", fillcolor="#D5E8F0"];
         scheduler [label="scheduler\n(pianificatore\nirrigazione fascia 1)", fillcolor="#D5E8F0"];
 
-        { rank=same; pot; species; alerts; scheduling; scheduler; }
+        { rank=same; pot; species; room; weather; alerts; scheduling; scheduler; }
     }
 
     // ============================================================
@@ -103,7 +118,7 @@ digraph fitosim_packages {
 
         substrate [label="substrate\n(Substrate,\nBaseMaterial,\ncompose_substrate)", fillcolor="#E8F0D8"];
         balance [label="balance\n(bilancio idrico\nFAO-56)", fillcolor="#E8F0D8"];
-        et0 [label="et0\n(calcolo ET₀)", fillcolor="#E8F0D8"];
+        et0 [label="et0\n(Penman-Monteith\n+ Hargreaves\n+ selettore)", fillcolor="#E8F0D8"];
         dual_kc [label="dual_kc\n(FAO-56\ncap. 7)", fillcolor="#E8F0D8"];
         pot_physics [label="pot_physics\n(Kp, geometrie)", fillcolor="#E8F0D8"];
         saucer [label="saucer\n(modello\nsottovaso)", fillcolor="#E8F0D8"];
@@ -111,8 +126,9 @@ digraph fitosim_packages {
         fertigation [label="fertigation", fillcolor="#E8F0D8"];
         calibration [label="calibration\n(da sensore)", fillcolor="#E8F0D8"];
         radiation [label="radiation", fillcolor="#E8F0D8"];
+        indoor [label="indoor\n(radiazione\nindoor)", fillcolor="#E8F0D8"];
 
-        { rank=same; substrate; balance; pot_physics; nutrition; saucer; }
+        { rank=same; substrate; balance; pot_physics; nutrition; saucer; indoor; }
         { rank=same; et0; dual_kc; fertigation; calibration; radiation; }
     }
 
@@ -120,10 +136,12 @@ digraph fitosim_packages {
     //  DIPENDENZE TRA LAYER (sempre verso il basso)
     // ============================================================
 
+    // io → domain
     persistence -> garden [label="save/load"];
     serialization -> garden [label="export/import"];
     sensor_protocols -> pot [style=dashed, label="letture"];
 
+    // domain → science (Pot è il punto di sutura principale)
     pot -> substrate;
     pot -> balance;
     pot -> dual_kc;
@@ -132,11 +150,20 @@ digraph fitosim_packages {
     pot -> nutrition;
     pot -> fertigation;
     pot -> calibration;
+    pot -> et0 [style=dashed, label="selettore ET"];
+    pot -> indoor [style=dashed, label="radiazione\nindoor"];
     species -> dual_kc [style=dashed];
+    species -> et0 [style=dashed, label="rs, h"];
 
+    // domain → domain
     garden -> pot;
     garden -> alerts;
     garden -> scheduling;
+    garden -> room [label="contiene\n0..*"];
+    garden -> weather [style=dashed, label="step\nfrom_weather"];
+    pot -> room [style=dashed, label="vive\nin (indoor)"];
+    pot -> weather [style=dashed];
+    room -> indoor [style=dashed, label="LightExposure"];
     alerts -> pot [style=dashed, label="legge stato"];
     scheduler -> pot [style=dashed];
 

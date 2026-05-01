@@ -8,28 +8,33 @@ le piante nei tuoi vasi. Funziona modellando il bilancio idrico e chimico del
 singolo vaso giorno per giorno: quanta acqua entra (pioggia, irrigazione),
 quanta esce (evapotraspirazione), quanta resta disponibile alla pianta, e
 come evolve la concentrazione di sali e il pH del substrato. Estende lo
-standard FAO-56 con sei capacità specifiche del giardinaggio in vaso che i
-modelli per il pieno campo non coprono.
+standard FAO-56 con capacità specifiche del giardinaggio in vaso che i
+modelli per il pieno campo non coprono, dalle geometrie reali del vaso al
+sottovaso, dalle miscele di substrati al modello chimico, dal bilancio
+indoor con microclima della stanza al selettore "best available" del metodo
+di evapotraspirazione.
 
 Sopra al modello del singolo vaso, fitosim costruisce un dashboard operativo
-completo: il `Garden` orchestra più vasi insieme, la persistenza SQLite
-conserva la storia, gli eventi pianificati e le previsioni a N giorni
-anticipano gli interventi, e il sistema di allerte trasforma le previsioni in
-raccomandazioni concrete per il giardiniere.
+completo: il `Garden` orchestra più vasi insieme (anche distribuiti tra più
+stanze indoor), la persistenza SQLite conserva la storia, gli eventi
+pianificati e le previsioni a N giorni anticipano gli interventi, e il
+sistema di allerte trasforma le previsioni in raccomandazioni concrete per
+il giardiniere.
 
 ## Stato del progetto
 
-- **865 test verdi** (più 1 skipped intenzionale, 340 sub-test)
-- **Tempo esecuzione suite**: ~2.4 secondi su laptop standard
+- **1007 test verdi** (più 1 skipped intenzionale, 357 sub-test)
+- **Tempo esecuzione suite**: ~11 secondi su laptop standard
 - **Linguaggio**: Python ≥ 3.10
 - **Dipendenze esterne nel core**: zero (solo standard library)
 - **Schema database**: SQLite v3 con migrazioni automatiche v1→v2→v3
 - **Fascia 1**: completa (modello idrico FAO-56 esteso)
-- **Fascia 2**: 4 tappe complete su 5 (80% del percorso)
+- **Fascia 2**: **completa** (5 tappe su 5, 100% del percorso)
+- **Prossimo passo**: apertura fascia 3 di calibrazione contro dati reali del balcone
 
 ```
 $ python -m pytest tests/
-============================= 865 passed, 1 skipped in 2.36s =============================
+======================== 1007 passed, 1 skipped in 11.43s ========================
 ```
 
 ## Cosa fa
@@ -63,6 +68,18 @@ parametri noti. In questo dominio specifico la libreria copre:
   dello stato a N giorni
 - **Sistema di allerte**: cinque categorie e tre severità, derivate dallo
   stato corrente o proiettato
+- **Selettore "best available" dell'evapotraspirazione**: Penman-Monteith
+  fisico (con resistenza stomatica della specie), Penman-Monteith standard
+  FAO-56 e Hargreaves-Samani come fallback, scelti automaticamente in
+  funzione dei dati meteo disponibili e dei parametri della specie
+- **Modello dei vasi indoor**: entità `Room` per gli spazi indoor con
+  microclima condiviso, sensore ambientale WN31 di Ecowitt, modello a tre
+  livelli di esposizione luminosa (`LightExposure`), bilancio idrico
+  alimentato dal microclima della stanza invece che dal meteo esterno
+- **Supporto sensore di substrato evoluto**: il WH52 (upgrade del WH51 con
+  temperatura ed EC del substrato) è gestito dallo stesso adapter
+  parametrizzato, con fallback automatico alle capacità del WH51 quando
+  i campi nuovi non sono disponibili
 
 ## Cosa NON fa
 
@@ -197,7 +214,7 @@ pubblicato su PyPI:
 ```bash
 git clone https://github.com/<tuo-username>/fitosim.git
 cd fitosim
-python -m pytest tests/  # verifica che la suite gira (865 verdi attesi)
+python -m pytest tests/  # verifica che la suite gira (1007 verdi attesi)
 ```
 
 Per usare la libreria nei tuoi script puoi scegliere tra due opzioni. La
@@ -229,23 +246,30 @@ database da SQLite a PostgreSQL senza toccare nulla del modello FAO-56.
 ![Diagramma dei package di fitosim](docs/uml/fitosim_packages.png)
 
 Il layer `science/` contiene il modello matematico FAO-56 esteso: bilancio
-idrico, calcolo ET₀, dual-Kc, fisica del vaso (Kp), modello chimico
-(coefficiente Kn), sottovaso, fertirrigazione, calibrazione empirica. Sono
+idrico, calcolo ET (Penman-Monteith fisico, Penman-Monteith standard FAO-56,
+Hargreaves-Samani, e selettore "best available" che sceglie automaticamente
+la formula migliore disponibile), dual-Kc, fisica del vaso (Kp), modello
+chimico (coefficiente Kn), sottovaso, fertirrigazione, calibrazione empirica,
+e radiazione indoor categoriale e continua per i vasi in casa. Sono
 prevalentemente funzioni pure più qualche dataclass (`Substrate`,
-`BaseMaterial`).
+`BaseMaterial`, `EtResult`).
 
 Il layer `domain/` contiene gli oggetti di dominio e l'orchestrazione: `Pot`
 è la classe centrale che monta insieme tutte le componenti scientifiche in
 un'entità coerente, `Garden` orchestra più vasi insieme, `Species` e
-`Substrate` caratterizzano la pianta e il terriccio, `Alert`,
-`ScheduledEvent` e `WeatherDayForecast` sono le strutture introdotte dalla
-tappa 4.
+`Substrate` caratterizzano la pianta e il terriccio, `Room` modella gli
+spazi indoor con il loro microclima condiviso (sotto-tappa 5-D), `Alert`,
+`ScheduledEvent`, `WeatherDay` e `WeatherDayForecast` sono le strutture
+introdotte dalle tappe 4 e 5.
 
 Il layer `io/` contiene gli adapter di ingresso e uscita: `persistence`
 (SQLite) e `serialization` (JSON) sono completamente disaccoppiati tra loro;
 sotto `io/sensors/` vivono cinque adapter concreti (Ecowitt, Open-Meteo,
-HTTP-JSON, fixtures CSV) che implementano lo stesso `Protocol` definito in
-`protocols.py`.
+HTTP-JSON, fixtures CSV) che implementano i `Protocol` definiti in
+`protocols.py`. Il file `ecowitt.py` espone tre classi distinte:
+`EcowittEnvironmentSensor` per il meteo outdoor, `EcowittWH51SoilSensor`
+per il substrato (parametrizzato per WH51 e WH52), e `EcowittAmbientSensor`
+per il microclima delle stanze indoor (WN31).
 
 ### Le entità di dominio
 
@@ -271,23 +295,26 @@ caricamento.
 fitosim/
 ├── src/fitosim/
 │   ├── domain/             # entità di dominio e orchestrazione
-│   │   ├── garden.py       # Garden orchestratore (tappa 4)
+│   │   ├── garden.py       # Garden orchestratore (tappe 4-5)
 │   │   ├── pot.py          # Pot, classe centrale del modello
 │   │   ├── species.py      # Species, catalogo specie predefinite
+│   │   ├── room.py         # Room, IndoorMicroclimate (tappa 5-D)
+│   │   ├── weather.py      # WeatherDay (tappa 5-C)
 │   │   ├── alerts.py       # Sistema di allerte (tappa 4)
 │   │   ├── scheduling.py   # ScheduledEvent, WeatherDayForecast
 │   │   └── scheduler.py    # Pianificatore irrigazione (fascia 1)
 │   ├── science/            # modello matematico FAO-56 esteso
 │   │   ├── substrate.py    # Substrate, BaseMaterial, mix
 │   │   ├── balance.py      # bilancio idrico FAO-56
-│   │   ├── et0.py          # calcolo ET₀
+│   │   ├── et0.py          # Penman-Monteith + Hargreaves + selettore
+│   │   ├── indoor.py       # radiazione indoor (tappa 5-D)
 │   │   ├── dual_kc.py      # FAO-56 capitolo 7
 │   │   ├── pot_physics.py  # Kp, geometrie del vaso
 │   │   ├── saucer.py       # modello sottovaso
 │   │   ├── nutrition.py    # coefficiente Kn (tappa 3)
 │   │   ├── fertigation.py  # applicazione fertirrigazione
 │   │   ├── calibration.py  # calibrazione da sensore
-│   │   └── radiation.py    # radiazione solare
+│   │   └── radiation.py    # radiazione solare astronomica
 │   └── io/                 # adapter di acquisizione e persistenza
 │       ├── persistence.py  # SQLite, schema v3 (tappa 4)
 │       ├── serialization.py # JSON formato v2 (tappa 4)
@@ -295,16 +322,19 @@ fitosim/
 │           ├── protocols.py    # SoilSensor, EnvironmentSensor (Protocol)
 │           ├── types.py        # SoilReading, EnvironmentReading
 │           ├── errors.py       # gerarchia eccezioni a 3 livelli
-│           ├── ecowitt.py      # adapter WH51 via Ecowitt Cloud
+│           ├── ecowitt.py      # adapter Ecowitt: WH51/WH52, WN31, Env
 │           ├── openmeteo.py    # adapter Open-Meteo (meteo)
 │           ├── http_json.py    # adapter generico per gateway ESP32
 │           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 865 test verdi
+├── tests/                  # 1007 test verdi
 ├── examples/               # esempi e demo end-to-end
-│   ├── tappa4_complete_demo.py
-│   └── README-tappa4-demo.md
+│   ├── tappa4_complete_demo.py        # demo Garden + persistenza + allerte
+│   ├── tappa5_A_penman_monteith_demo.py
+│   ├── tappa5_B_selettore_demo.py
+│   ├── tappa5_C_garden_demo.py
+│   └── tappa5_E_appartamento_demo.py  # demo end-to-end appartamento indoor
 ├── docs/
-│   ├── fitosim_user_manual.docx     # manuale utente, 17 capitoli
+│   ├── fitosim_user_manual.docx     # manuale utente
 │   ├── fitosim_status_report.docx   # report di status del progetto
 │   └── uml/
 │       ├── fitosim_packages.dot     # sorgente diagramma package
@@ -318,8 +348,9 @@ fitosim/
 
 Il progetto è strutturato in due fasce di lavoro, ognuna composta da più
 tappe. La fascia 1 ha costruito il modello idrico completo del singolo vaso;
-la fascia 2 sta estendendo la libreria con sensoristica reale, modello
-chimico, e architettura applicativa.
+la fascia 2 ha esteso la libreria con sensoristica reale, modello
+chimico, architettura applicativa, e raffinamento scientifico (Penman-Monteith
+e modello indoor).
 
 ### Fascia 1 — Modello idrico completo (chiusa)
 
@@ -330,7 +361,7 @@ personalizzati con factory `compose_substrate`, dual-Kc di FAO-56 capitolo
 fascia conta 423 test verdi che continuano a passare al byte ad ogni nuova
 consegna della fascia 2.
 
-### Fascia 2 — Sensori, chimica, architettura applicativa (4/5 tappe)
+### Fascia 2 — Sensori, chimica, architettura applicativa (chiusa)
 
 **Tappa 1 — Astrazione sensori (completa).** Ha costruito l'astrazione di
 sensore di fitosim come `Protocol` Python, separando il modello scientifico
@@ -367,41 +398,41 @@ hanno aggiunto in totale 179 test verdi:
 | D: forecast e eventi | Eventi pianificati e proiezione dello stato a N giorni | +36 |
 | E: sistema di allerte | Allerte derivate dallo stato per dashboard proattivo | +38 |
 
-**Tappa 5 — Penman-Monteith fisico e modello indoor (work in progress).**
-Chiuderà la fascia 2 con un raffinamento sostanziale del modello scientifico,
-articolato in cinque sotto-tappe progressive. Il design è stato discusso e
-le decisioni architetturali principali sono state prese; l'implementazione
-è in pianificazione.
+**Tappa 5 — Penman-Monteith fisico e modello indoor (completa).** Chiude la
+fascia 2 con un raffinamento sostanziale del modello scientifico, articolato
+in cinque sotto-tappe progressive che hanno aggiunto in totale 142 test
+verdi:
 
-Il primo raffinamento è l'introduzione del Penman-Monteith come formula di
-calcolo dell'evapotraspirazione, in due varianti: quella FAO-56 standard
-che produce ET₀ da moltiplicare per il Kc della specie, e quella fisica che
-applica direttamente l'equazione usando la resistenza stomatica e produce
-ET senza bisogno del Kc. Un meccanismo a tre vie selezionerà automaticamente
-la formula migliore disponibile (Penman-Monteith fisico → Penman-Monteith
-FAO-56 standard → Hargreaves) in funzione dei dati meteo e dei parametri
-della specie disponibili, seguendo il pattern "best available" raccomandato
-da FAO-56.
+| Sotto-tappa | Capacità | Test |
+|---|---|---|
+| A: Penman-Monteith come funzioni pure | Penman-Monteith fisico (con resistenza stomatica della specie) e standard FAO-56 nel modulo `science/et0.py`, accanto a Hargreaves-Samani | +25 |
+| B: selettore "best available" | `compute_et` sceglie automaticamente Penman-Monteith fisico → standard → Hargreaves in funzione dei dati meteo e dei parametri specie disponibili. Tracciabilità del metodo via `EtResult` e `EtMethod` | +17 |
+| C: integrazione nel Pot e nel Garden | `WeatherDay` come dataclass meteo giornaliera, `apply_balance_step_from_weather` sul Pot e `apply_step_all_from_weather` sul Garden, che invocano il selettore al posto di un ET₀ pre-calcolato | +30 |
+| D: modello indoor | Entità `Room` per gli spazi indoor con microclima condiviso, `IndoorMicroclimate` con varianti istantanea e giornaliera, `LightExposure` a tre livelli, modulo `science/indoor.py` per la radiazione, `EcowittAmbientSensor` per il sensore WN31, supporto WH52 nel `EcowittWH51SoilSensor`, persistenza delle Room nel database SQLite | +64 |
+| E: demo end-to-end appartamento | Script eseguibile (`tappa5_E_appartamento_demo.py`) che simula un appartamento invernale con tre vasi indoor in due Room diverse, mostra in azione la selezione automatica del metodo ET, la persistenza delle Room, e produce quattro grafici PNG di analisi | +6 |
 
-Il secondo raffinamento è il modello dei vasi indoor, con l'introduzione
-di una nuova entità di dominio chiamata `Room` che rappresenta lo spazio
-fisico in cui vivono uno o più vasi indoor con il loro microclima
-condiviso. La Room sarà mappata al sensore ambientale WN31 di Ecowitt
-(che è un trasmettitore di stanza, non una sonda dedicata al singolo vaso).
-La tappa 5 introdurrà anche il supporto al sensore WH52, l'upgrade del
-WH51 che misura anche temperatura ed EC del substrato; il WH51 continuerà
-ad essere supportato indefinitamente per chi ce l'ha già installato. Le
-raffinatezze del modello indoor (riscaldamento, ventilazione minima
-convettiva, esposizione luminosa parametrizzata a tre livelli) saranno
-affrontate fin dalla tappa 5 con fallback automatico verso formule più
-semplici quando i parametri non sono disponibili.
+I due raffinamenti sono complementari. Il selettore "best available" cattura
+la varianza del meteo outdoor con la migliore formula disponibile per ogni
+giorno; il modello indoor lo applica al microclima della stanza invece che
+al meteo del balcone, alimentato dal sensore WN31 specifico per ambienti
+chiusi. Insieme permettono di trattare con la stessa libreria un balcone
+outdoor estivo soleggiato e un appartamento invernale con vasi sparsi tra
+salotto e camera da letto, ognuno con il suo microclima e le sue regole.
 
-La tappa 5 è stimata in **80-100 test nuovi** che porteranno la suite finale
-a circa 945-965 test totali. Per i dettagli architetturali e l'articolazione
-delle cinque sotto-tappe (A: Penman-Monteith come funzione pura, B:
-selezione automatica, C: integrazione nel Pot/Garden, D: modello indoor con
-Room e WH52, E: demo end-to-end dell'appartamento invernale), vedi lo
-status report del progetto.
+Per i dettagli architetturali e le decisioni di design di ciascuna
+sotto-tappa, vedi lo status report del progetto.
+
+### Prossimo passo: fascia 3 di calibrazione
+
+Con la fascia 2 chiusa, il prossimo passo è la **fascia 3 di calibrazione**:
+una fase concettualmente diversa dalle precedenti, meno "costruzione di
+nuove API" e più "messa a punto e validazione contro realtà". I dati reali
+del balcone milanese (la stazione Ecowitt è già installata e raccoglie dati
+da mesi) saranno usati per raffinare i numeri specifici del modello: le
+frazioni della radiazione indoor, i parametri Kc del catalogo specie, le
+soglie del selettore "best available", la resistenza stomatica delle specie
+con dati reali. Lo scopo è trasformare fitosim da "libreria genericamente
+plausibile" a "libreria calibrata per il TUO balcone milanese".
 
 ## Documentazione
 
@@ -420,11 +451,23 @@ disponibili, e un glossario dei termini agronomici.
 quantitativo dello stato di sviluppo, con metriche, roadmap e storico delle
 consegne. Aggiornato ad ogni chiusura di tappa.
 
-**Demo end-to-end** (`examples/tappa4_complete_demo.py` con README di
-accompagnamento): uno script Python eseguibile che mostra in azione tutte
-le capacità della tappa 4 su uno scenario realistico di tre vasi di
-basilico monitorati per 21 giorni, con output didattico tra blocchi di
-giorni. Gira da solo in pochi secondi senza hardware reale.
+**Demo end-to-end della tappa 4** (`examples/tappa4_complete_demo.py`):
+script Python eseguibile che mostra in azione tutte le capacità della tappa
+4 su uno scenario realistico di tre vasi di basilico monitorati per 21
+giorni, con output didattico tra blocchi di giorni.
+
+**Demo end-to-end della tappa 5** (`examples/tappa5_E_appartamento_demo.py`):
+script che simula un appartamento invernale con tre vasi indoor sparsi tra
+salotto e camera da letto, mostra in azione la selezione automatica del
+metodo di evapotraspirazione (`compute_et`), la persistenza delle Room nel
+database SQLite, e produce quattro grafici PNG di analisi dell'andamento
+idrico. Le sotto-tappe A, B e C hanno demo pedagogiche dedicate
+(`tappa5_A_penman_monteith_demo.py`, `tappa5_B_selettore_demo.py`,
+`tappa5_C_garden_demo.py`) che articolano un pezzo per volta del
+raffinamento scientifico.
+
+Tutte le demo girano in pochi secondi senza hardware reale grazie agli
+adapter di sensori CSV-fixture.
 
 **Diagrammi UML** (`docs/uml/`): due diagrammi (package e classi del
 dominio) come sorgenti DOT versionati e PNG renderizzati. Si rigenerano

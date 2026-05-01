@@ -1,11 +1,25 @@
 // Diagramma delle classi del dominio fitosim.
 //
-// Mostra le entità di dominio principali con i loro attributi, metodi
-// pubblici e relazioni. Il taglio è "zoom sul cuore del sistema": le
-// classi che vivono in domain/ e le loro principali dipendenze verso
-// science/. Sono escluse le dataclass di ritorno (FullStepResult,
-// SensorUpdateResult, ForecastResult) per non sovraccaricare il
-// diagramma; sono menzionate nei tipi di ritorno dei metodi.
+// Versione di fine tappa 5 (chiusura fascia 2). Aggiunge rispetto alla
+// versione precedente:
+//   - L'entità `Room` con `IndoorMicroclimate`, `MicroclimateKind` e
+//     `LightExposure` (nuovo modulo domain/room.py).
+//   - L'enum `EtMethod` e la dataclass `EtResult` (selettore "best
+//     available" del modulo science/et0.py).
+//   - La dataclass `WeatherDay` (modulo domain/weather.py, introdotto
+//     dalla sotto-tappa C per apply_balance_step_from_weather).
+//   - Il `Pot` ora ha `room_id`, `light_exposure`, e i nuovi metodi
+//     `apply_balance_step_from_weather` e `apply_balance_step_from_indoor`.
+//   - Il `Garden` ora ha la collezione di Room con i suoi accessori
+//     (add_room, get_room, pots_in_room, ...) e i metodi
+//     `apply_step_all_from_weather` e `apply_step_all_from_indoor`.
+//   - Il sensore ambientale `EnvironmentSensor` (Protocol) e il
+//     `EcowittAmbientSensor` per il WN31.
+//
+// Sono escluse le dataclass di ritorno (FullStepResult,
+// SensorUpdateResult, ForecastResult, FertigationResult) per non
+// sovraccaricare il diagramma; sono menzionate nei tipi di ritorno dei
+// metodi.
 //
 // Convenzioni di notazione UML:
 //   - Composizione (rombo pieno):  Garden ◆── Pot
@@ -30,7 +44,7 @@ digraph fitosim_classes {
     // ============================================================
     Garden [
         fillcolor="#1F3864", fontcolor="white", fontsize=11,
-        label="{\<\<dataclass\>\>\nGarden|+ name: str\l+ location_description: str\l+ pots: dict\<str, Pot\>\l+ scheduled_events: list\<ScheduledEvent\>\l+ channel_id_map: dict\<str, str\>\l|+ add_pot(pot: Pot)\l+ get_pot(label: str) → Pot\l+ remove_pot(label: str)\l+ apply_step_all(et_0_mm, current_date, rainfall_mm)\l+ update_all_from_sensors(sensor: SoilSensor) → dict\l+ set_channel_id(label: str, channel_id: str)\l+ add_scheduled_event(event: ScheduledEvent)\l+ events_due_today(date: date) → list\l+ forecast(weather: list) → ForecastResult\l+ current_alerts(date: date) → list\<Alert\>\l+ forecast_alerts(weather: list) → list\<Alert\>\l}"
+        label="{\<\<dataclass\>\>\nGarden|+ name: str\l+ location_description: str\l+ pots: dict\<str, Pot\>\l+ rooms: dict\<str, Room\>\l+ scheduled_events: list\<ScheduledEvent\>\l+ channel_id_map: dict\<str, str\>\l|+ add_pot(pot: Pot)\l+ get_pot(label: str) → Pot\l+ remove_pot(label: str)\l+ add_room(room: Room)\l+ get_room(room_id: str) → Room\l+ pots_in_room(room_id: str) → list\l+ apply_step_all(et_0_mm, current_date, rainfall_mm)\l+ apply_step_all_from_weather(weather: WeatherDay, ...)\l+ apply_step_all_from_indoor(microclimate: IndoorMicroclimate, ...)\l+ update_all_from_sensors(sensor: SoilSensor) → dict\l+ add_scheduled_event(event: ScheduledEvent)\l+ events_due_today(date: date) → list\l+ forecast(weather: list) → ForecastResult\l+ current_alerts(date: date) → list\<Alert\>\l+ forecast_alerts(weather: list) → list\<Alert\>\l}"
     ];
 
     // ============================================================
@@ -38,7 +52,7 @@ digraph fitosim_classes {
     // ============================================================
     Pot [
         fillcolor="#D5E8F0",
-        label="{\<\<dataclass\>\>\nPot|+ label: str\l+ species: Species\l+ substrate: Substrate\l+ pot_volume_l: float\l+ pot_diameter_cm: float\l+ pot_shape: PotShape\l+ pot_material: PotMaterial\l+ location: Location\l+ planting_date: date\l+ rainfall_exposure: float\l+ saucer_capacity_l: float\l+ state_mm: float\l+ salt_mass_meq: float\l+ ph_substrate: float\l+ saucer_state_mm: float\l|+ state_theta: float (property)\l+ ec_substrate_mscm: float (property)\l+ fc_mm / pwp_mm / alert_mm: float (property)\l+ kp: float (property)\l+ apply_balance_step(et_0_mm, water_input_mm, date)\l+ apply_step(et_0_mm, current_date, rainfall_volume_l)\l+ apply_fertigation_step(volume_l, ec_mscm, ph, date)\l+ apply_rainfall_step(rainfall_mm, current_date)\l+ update_from_sensor(theta_observed) → SensorUpdateResult\l}"
+        label="{\<\<dataclass\>\>\nPot|+ label: str\l+ species: Species\l+ substrate: Substrate\l+ pot_volume_l: float\l+ pot_diameter_cm: float\l+ pot_shape: PotShape\l+ pot_material: PotMaterial\l+ location: Location\l+ planting_date: date\l+ rainfall_exposure: float\l+ saucer_capacity_l: float\l+ room_id: str?  (indoor)\l+ light_exposure: LightExposure?\l+ state_mm: float\l+ salt_mass_meq: float\l+ ph_substrate: float\l+ saucer_state_mm: float\l|+ state_theta: float (property)\l+ ec_substrate_mscm: float (property)\l+ fc_mm / pwp_mm / alert_mm: float (property)\l+ kp: float (property)\l+ apply_balance_step(et_0_mm, water_input_mm, date)\l+ apply_balance_step_from_weather(weather: WeatherDay, ...)\l+ apply_balance_step_from_indoor(microclimate: IndoorMicroclimate, ...)\l+ apply_step(et_0_mm, current_date, rainfall_volume_l)\l+ apply_fertigation_step(volume_l, ec_mscm, ph, date)\l+ apply_rainfall_step(rainfall_mm, current_date)\l+ update_from_sensor(theta_observed) → SensorUpdateResult\l}"
     ];
 
     // ============================================================
@@ -46,7 +60,7 @@ digraph fitosim_classes {
     // ============================================================
     Species [
         fillcolor="#D5E8F0",
-        label="{\<\<dataclass frozen\>\>\nSpecies|+ common_name: str\l+ scientific_name: str\l+ kc_initial: float\l+ kc_mid: float\l+ kc_late: float\l+ kcb_initial / kcb_mid / kcb_late: float?\l+ depletion_fraction: float\l+ ec_optimal_min_mscm: float?\l+ ec_optimal_max_mscm: float?\l+ ph_optimal_min: float?\l+ ph_optimal_max: float?\l|+ supports_chemistry_model: bool (property)\l+ supports_dual_kc: bool (property)\l}"
+        label="{\<\<dataclass frozen\>\>\nSpecies|+ common_name: str\l+ scientific_name: str\l+ kc_initial / kc_mid / kc_late: float\l+ kcb_initial / kcb_mid / kcb_late: float?\l+ depletion_fraction: float\l+ stomatal_resistance_s_m: float?\l+ crop_height_m: float?\l+ ec_optimal_min_mscm: float?\l+ ec_optimal_max_mscm: float?\l+ ph_optimal_min: float?\l+ ph_optimal_max: float?\l|+ supports_chemistry_model: bool (property)\l+ supports_dual_kc: bool (property)\l+ supports_penman_monteith_physical: bool (property)\l}"
     ];
 
     // ============================================================
@@ -60,6 +74,50 @@ digraph fitosim_classes {
     BaseMaterial [
         fillcolor="#E8F0D8",
         label="{\<\<dataclass frozen\>\>\nBaseMaterial|+ name: str\l+ theta_fc: float\l+ theta_pwp: float\l+ density_kg_l: float\l+ cec_meq_per_100g: float\l+ ph_typical: float\l}"
+    ];
+
+    // ============================================================
+    //  Room: spazio indoor con microclima condiviso (tappa 5 D)
+    // ============================================================
+    Room [
+        fillcolor="#D5E8F0",
+        label="{\<\<dataclass\>\>\nRoom|+ room_id: str\l+ name: str\l+ wn31_channel_id: str?\l+ current_microclimate: IndoorMicroclimate?\l+ default_wind_m_s: float (= 0.5)\l|+ update_current_microclimate(m: IndoorMicroclimate)\l}"
+    ];
+
+    IndoorMicroclimate [
+        fillcolor="#D5E8F0",
+        label="{\<\<dataclass frozen\>\>\nIndoorMicroclimate|+ kind: MicroclimateKind\l+ temperature_c: float\l+ humidity_relative: float (0..1)\l+ t_min: float?\l+ t_max: float?\l+ timestamp: datetime?\l}"
+    ];
+
+    MicroclimateKind [
+        fillcolor="#F0F0F0",
+        label="{\<\<enum\>\>\nMicroclimateKind|INSTANT\lDAILY\l}"
+    ];
+
+    LightExposure [
+        fillcolor="#F0F0F0",
+        label="{\<\<enum\>\>\nLightExposure|DARK\lINDIRECT_BRIGHT\lDIRECT_SUN\l}"
+    ];
+
+    // ============================================================
+    //  WeatherDay (tappa 5 C)
+    // ============================================================
+    WeatherDay [
+        fillcolor="#D5E8F0",
+        label="{\<\<dataclass frozen\>\>\nWeatherDay|+ date_: date\l+ t_min: float\l+ t_max: float\l+ humidity_relative: float?\l+ wind_speed_m_s: float?\l+ solar_radiation_mj_m2_day: float?\l+ rainfall_mm: float\l|+ has_full_weather: bool (property)\l}"
+    ];
+
+    // ============================================================
+    //  Selettore di evapotraspirazione (tappa 5 A/B)
+    // ============================================================
+    EtMethod [
+        fillcolor="#F0F0F0",
+        label="{\<\<enum\>\>\nEtMethod|PENMAN_MONTEITH_PHYSICAL\l(produce ET, NO Kc)\lPENMAN_MONTEITH_STANDARD\l(produce ET₀, ×Kc)\lHARGREAVES_SAMANI\l(produce ET₀, ×Kc)\l}"
+    ];
+
+    EtResult [
+        fillcolor="#E8F0D8",
+        label="{\<\<dataclass frozen\>\>\nEtResult|+ value_mm: float\l+ method: EtMethod\l}"
     ];
 
     // ============================================================
@@ -116,7 +174,17 @@ digraph fitosim_classes {
 
     SoilReading [
         fillcolor="#FCE5CD",
-        label="{\<\<dataclass frozen\>\>\nSoilReading|+ timestamp: datetime\l+ theta_volumetric: float\l+ ec_mscm: float?\l+ temperature_c: float?\l+ ph: float?\l}"
+        label="{\<\<dataclass frozen\>\>\nSoilReading|+ timestamp: datetime\l+ theta_volumetric: float\l+ ec_mscm: float?\l+ temperature_c: float?\l+ ph: float?\l+ quality: ReadingQuality\l}"
+    ];
+
+    EnvironmentSensor [
+        fillcolor="#FCE5CD",
+        label="{\<\<Protocol\>\>\nEnvironmentSensor|+ current_state() → EnvironmentReading\l+ daily_aggregate(target_date) → EnvironmentReading\l}"
+    ];
+
+    EcowittAmbientSensor [
+        fillcolor="#FCE5CD",
+        label="{EcowittAmbientSensor\n(io/sensors/ecowitt)|+ application_key: str\l+ api_key: str\l+ mac: str\l|+ from_env() → EcowittAmbientSensor\l+ current_state(channel_id: str) → IndoorMicroclimate\l+ daily_aggregate(channel_id, target_date) → IndoorMicroclimate\l}"
     ];
 
     // ============================================================
@@ -124,7 +192,7 @@ digraph fitosim_classes {
     // ============================================================
     GardenPersistence [
         fillcolor="#FCE5CD",
-        label="{GardenPersistence\n(io/persistence)|+ db_path: str\l|+ register_species(s: Species)\l+ register_substrate(s: Substrate)\l+ register_base_material(m: BaseMaterial)\l+ save_garden(g: Garden, snapshot_timestamp)\l+ load_garden(name: str) → Garden\l+ query_states(garden, pot, start, end) → list\l+ close()\l}"
+        label="{GardenPersistence\n(io/persistence)|+ db_path: str\l|+ register_species(s: Species)\l+ register_substrate(s: Substrate)\l+ register_base_material(m: BaseMaterial)\l+ register_room(r: Room)\l+ save_garden(g: Garden, snapshot_timestamp)\l+ load_garden(name: str) → Garden\l+ query_states(garden, pot, start, end) → list\l+ close()\l}"
     ];
 
     // ============================================================
@@ -135,6 +203,10 @@ digraph fitosim_classes {
     // i Pot non hanno più senso (il loro stato vive nel Garden).
     Garden -> Pot [arrowtail=diamond, dir=back, label="contiene 1..*",
                     color="#1F3864", penwidth=1.5];
+
+    // Composizione: il Garden contiene anche le Room (zero o più).
+    Garden -> Room [arrowtail=diamond, dir=back, label="contiene 0..*",
+                     color="#1F3864", penwidth=1.5];
 
     // Composizione: il Garden contiene gli ScheduledEvent.
     Garden -> ScheduledEvent [arrowtail=diamond, dir=back, label="pianifica 0..*",
@@ -152,6 +224,22 @@ digraph fitosim_classes {
     Substrate -> BaseMaterial [arrowtail=odiamond, dir=back, label="composto da 0..*",
                                 style=dashed];
 
+    // Riferimento debole: il Pot indoor riferisce a una Room via
+    // room_id (non possiede la Room: la Room vive nel Garden).
+    Pot -> Room [arrowtail=odiamond, dir=back, label="vive in (indoor)",
+                  style=dashed, color="#666666"];
+
+    // Composizione: la Room contiene un IndoorMicroclimate (mutabile).
+    Room -> IndoorMicroclimate [arrowtail=diamond, dir=back,
+                                  label="microclima\ncorrente"];
+
+    // IndoorMicroclimate usa MicroclimateKind.
+    IndoorMicroclimate -> MicroclimateKind [arrowhead=none, style=dashed,
+                                              label="usa"];
+
+    // Pot e Room usano LightExposure.
+    Pot -> LightExposure [arrowhead=none, style=dashed];
+
     // Composizione: Alert ha campi typed con AlertSeverity e AlertCategory.
     Alert -> AlertSeverity [arrowhead=none, style=dashed, label="usa"];
     Alert -> AlertCategory [arrowhead=none, style=dashed, label="usa"];
@@ -163,24 +251,47 @@ digraph fitosim_classes {
     // Dipendenza: Garden produce Alert (chiamando current_alerts/forecast_alerts).
     Garden -> Alert [style=dashed, label="produce", color="#666666"];
 
-    // Dipendenza: Garden usa WeatherDayForecast come input di forecast.
-    Garden -> WeatherDayForecast [style=dashed, label="usa", color="#666666"];
-
-    // Dipendenza: Garden interroga il SoilSensor (Protocol).
-    Garden -> SoilSensor [style=dashed, label="legge da", color="#666666"];
-    SoilSensor -> SoilReading [style=dashed, label="ritorna"];
+    // Dipendenze del Garden sui dataclass meteo.
+    Garden -> WeatherDayForecast [style=dashed, label="usa\n(forecast)",
+                                    color="#666666"];
+    Garden -> WeatherDay [style=dashed, label="usa\n(step weather)",
+                           color="#666666"];
+    Garden -> IndoorMicroclimate [style=dashed, label="usa\n(step indoor)",
+                                    color="#666666"];
 
     // Dipendenza: Pot riceve update da SoilReading.
     Pot -> SoilReading [style=dashed, color="#666666", label="update_from_sensor"];
+
+    // Dipendenze del Pot sui nuovi dataclass meteo (sotto-tappa C/D).
+    Pot -> WeatherDay [style=dashed, color="#666666", label="apply_step_from_weather"];
+    Pot -> IndoorMicroclimate [style=dashed, color="#666666",
+                                label="apply_step_from_indoor"];
+
+    // Pot usa il selettore di evapotraspirazione.
+    Pot -> EtResult [style=dashed, color="#666666", label="ET via\ncompute_et"];
+    EtResult -> EtMethod [arrowhead=none, style=dashed, label="usa"];
+
+    // Sensori (Protocol) e loro letture.
+    Garden -> SoilSensor [style=dashed, label="legge da", color="#666666"];
+    SoilSensor -> SoilReading [style=dashed, label="ritorna"];
+    EnvironmentSensor -> IndoorMicroclimate [style=dashed,
+                                                label="ritorna",
+                                                color="#666666"];
+
+    // EcowittAmbientSensor implementa EnvironmentSensor (duck typing).
+    EcowittAmbientSensor -> EnvironmentSensor [arrowhead=empty, color="#E8923C",
+                                                 label="implementa"];
 
     // Dipendenza: GardenPersistence persiste Garden (e il suo catalogo).
     GardenPersistence -> Garden [style=dashed, label="persiste", color="#E8923C",
                                   penwidth=1.5];
     GardenPersistence -> Species [style=dashed, color="#E8923C"];
     GardenPersistence -> Substrate [style=dashed, color="#E8923C"];
+    GardenPersistence -> Room [style=dashed, color="#E8923C", label="catalogo"];
 
     // Layout hints per migliorare la disposizione.
     { rank=same; AlertSeverity; AlertCategory; }
-    { rank=same; Location; PotShape; }
-    { rank=same; SoilSensor; SoilReading; }
+    { rank=same; Location; PotShape; LightExposure; MicroclimateKind; }
+    { rank=same; SoilSensor; EnvironmentSensor; }
+    { rank=same; SoilReading; IndoorMicroclimate; }
 }
