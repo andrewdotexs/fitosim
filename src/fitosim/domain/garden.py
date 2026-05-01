@@ -65,7 +65,7 @@ from datetime import date, timedelta
 from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 from fitosim.domain.alerts import ALL_RULES, Alert
-from fitosim.domain.pot import FullStepResult, Pot, SensorUpdateResult
+from fitosim.domain.pot import FullStepResult, Location, Pot, SensorUpdateResult
 from fitosim.domain.room import IndoorMicroclimate, Room
 from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
 from fitosim.domain.weather import WeatherDay
@@ -806,6 +806,14 @@ class Garden:
 
         results: Dict[str, FullStepResult] = {}
         for label, pot in self._pots.items():
+            # Saltiamo silenziosamente i vasi indoor: non vedono il
+            # meteo esterno e devono essere processati con il metodo
+            # apply_step_all_from_indoor. Il pattern è simmetrico a
+            # quello del metodo from_indoor che salta i vasi outdoor
+            # o senza room_id matchato. Per giardini misti (outdoor +
+            # indoor) il chiamante fa due chiamate distinte.
+            if pot.location == Location.INDOOR:
+                continue
             # Conversione mm → litri identica a apply_step_all.
             rainfall_volume_l = rainfall_mm * pot.surface_area_m2
 
