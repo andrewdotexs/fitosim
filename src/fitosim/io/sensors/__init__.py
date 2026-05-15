@@ -53,6 +53,14 @@ from fitosim.io.sensors.http_json import (
     HttpJsonSchemaV1,
     HttpJsonSoilSensor,
 )
+from fitosim.io.sensors.measurement import (
+    CANONICAL_PARAMETERS,
+    CUSTOM_NAMESPACE_PREFIX,
+    Measurement,
+    MeasurementValidationError,
+    SCHEMA_VERSION,
+    physical_range,
+)
 from fitosim.io.sensors.openmeteo import OpenMeteoEnvironmentSensor
 from fitosim.io.sensors.protocols import EnvironmentSensor, SoilSensor
 from fitosim.io.sensors.types import (
@@ -68,7 +76,15 @@ __all__ = [
     "SensorTemporaryError",
     "SensorPermanentError",
     "SensorDataQualityError",
-    # Tipi di ritorno
+    "MeasurementValidationError",
+    # Tipo canonico (spec sensori v1)
+    "Measurement",
+    "SCHEMA_VERSION",
+    "CANONICAL_PARAMETERS",
+    "CUSTOM_NAMESPACE_PREFIX",
+    "physical_range",
+    # Tipi di ritorno legacy (in fase di deprecation per gli adapter
+    # ancora non migrati alla spec sensori v1)
     "EnvironmentReading",
     "SoilReading",
     "ReadingQuality",

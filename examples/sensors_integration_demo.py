@@ -1,15 +1,18 @@
 """
-Demo: integrazione del nuovo strato sensori della fascia 2 (tappa 1).
+Demo: integrazione del nuovo strato sensori (spec sensori v1).
 
 Cosa dimostra questo demo
 -------------------------
 
-La tappa 1 della fascia 2 ha aggiunto a fitosim un livello di
-astrazione uniforme per leggere dati da sorgenti esterne. Tutti gli
-adapter — Open-Meteo per il forecast cloud, Ecowitt per la stazione
-personale, le fixture CSV per i dati storici — implementano la stessa
-interfaccia, e il chiamante lavora sempre con due tipi canonici
-(EnvironmentReading e SoilReading) indipendentemente dal provider.
+Il livello di astrazione sensori di fitosim espone tutte le sorgenti
+esterne (Open-Meteo per il forecast cloud, Ecowitt per la stazione
+personale, gateway HTTP-JSON per sensori custom, fixture CSV per i
+dati storici) attraverso un unico tipo canonico, la `Measurement`
+`(sensor_id, timestamp, parameter, value)`, secondo la spec sensori
+v1 documentata in `the-pot/docs/the_pot_sensors_spec.md`. Tutti gli
+adapter producono liste piatte di Measurement con vocabolario
+controllato (`air_temperature_c`, `soil_theta`, ecc.) o estensioni
+`custom:*`.
 
 Questo demo mostra concretamente cosa significa quel "livello di
 astrazione uniforme" attraverso uno scenario realistico. Simuliamo
@@ -82,8 +85,37 @@ from fitosim.domain.species import BASIL
 from fitosim.io.sensors import (
     CsvEnvironmentFixture,
     CsvSoilFixture,
+    Measurement,
+)
+from fitosim.io.sensors.measurement import (
+    CUSTOM_NAMESPACE_PREFIX,
+    PARAM_AIR_TEMPERATURE_C,
+    PARAM_RAINFALL_MM,
+    PARAM_SOIL_THETA,
 )
 from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+
+
+# Parametro custom per ET₀ pre-calcolato esposto dalle fixture
+# (Open-Meteo e CSV). Non è canonico nella spec v1 perché ET₀ è una
+# grandezza derivata, non una misura diretta.
+PARAM_ET0_MM = f"{CUSTOM_NAMESPACE_PREFIX}et0_mm"
+
+
+def _measurements_by_date(
+    measurements: list[Measurement],
+) -> dict[date, dict[str, float]]:
+    """Raggruppa una lista piatta di Measurement per data solare.
+
+    Ritorna un dict `{date: {parameter: value}}`. Utile quando il
+    consumatore vuole iterare giorno per giorno e accedere ai
+    parametri per nome (es. `day_data[PARAM_AIR_TEMPERATURE_C]`).
+    """
+    out: dict[date, dict[str, float]] = {}
+    for m in measurements:
+        d = m.timestamp.date()
+        out.setdefault(d, {})[m.parameter] = m.value
+    return out
 
 
 # =========================================================================
@@ -196,9 +228,11 @@ def generate_soil_csv(
     rows = []
     forecast = env_fixture.forecast(latitude=45.46, longitude=9.19,
                                      days=SIMULATION_DAYS)
+    by_date = _measurements_by_date(forecast)
+    sorted_dates = sorted(by_date.keys())
 
-    for i, env_reading in enumerate(forecast):
-        d = SIMULATION_START + timedelta(days=i)
+    for i, d in enumerate(sorted_dates):
+        day_data = by_date[d]
 
         # Decisione di irrigazione: stessa logica del nostro sistema
         # (irriga quando si scende sotto la soglia di allerta).
@@ -208,9 +242,10 @@ def generate_soil_csv(
             # gesto reale "fino a vedere l'acqua dal fondo".
             irrigazione = shadow_pot.water_to_field_capacity() * 1.05
 
-        # Applica un giorno di bilancio idrico.
-        et0 = env_reading.et0_mm if env_reading.et0_mm else 4.0
-        pioggia = env_reading.rain_mm if env_reading.rain_mm else 0.0
+        # Applica un giorno di bilancio idrico. ET₀ e pioggia letti
+        # dalle Measurement del giorno (default ragionevoli se assenti).
+        et0 = day_data.get(PARAM_ET0_MM, 4.0)
+        pioggia = day_data.get(PARAM_RAINFALL_MM, 0.0)
         shadow_pot.apply_balance_step(
             et_0_mm=et0,
             water_input_mm=pioggia + irrigazione,
@@ -293,10 +328,13 @@ def run_simulation(env_fixture: CsvEnvironmentFixture) -> dict:
     )
 
     # Recupero delle forzanti meteo per tutti i giorni del periodo.
-    # Una sola chiamata al sensore restituisce la lista completa.
+    # Una sola chiamata al sensore restituisce la lista piatta delle
+    # Measurement, che poi raggruppiamo per data per iterare giorno
+    # per giorno.
     forecast = env_fixture.forecast(
         latitude=45.46, longitude=9.19, days=SIMULATION_DAYS,
     )
+    by_date = _measurements_by_date(forecast)
 
     history = {
         "dates": [],
@@ -311,8 +349,8 @@ def run_simulation(env_fixture: CsvEnvironmentFixture) -> dict:
         "irrigation_doses_mm": [],
     }
 
-    for env_reading in forecast:
-        d = env_reading.timestamp.date()
+    for d in sorted(by_date.keys()):
+        day_data = by_date[d]
 
         # Decisione di irrigazione e bilancio idrico standard.
         irrigazione = 0.0
@@ -321,8 +359,9 @@ def run_simulation(env_fixture: CsvEnvironmentFixture) -> dict:
             history["irrigation_dates"].append(d)
             history["irrigation_doses_mm"].append(irrigazione)
 
-        et0 = env_reading.et0_mm if env_reading.et0_mm else 4.0
-        pioggia = env_reading.rain_mm if env_reading.rain_mm else 0.0
+        et0 = day_data.get(PARAM_ET0_MM, 4.0)
+        pioggia = day_data.get(PARAM_RAINFALL_MM, 0.0)
+        temperatura = day_data.get(PARAM_AIR_TEMPERATURE_C)
         pot.apply_balance_step(
             et_0_mm=et0,
             water_input_mm=pioggia + irrigazione,
@@ -332,7 +371,7 @@ def run_simulation(env_fixture: CsvEnvironmentFixture) -> dict:
         # Registriamo lo stato di fine giornata per la visualizzazione.
         history["dates"].append(d)
         history["et0"].append(et0)
-        history["temperature"].append(env_reading.temperature_c)
+        history["temperature"].append(temperatura)
         history["rain"].append(pioggia)
         history["state_mm"].append(pot.state_mm)
         history["state_theta"].append(pot.state_theta)
@@ -346,11 +385,17 @@ def aggregate_soil_to_daily(soil_fixture: CsvSoilFixture) -> dict:
     la mediana, come faresti per la calibrazione (ricetta 3 del
     manuale utente). La mediana è più robusta del massimo o del medio
     rispetto agli outlier orari.
+
+    Filtra le `soil_fixture.measurements` per parametro
+    `PARAM_SOIL_THETA` (la fixture potrebbe esporne altri se il CSV
+    include temperatura/EC del WH52).
     """
-    by_date = {}
-    for ts, reading in soil_fixture.readings:
-        d = ts.date()
-        by_date.setdefault(d, []).append(reading.theta_volumetric)
+    by_date: dict[date, list[float]] = {}
+    for m in soil_fixture.measurements:
+        if m.parameter != PARAM_SOIL_THETA:
+            continue
+        d = m.timestamp.date()
+        by_date.setdefault(d, []).append(m.value)
 
     sorted_dates = sorted(by_date.keys())
     daily_dates = []
@@ -514,8 +559,12 @@ def main():
           "(CsvSoilFixture)...")
     generate_soil_csv(soil_csv, env_fixture)
     soil_fixture = CsvSoilFixture(soil_csv)
-    print(f"      → {len(soil_fixture.readings)} letture orarie del WH51 "
-          f"sintetico")
+    n_soil_theta = sum(
+        1 for m in soil_fixture.measurements
+        if m.parameter == PARAM_SOIL_THETA
+    )
+    print(f"      → {n_soil_theta} letture orarie del WH51 sintetico "
+          f"(Measurement soil_theta)")
 
     print("\n[4/4] Esecuzione simulazione + visualizzazione...")
     history = run_simulation(env_fixture)

@@ -59,10 +59,18 @@ from typing import Optional, Union
 from fitosim.io.sensors.errors import (
     SensorPermanentError,
 )
-from fitosim.io.sensors.types import (
-    EnvironmentReading,
-    ReadingQuality,
-    SoilReading,
+from fitosim.io.sensors.measurement import (
+    CUSTOM_NAMESPACE_PREFIX,
+    Measurement,
+    PARAM_AIR_HUMIDITY,
+    PARAM_AIR_TEMPERATURE_C,
+    PARAM_RAINFALL_MM,
+    PARAM_SOIL_EC_MSCM,
+    PARAM_SOIL_PH,
+    PARAM_SOIL_TEMPERATURE_C,
+    PARAM_SOIL_THETA,
+    PARAM_SOLAR_RADIATION_MJ_M2,
+    PARAM_WIND_SPEED_M_S,
 )
 
 
@@ -144,38 +152,158 @@ class CsvEnvironmentFixture:
     `current_conditions()` e `forecast()` lavorano sull'indice in
     memoria senza tornare a leggere il file.
 
+    Formato di ritorno (spec sensori v1)
+    ------------------------------------
+
+    La fixture produce **liste piatte di `Measurement`** canoniche.
+    Ogni riga del CSV genera 1..N Measurement (una per parametro non
+    vuoto), tutte con lo stesso `sensor_id` e `timestamp`. Mappatura
+    delle colonne CSV → parametri canonici:
+
+      - `t_min` + `t_max` → un'unica Measurement `air_temperature_c`
+        con valore pari alla media (coerente con il vecchio
+        comportamento di `OpenMeteoEnvironmentSensor`).
+      - `rain_mm` → Measurement `rainfall_mm`.
+      - `humidity` (opz.) → Measurement `air_humidity` (0..1).
+      - `wind` (opz.) → Measurement `wind_speed_m_s`.
+      - `radiation` (opz.) → Measurement `solar_radiation_mj_m2`.
+      - `et0_mm` (opz.) → Measurement `custom:et0_mm` (ET₀ è un
+        valore derivato, non canonico; viene preservato come
+        extension per fixture che hanno ET₀ pre-calcolato da fonte
+        autorevole tipo Open-Meteo Archive).
+
     Convenzioni
     -----------
 
       - Le date nel CSV devono essere in formato ISO `YYYY-MM-DD`.
-      - Per ogni riga, viene costruito un EnvironmentReading con
-        timestamp alle 12:00 UTC del giorno (stessa convenzione di
-        OpenMeteoEnvironmentSensor per coerenza).
+      - Per ogni riga, le Measurement portano `timestamp` alle 12:00
+        UTC del giorno (stessa convenzione di
+        `OpenMeteoEnvironmentSensor` per coerenza).
       - I parametri `latitude` e `longitude` di `current_conditions()`
         e `forecast()` sono accettati per conformità al Protocol ma
         ignorati: il fixture restituisce sempre i dati del file,
         indipendentemente dalla posizione richiesta.
+      - `sensor_id` di default è `csv_fixture:<filename_stem>` (es.
+        `csv_fixture:weather_milan_2026`); l'utente può sovrascriverlo
+        passando `sensor_id=...` al costruttore.
 
     Costruzione
     -----------
 
         fixture = CsvEnvironmentFixture("/path/to/weather.csv")
-        # oppure con pathlib.Path:
-        fixture = CsvEnvironmentFixture(Path("weather.csv"))
+        fixture = CsvEnvironmentFixture(
+            "/path/to/weather.csv",
+            sensor_id="csv_fixture:milan_2026",
+        )
     """
 
-    def __init__(self, csv_path: Union[str, Path]) -> None:
+    # Parametro non canonico per ET₀ pre-calcolato: vive nel namespace
+    # custom:* perché ET₀ non è una misura diretta del sensore.
+    _PARAM_ET0_MM = f"{CUSTOM_NAMESPACE_PREFIX}et0_mm"
+
+    def __init__(
+        self,
+        csv_path: Union[str, Path],
+        sensor_id: Optional[str] = None,
+    ) -> None:
         self._csv_path = Path(csv_path)
         if not self._csv_path.exists():
             raise SensorPermanentError(
                 f"File CSV non trovato: {self._csv_path}",
                 provider=PROVIDER_NAME,
             )
-        # Indice {date: EnvironmentReading} popolato al momento della
-        # costruzione. Memoria modesta (un Reading è qualche centinaio
-        # di byte; 365 giorni = ~150 KB).
-        self._readings_by_date: dict[date, EnvironmentReading] = {}
+        # sensor_id opaco: convenzione raccomandata dalla spec sensori
+        # v1 è `<provider>:<device_type>:<instance>`. Per la fixture,
+        # `csv_fixture:<filename_stem>` è una scelta semplice e
+        # diagnostica (l'utente può sovrascrivere).
+        self._sensor_id = sensor_id or (
+            f"{PROVIDER_NAME}:{self._csv_path.stem}"
+        )
+        # Indice {date: list[Measurement]} popolato al momento della
+        # costruzione. Le Measurement di uno stesso giorno hanno tutte
+        # lo stesso timestamp e sensor_id; cambia solo (parameter, value).
+        self._measurements_by_date: dict[date, list[Measurement]] = {}
         self._load()
+
+    @property
+    def sensor_id(self) -> str:
+        """Identificatore opaco usato in tutte le Measurement prodotte."""
+        return self._sensor_id
+
+    def _row_to_measurements(
+        self, ts: datetime, row: dict[str, str],
+    ) -> list[Measurement]:
+        """Converte una riga CSV in una lista di Measurement.
+
+        Le colonne assenti o vuote producono semplicemente meno
+        Measurement nella lista (non Measurement con value=None: la
+        spec sensori v1 richiede value obbligatorio float).
+        """
+        out: list[Measurement] = []
+
+        # Temperatura: media di t_min e t_max se entrambi presenti.
+        t_min = _parse_float_or_none(row.get("t_min", ""))
+        t_max = _parse_float_or_none(row.get("t_max", ""))
+        if t_min is not None and t_max is not None:
+            out.append(Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=PARAM_AIR_TEMPERATURE_C,
+                value=(t_min + t_max) / 2.0,
+            ))
+
+        # Pioggia (obbligatoria a livello header, ma cella vuota
+        # ammessa per giorni senza misura — produce zero Measurement).
+        rain = _parse_float_or_none(row.get("rain_mm", ""))
+        if rain is not None:
+            out.append(Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=PARAM_RAINFALL_MM,
+                value=rain,
+            ))
+
+        # ET₀ pre-calcolato (custom:et0_mm) se presente.
+        et0 = _parse_float_or_none(row.get("et0_mm", ""))
+        if et0 is not None:
+            out.append(Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=self._PARAM_ET0_MM,
+                value=et0,
+            ))
+
+        # Umidità relativa (0..1) — opzionale.
+        humidity = _parse_float_or_none(row.get("humidity", ""))
+        if humidity is not None:
+            out.append(Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=PARAM_AIR_HUMIDITY,
+                value=humidity,
+            ))
+
+        # Vento (m/s) — opzionale.
+        wind = _parse_float_or_none(row.get("wind", ""))
+        if wind is not None:
+            out.append(Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=PARAM_WIND_SPEED_M_S,
+                value=wind,
+            ))
+
+        # Radiazione solare (MJ/m²/giorno) — opzionale.
+        radiation = _parse_float_or_none(row.get("radiation", ""))
+        if radiation is not None:
+            out.append(Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=PARAM_SOLAR_RADIATION_MJ_M2,
+                value=radiation,
+            ))
+
+        return out
 
     def _load(self) -> None:
         """Legge il CSV e popola l'indice in memoria."""
@@ -207,35 +335,14 @@ class CsvEnvironmentFixture:
                         provider=PROVIDER_NAME,
                     ) from e
 
-                t_min = _parse_float_or_none(row["t_min"])
-                t_max = _parse_float_or_none(row["t_max"])
-                # Temperatura media calcolata se entrambi presenti,
-                # come per OpenMeteoEnvironmentSensor.
-                temp_mean = None
-                if t_min is not None and t_max is not None:
-                    temp_mean = (t_min + t_max) / 2.0
-
-                reading = EnvironmentReading(
-                    timestamp=datetime.combine(
-                        day, time(12, 0), tzinfo=timezone.utc,
-                    ),
-                    temperature_c=temp_mean,
-                    rain_mm=_parse_float_or_none(row["rain_mm"]),
-                    et0_mm=_parse_float_or_none(row.get("et0_mm", "")),
-                    humidity_relative=_parse_float_or_none(
-                        row.get("humidity", "")
-                    ),
-                    wind_speed_m_s=_parse_float_or_none(
-                        row.get("wind", "")
-                    ),
-                    radiation_mj_m2=_parse_float_or_none(
-                        row.get("radiation", "")
-                    ),
-                    quality=ReadingQuality(),
+                ts = datetime.combine(
+                    day, time(12, 0), tzinfo=timezone.utc,
                 )
-                self._readings_by_date[day] = reading
+                self._measurements_by_date[day] = (
+                    self._row_to_measurements(ts, row)
+                )
 
-        if not self._readings_by_date:
+        if not self._measurements_by_date:
             raise SensorPermanentError(
                 f"CSV {self._csv_path} non contiene righe di dati.",
                 provider=PROVIDER_NAME,
@@ -243,38 +350,41 @@ class CsvEnvironmentFixture:
 
     def current_conditions(
         self, latitude: float, longitude: float,
-    ) -> EnvironmentReading:
+    ) -> list[Measurement]:
         """
-        Restituisce il primo Reading del file (in ordine di data
-        crescente).
+        Restituisce tutte le Measurement della prima data del file
+        (in ordine di data crescente).
 
         Per casi d'uso di test "voglio le condizioni di un giorno
         specifico" è preferibile usare `forecast()` con la data
         opportuna. `current_conditions()` qui ha un significato
         convenzionale di "il dato più antico nel file".
         """
-        first_date = min(self._readings_by_date.keys())
-        return self._readings_by_date[first_date]
+        first_date = min(self._measurements_by_date.keys())
+        return list(self._measurements_by_date[first_date])
 
     def forecast(
         self, latitude: float, longitude: float, days: int,
-    ) -> list[EnvironmentReading]:
+    ) -> list[Measurement]:
         """
-        Restituisce i primi `days` Reading del file in ordine
-        cronologico crescente.
+        Restituisce una lista piatta di tutte le Measurement dei
+        primi `days` giorni del file in ordine cronologico crescente.
 
-        Solleva ValueError se `days` supera il numero di righe
-        disponibili nel CSV.
+        Per t_min, t_max, rain, et0 valorizzati la lunghezza è
+        ~3-4 Measurement per giorno (3 se solo canonici, 4 se anche
+        et0). Solleva `ValueError` se `days` supera il numero di
+        righe disponibili nel CSV.
         """
-        sorted_dates = sorted(self._readings_by_date.keys())
+        sorted_dates = sorted(self._measurements_by_date.keys())
         if days > len(sorted_dates):
             raise ValueError(
                 f"Richiesti {days} giorni ma il CSV ne contiene "
                 f"solo {len(sorted_dates)}."
             )
-        return [
-            self._readings_by_date[d] for d in sorted_dates[:days]
-        ]
+        out: list[Measurement] = []
+        for d in sorted_dates[:days]:
+            out.extend(self._measurements_by_date[d])
+        return out
 
 
 # --------------------------------------------------------------------------
@@ -297,38 +407,128 @@ class CsvSoilFixture:
     espone l'ultima lettura disponibile come "current_state". Per usi
     più sofisticati che vogliono iterare sulla serie storica (per
     esempio per replicare uno scenario passato), usa direttamente
-    l'attributo `readings` che è una lista di tuple (timestamp,
-    SoilReading) ordinate cronologicamente.
+    l'attributo `measurements` che è una lista piatta di tutte le
+    `Measurement` ordinate per (timestamp asc, parameter).
 
-    Convenzioni di canale
-    ---------------------
+    Formato di ritorno (spec sensori v1)
+    ------------------------------------
+
+    Ogni riga del CSV genera 1..4 Measurement (una per parametro non
+    vuoto), tutte con lo stesso `sensor_id` e `timestamp`. Mappatura
+    delle colonne CSV → parametri canonici:
+
+      - `theta_volumetric` (obbligatorio) → `soil_theta`.
+      - `temperature_c` (opz.) → `soil_temperature_c`.
+      - `ec_mscm` (opz.) → `soil_ec_mscm`.
+      - `ph` (opz.) → `soil_ph`.
+
+    Una riga con solo θ produce una sola Measurement; una riga
+    completa di un WH52 ne produce tre (θ + T + EC, niente pH).
+
+    Convenzioni di canale e identità
+    --------------------------------
 
     Una fixture rappresenta un singolo canale (= un singolo vaso). Il
     parametro `channel_id` di `current_state()` è ignorato: la fixture
     restituisce sempre le sue letture indipendentemente da cosa il
     chiamante chiede. Per modellare più vasi, costruisci più fixture,
-    una per file CSV.
+    una per file CSV. Il `sensor_id` di default è
+    `csv_fixture:<filename_stem>`; l'utente può sovrascriverlo
+    passando `sensor_id=...` al costruttore.
 
     Costruzione
     -----------
 
         fixture = CsvSoilFixture("/path/to/wh51_export.csv")
+        fixture = CsvSoilFixture(
+            "/path/to/wh51_export.csv",
+            sensor_id="csv_fixture:basilico_balcone",
+        )
     """
 
-    def __init__(self, csv_path: Union[str, Path]) -> None:
+    def __init__(
+        self,
+        csv_path: Union[str, Path],
+        sensor_id: Optional[str] = None,
+    ) -> None:
         self._csv_path = Path(csv_path)
         if not self._csv_path.exists():
             raise SensorPermanentError(
                 f"File CSV non trovato: {self._csv_path}",
                 provider=PROVIDER_NAME,
             )
-        # Lista (timestamp, SoilReading) ordinata cronologicamente.
-        # Esposta come attributo pubblico per consentire iterazione.
-        self.readings: list[tuple[datetime, SoilReading]] = []
+        self._sensor_id = sensor_id or (
+            f"{PROVIDER_NAME}:{self._csv_path.stem}"
+        )
+        # Lista piatta di Measurement ordinata per (timestamp asc,
+        # parameter). Esposta come attributo pubblico per consentire
+        # iterazione (utile per calibrazione e replay storico).
+        self.measurements: list[Measurement] = []
+        # Timestamps distinti ordinati cronologicamente: serve a
+        # current_state() per trovare velocemente il più recente
+        # senza scandire l'intera lista.
+        self._timestamps: list[datetime] = []
         self._load()
+
+    @property
+    def sensor_id(self) -> str:
+        """Identificatore opaco usato in tutte le Measurement prodotte."""
+        return self._sensor_id
+
+    def _row_to_measurements(
+        self, ts: datetime, theta: float, row: dict[str, str],
+    ) -> list[Measurement]:
+        """Converte una riga CSV in una lista di Measurement.
+
+        θ è già stato parsato dal chiamante (è obbligatorio) e viene
+        passato esplicitamente. Gli altri parametri vengono parsati
+        qui e generano una Measurement solo se non vuoti.
+        """
+        out: list[Measurement] = [
+            Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=PARAM_SOIL_THETA,
+                value=theta,
+            ),
+        ]
+
+        temp = _parse_float_or_none(row.get("temperature_c", ""))
+        if temp is not None:
+            out.append(Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=PARAM_SOIL_TEMPERATURE_C,
+                value=temp,
+            ))
+
+        ec = _parse_float_or_none(row.get("ec_mscm", ""))
+        if ec is not None:
+            out.append(Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=PARAM_SOIL_EC_MSCM,
+                value=ec,
+            ))
+
+        ph = _parse_float_or_none(row.get("ph", ""))
+        if ph is not None:
+            out.append(Measurement(
+                sensor_id=self._sensor_id,
+                timestamp=ts,
+                parameter=PARAM_SOIL_PH,
+                value=ph,
+            ))
+
+        return out
 
     def _load(self) -> None:
         """Legge il CSV e popola la lista in memoria."""
+        # Raggruppiamo le Measurement per timestamp durante il load,
+        # così possiamo applicare l'ordinamento cronologico finale
+        # anche se il CSV non è ordinato.
+        by_ts: dict[datetime, list[Measurement]] = {}
+
         with self._csv_path.open("r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
             if reader.fieldnames is None:
@@ -350,44 +550,36 @@ class CsvSoilFixture:
                 ts = _parse_iso_timestamp(row["timestamp"])
                 theta = _parse_float_or_none(row["theta_volumetric"])
                 if theta is None:
-                    # θ è obbligatorio: una riga senza θ è dati corrotti,
-                    # non "dati mancanti opzionali".
+                    # θ è obbligatorio: una riga senza θ è dati
+                    # corrotti, non "dati mancanti opzionali".
                     raise SensorPermanentError(
                         f"Riga con timestamp {row['timestamp']} ha "
                         f"theta_volumetric vuoto. θ è obbligatorio.",
                         provider=PROVIDER_NAME,
                     )
 
-                reading = SoilReading(
-                    timestamp=ts,
-                    theta_volumetric=theta,
-                    temperature_c=_parse_float_or_none(
-                        row.get("temperature_c", "")
-                    ),
-                    ec_mscm=_parse_float_or_none(
-                        row.get("ec_mscm", "")
-                    ),
-                    ph=_parse_float_or_none(row.get("ph", "")),
-                    quality=ReadingQuality(),
-                )
-                self.readings.append((ts, reading))
+                by_ts[ts] = self._row_to_measurements(ts, theta, row)
 
-        if not self.readings:
+        if not by_ts:
             raise SensorPermanentError(
                 f"CSV {self._csv_path} non contiene righe di dati.",
                 provider=PROVIDER_NAME,
             )
 
         # Garantiamo l'ordinamento cronologico anche se il CSV non lo
-        # avesse già. Diamo all'utente una garanzia esplicita.
-        self.readings.sort(key=lambda pair: pair[0])
+        # avesse già. Per timestamp uguale (caso raro), l'ordine delle
+        # Measurement è quello di `_row_to_measurements`: θ, T, EC, pH.
+        self._timestamps = sorted(by_ts.keys())
+        for ts in self._timestamps:
+            self.measurements.extend(by_ts[ts])
 
-    def current_state(self, channel_id: str) -> SoilReading:
+    def current_state(self, channel_id: str) -> list[Measurement]:
         """
-        Restituisce l'ultima lettura disponibile (la più recente).
+        Restituisce tutte le Measurement del timestamp più recente.
 
         Il parametro `channel_id` è ignorato (vedi docstring di classe):
         ogni fixture rappresenta un singolo canale, quindi il routing
         non è necessario.
         """
-        return self.readings[-1][1]
+        latest_ts = self._timestamps[-1]
+        return [m for m in self.measurements if m.timestamp == latest_ts]

@@ -68,9 +68,11 @@ from fitosim.io.sensors.errors import (
     SensorPermanentError,
     SensorTemporaryError,
 )
-from fitosim.io.sensors.types import (
-    EnvironmentReading,
-    ReadingQuality,
+from fitosim.io.sensors.measurement import (
+    CUSTOM_NAMESPACE_PREFIX,
+    Measurement,
+    PARAM_AIR_TEMPERATURE_C,
+    PARAM_RAINFALL_MM,
 )
 
 
@@ -78,40 +80,71 @@ from fitosim.io.sensors.types import (
 # eccezioni. Costante di modulo per evitare typo sparsi nel codice.
 PROVIDER_NAME = "openmeteo"
 
+# Parametro custom per ET₀ pre-calcolato. Open-Meteo lo offre già
+# (campo `et0_fao_evapotranspiration`); ET₀ non è una misura diretta
+# di sensore quindi non c'è un canonico nella spec v1, vive in
+# namespace `custom:*` come per `CsvEnvironmentFixture`.
+_PARAM_ET0_MM = f"{CUSTOM_NAMESPACE_PREFIX}et0_mm"
 
-def _daily_weather_to_reading(dw: DailyWeather) -> EnvironmentReading:
+
+def _sensor_id_for(latitude: float, longitude: float) -> str:
+    """Costruisce il sensor_id canonico per una coordinata Open-Meteo.
+
+    Formato: `openmeteo:lat<lat>_lon<lon>`. Le coordinate sono
+    formattate con 4 decimali, sufficiente a discriminare grigliati
+    di ~10 m, ben oltre la risoluzione effettiva del modello (~1-10 km).
     """
-    Traduce un DailyWeather legacy in EnvironmentReading canonico.
+    return f"{PROVIDER_NAME}:lat{latitude:.4f}_lon{longitude:.4f}"
 
-    La traduzione preserva i dati disponibili in DailyWeather e lascia
-    a None i campi che il legacy non espone (humidity_relative,
-    radiation_mj_m2, wind_speed_m_s). Questi campi diventeranno
-    disponibili quando estenderemo DailyWeather alla tappa 5 della
-    fascia 2 con il supporto Penman-Monteith completo.
 
-    La temperatura del Reading è la **media giornaliera** calcolata
-    come (t_min + t_max) / 2. Questa è una semplificazione necessaria
-    perché EnvironmentReading espone un singolo valore di temperatura,
-    mentre DailyWeather ne espone due. È la convenzione standard FAO-56
-    per i calcoli di ET₀ a partire da dati giornalieri.
+def _daily_weather_to_measurements(
+    dw: DailyWeather, sensor_id: str,
+) -> list[Measurement]:
+    """
+    Traduce un DailyWeather legacy in una lista di `Measurement`
+    canoniche secondo la spec sensori v1.
+
+    Tutte le Measurement prodotte condividono `sensor_id` e
+    `timestamp` (= 12:00 UTC del giorno solare). Mappatura:
+
+      - `t_min` + `t_max` → `air_temperature_c` (media, convenzione
+        FAO-56 standard per calcoli ET₀ a partire da dati giornalieri).
+      - `precipitation_mm` → `rainfall_mm`.
+      - `et0_mm` → `custom:et0_mm` (opzionale: presente solo se
+        Open-Meteo lo ha fornito per quella zona/data).
+
+    Open-Meteo non espone humidity_relative, wind_speed_m_s,
+    radiation_mj_m2 nel modulo legacy attuale: questi parametri
+    saranno aggiunti quando il legacy verrà esteso al supporto
+    Penman-Monteith completo (tappa 5 fascia 2).
     """
     # Convertiamo il `day: date` legacy in `timestamp: datetime` UTC
     # alle 12:00, secondo la convenzione documentata sopra.
     ts = datetime.combine(dw.day, time(12, 0), tzinfo=timezone.utc)
-    # Temperatura media come compromesso ragionevole per gli aggregati
-    # giornalieri. Questo è esattamente quello che farebbe internamente
-    # il calcolo Hargreaves-Samani dopo aver ricevuto t_min e t_max.
     t_mean = (dw.t_min + dw.t_max) / 2.0
-    return EnvironmentReading(
-        timestamp=ts,
-        temperature_c=t_mean,
-        rain_mm=dw.precipitation_mm,
-        et0_mm=dw.et0_mm,  # può essere None, ed è lecito
-        # Open-Meteo non espone metadati di qualità (è un servizio cloud
-        # che fa modelli numerici globali, non c'è una "batteria" da
-        # monitorare). Quality resta default: anonima.
-        quality=ReadingQuality(),
-    )
+
+    out: list[Measurement] = [
+        Measurement(
+            sensor_id=sensor_id,
+            timestamp=ts,
+            parameter=PARAM_AIR_TEMPERATURE_C,
+            value=t_mean,
+        ),
+        Measurement(
+            sensor_id=sensor_id,
+            timestamp=ts,
+            parameter=PARAM_RAINFALL_MM,
+            value=dw.precipitation_mm,
+        ),
+    ]
+    if dw.et0_mm is not None:
+        out.append(Measurement(
+            sensor_id=sensor_id,
+            timestamp=ts,
+            parameter=_PARAM_ET0_MM,
+            value=dw.et0_mm,
+        ))
+    return out
 
 
 class OpenMeteoEnvironmentSensor:
@@ -161,16 +194,28 @@ class OpenMeteoEnvironmentSensor:
         self._cache_ttl_hours = cache_ttl_hours
         self._use_cache = use_cache
 
+    def sensor_id_for(
+        self, latitude: float, longitude: float,
+    ) -> str:
+        """Restituisce il sensor_id canonico per una coordinata.
+
+        Formato: `openmeteo:lat<lat>_lon<lon>` con 4 decimali. Le
+        Measurement prodotte da `current_conditions()` e `forecast()`
+        per quella coordinata avranno questo come `sensor_id`.
+        """
+        return _sensor_id_for(latitude, longitude)
+
     def current_conditions(
         self, latitude: float, longitude: float,
-    ) -> EnvironmentReading:
+    ) -> list[Measurement]:
         """
-        Restituisce le condizioni meteo correnti per le coordinate.
+        Restituisce le condizioni meteo correnti per le coordinate
+        come lista piatta di `Measurement` canoniche (spec sensori v1).
 
         Implementazione: chiede un forecast di 1 giorno (oggi) e
-        restituisce il primo elemento. Open-Meteo non ha un endpoint
-        specifico per "ora corrente" su dati giornalieri aggregati,
-        quindi questa è la traduzione più sensata.
+        restituisce le Measurement di quel giorno. Open-Meteo non ha
+        un endpoint specifico per "ora corrente" su dati giornalieri
+        aggregati, quindi questa è la traduzione più sensata.
 
         Per una "ora corrente" istantanea (T, RH, vento minuto-per-
         minuto), si dovrebbe usare l'endpoint `current_weather` di
@@ -179,14 +224,20 @@ class OpenMeteoEnvironmentSensor:
         ET₀. Manteniamo questa scelta a livello di tappa 1; l'adapter
         può essere esteso in futuro se servirà l'endpoint instantaneo.
         """
-        forecast_today = self.forecast(latitude, longitude, days=1)
-        return forecast_today[0]
+        return self.forecast(latitude, longitude, days=1)
 
     def forecast(
         self, latitude: float, longitude: float, days: int,
-    ) -> list[EnvironmentReading]:
+    ) -> list[Measurement]:
         """
-        Restituisce la previsione meteo a `days` giorni futuri.
+        Restituisce la previsione meteo a `days` giorni futuri come
+        lista piatta di `Measurement` (spec sensori v1).
+
+        Per ogni giorno la lista contiene 2-3 Measurement:
+        `air_temperature_c` (media), `rainfall_mm`, e
+        `custom:et0_mm` se Open-Meteo lo fornisce per quella zona.
+        Ordine: per timestamp crescente; all'interno di uno stesso
+        timestamp segue l'ordine `temp → rain → et0`.
 
         Solleva ValueError se days è fuori dal range supportato
         dall'API Open-Meteo (1-16 giorni).
@@ -237,5 +288,11 @@ class OpenMeteoEnvironmentSensor:
                 provider=PROVIDER_NAME,
             ) from e
 
-        # Traduzione DailyWeather → EnvironmentReading per ogni giorno.
-        return [_daily_weather_to_reading(dw) for dw in daily_weathers]
+        # Traduzione DailyWeather → list[Measurement] per ogni giorno,
+        # poi flat concatenation. Tutte le Measurement portano lo
+        # stesso sensor_id derivato dalla coordinata.
+        sensor_id = _sensor_id_for(latitude, longitude)
+        out: list[Measurement] = []
+        for dw in daily_weathers:
+            out.extend(_daily_weather_to_measurements(dw, sensor_id))
+        return out

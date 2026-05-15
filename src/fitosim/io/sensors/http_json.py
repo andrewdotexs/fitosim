@@ -72,15 +72,21 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from fitosim.io.sensors.errors import (
     SensorDataQualityError,
     SensorPermanentError,
     SensorTemporaryError,
 )
-from fitosim.io.sensors.types import (
-    ReadingQuality,
-    SoilReading,
+from fitosim.io.sensors.measurement import (
+    Measurement,
+    MeasurementValidationError,
+    PARAM_BATTERY_LEVEL,
+    PARAM_SOIL_EC_MSCM,
+    PARAM_SOIL_PH,
+    PARAM_SOIL_TEMPERATURE_C,
+    PARAM_SOIL_THETA,
 )
 
 
@@ -208,18 +214,34 @@ def _parse_iso_timestamp(value: str) -> datetime:
     return ts
 
 
-def _parse_json_to_reading(payload: dict) -> SoilReading:
+def _parse_json_to_measurements(
+    payload: dict, sensor_id: str,
+) -> list[Measurement]:
     """
-    Traduce un payload JSON conforme allo schema V1 in SoilReading
-    canonico.
+    Traduce un payload JSON conforme allo schema V1 in una lista di
+    `Measurement` canoniche secondo la spec sensori v1.
+
+    Tutte le Measurement prodotte condividono `sensor_id` e
+    `timestamp`. Mappatura JSON → parametri canonici:
+
+      - `theta_volumetric` → `soil_theta` (obbligatorio)
+      - `temperature_c` → `soil_temperature_c` (opzionale)
+      - `ec_mscm` → `soil_ec_mscm` (opzionale)
+      - `ph` → `soil_ph` (opzionale)
+      - `quality.battery_level` → `battery_level` come Measurement
+        separata (la spec sensori v1 tratta i metadati di device come
+        misure indipendenti, non come campo annidato)
+
+    I campi `quality.last_calibration`, `quality.staleness_seconds` e
+    `provider_specific` non hanno equivalenti canonici nella spec v1
+    e vengono ignorati. Potrebbero essere esposti in futuro come
+    parametri `custom:*` se servisse.
 
     Solleva:
       - SensorPermanentError per JSON malformato o campi obbligatori
         mancanti (problema strutturale del gateway).
-      - SensorDataQualityError per valori fuori range fisici (problema
-        del sensore; il gateway funziona ma i dati non sono affidabili).
-        Questa eccezione viene sollevata implicitamente dai
-        __post_init__ di SoilReading e ReadingQuality.
+      - SensorDataQualityError o MeasurementValidationError per valori
+        fuori range fisici (problema del sensore).
     """
     # Verifica della versione schema: se manca o non è "v1", rifiutiamo
     # esplicitamente per evitare bug subdoli da disallineamento del
@@ -254,34 +276,9 @@ def _parse_json_to_reading(payload: dict) -> SoilReading:
             provider=PROVIDER_NAME,
         )
 
-    # Sotto-oggetto quality: opzionale, costruito solo se presente.
-    # Estraiamo i campi singolarmente per validare ognuno.
-    quality_data = payload.get("quality", {})
-    last_calibration = None
-    if "last_calibration" in quality_data and quality_data["last_calibration"]:
-        try:
-            from datetime import date
-            last_calibration = date.fromisoformat(
-                quality_data["last_calibration"]
-            )
-        except (ValueError, TypeError) as e:
-            raise SensorPermanentError(
-                f"Campo quality.last_calibration non parsabile: "
-                f"'{quality_data['last_calibration']}'. "
-                f"Atteso formato ISO 'YYYY-MM-DD'.",
-                provider=PROVIDER_NAME,
-            ) from e
-
-    # ReadingQuality.__post_init__ valida battery_level e
-    # staleness_seconds; se fuori range solleverà
-    # SensorDataQualityError che propaghiamo come è.
-    quality = ReadingQuality(
-        battery_level=quality_data.get("battery_level"),
-        last_calibration=last_calibration,
-        staleness_seconds=int(quality_data.get("staleness_seconds", 0)),
-    )
-
-    # provider_specific: opzionale, accettiamo qualsiasi dict.
+    # Validazione strutturale di provider_specific anche se non lo
+    # consumiamo: un gateway che lo emette come array invece di
+    # oggetto è misconfigurato e meglio segnalarlo subito.
     provider_specific = payload.get("provider_specific", {})
     if not isinstance(provider_specific, dict):
         raise SensorPermanentError(
@@ -290,18 +287,57 @@ def _parse_json_to_reading(payload: dict) -> SoilReading:
             provider=PROVIDER_NAME,
         )
 
-    # Costruzione del SoilReading: il __post_init__ valida i range
-    # fisici (theta in [0,1.05], EC in [0,20], pH in [0,14], ecc.)
-    # e solleva SensorDataQualityError se i valori sono spurii.
-    return SoilReading(
-        timestamp=timestamp,
-        theta_volumetric=float(theta),
-        temperature_c=payload.get("temperature_c"),
-        ec_mscm=payload.get("ec_mscm"),
-        ph=payload.get("ph"),
-        quality=quality,
-        provider_specific=provider_specific,
-    )
+    # Validazione strutturale di quality.last_calibration: anche se
+    # non viene esposta come Measurement, un formato invalido segnala
+    # un firmware gateway malformato.
+    quality_data = payload.get("quality", {}) or {}
+    if "last_calibration" in quality_data and quality_data["last_calibration"]:
+        try:
+            from datetime import date as _date
+            _date.fromisoformat(quality_data["last_calibration"])
+        except (ValueError, TypeError) as e:
+            raise SensorPermanentError(
+                f"Campo quality.last_calibration non parsabile: "
+                f"'{quality_data['last_calibration']}'. "
+                f"Atteso formato ISO 'YYYY-MM-DD'.",
+                provider=PROVIDER_NAME,
+            ) from e
+
+    # Costruzione delle Measurement. `Measurement.__post_init__` valida
+    # i range fisici (theta in [0,1.05], EC in [0,20], pH in [0,14],
+    # battery in [0,1]) sollevando `MeasurementValidationError`. Lo
+    # mappiamo a `SensorDataQualityError` per uniformità con gli altri
+    # adapter che usano la gerarchia canonica di sensors.errors.
+    out: list[Measurement] = []
+
+    def _add(parameter: str, value: Any) -> None:
+        if value is None:
+            return
+        try:
+            out.append(Measurement(
+                sensor_id=sensor_id,
+                timestamp=timestamp,
+                parameter=parameter,
+                value=float(value),
+            ))
+        except MeasurementValidationError as e:
+            raise SensorDataQualityError(
+                f"Valore non plausibile per {parameter} "
+                f"dal gateway: {e}",
+                provider=PROVIDER_NAME,
+            ) from e
+
+    # θ è obbligatorio: garantito non-None da check sopra.
+    _add(PARAM_SOIL_THETA, theta)
+    _add(PARAM_SOIL_TEMPERATURE_C, payload.get("temperature_c"))
+    _add(PARAM_SOIL_EC_MSCM, payload.get("ec_mscm"))
+    _add(PARAM_SOIL_PH, payload.get("ph"))
+
+    # Battery come Measurement separata (spec sensori v1: i metadati
+    # di device sono misurazioni indipendenti).
+    _add(PARAM_BATTERY_LEVEL, quality_data.get("battery_level"))
+
+    return out
 
 
 # ==========================================================================
@@ -389,6 +425,21 @@ class HttpJsonSoilSensor:
         self._endpoint_pattern = endpoint_pattern
         self._bearer_token = bearer_token
         self._timeout = timeout_seconds
+        # Hostname estratto una sola volta per costruire i sensor_id
+        # delle Measurement secondo la convenzione spec v1
+        # `<provider>:<device_type>:<instance>`, dove device_type è
+        # l'hostname del gateway e instance è il channel_id.
+        parsed = urlparse(self._base_url)
+        self._hostname = parsed.hostname or "unknown"
+
+    def sensor_id_for(self, channel_id: str) -> str:
+        """Restituisce il sensor_id canonico per un channel del gateway.
+
+        Formato: `http_json:<hostname>:<channel_id>`. Lo stesso
+        valore viene poi popolato in tutte le `Measurement` prodotte
+        da `current_state(channel_id)`.
+        """
+        return f"{PROVIDER_NAME}:{self._hostname}:{channel_id}"
 
     @classmethod
     def from_env(
@@ -445,9 +496,10 @@ class HttpJsonSoilSensor:
         request.add_header("User-Agent", "fitosim/2.0 HttpJsonSoilSensor")
         return request
 
-    def current_state(self, channel_id: str) -> SoilReading:
+    def current_state(self, channel_id: str) -> list[Measurement]:
         """
-        Restituisce lo stato corrente del substrato per il canale.
+        Restituisce lo stato corrente del substrato per il canale come
+        lista piatta di `Measurement` canoniche (spec sensori v1).
 
         Solleva:
           - SensorTemporaryError per timeout di rete, errori 5xx,
@@ -456,8 +508,8 @@ class HttpJsonSoilSensor:
             URL inesistenti (404), JSON malformato, schema non
             conforme.
           - SensorDataQualityError per valori fuori range fisici (θ
-            negativo, pH > 14, ecc.) — sollevata indirettamente dal
-            __post_init__ di SoilReading.
+            negativo, pH > 14, ecc.) — sollevata in modo uniforme
+            rimappando la `MeasurementValidationError` interna.
         """
         if not channel_id or not str(channel_id).strip():
             raise SensorPermanentError(
@@ -534,5 +586,7 @@ class HttpJsonSoilSensor:
 
         # Conversione finale dal payload allo schema canonico. Le
         # eccezioni di parsing del payload e di validazione fisica
-        # sono già propagate correttamente da _parse_json_to_reading.
-        return _parse_json_to_reading(payload)
+        # sono propagate correttamente da _parse_json_to_measurements.
+        return _parse_json_to_measurements(
+            payload, sensor_id=self.sensor_id_for(str(channel_id)),
+        )

@@ -44,15 +44,22 @@ import pytest
 from fitosim.io.sensors import (
     HttpJsonSchemaV1,
     HttpJsonSoilSensor,
+    Measurement,
     SensorPermanentError,
     SensorTemporaryError,
-    SoilReading,
     SoilSensor,
 )
 from fitosim.io.sensors.http_json import (
     ENV_FITOSIM_GATEWAY_TOKEN,
     _parse_iso_timestamp,
-    _parse_json_to_reading,
+    _parse_json_to_measurements,
+)
+from fitosim.io.sensors.measurement import (
+    PARAM_BATTERY_LEVEL,
+    PARAM_SOIL_EC_MSCM,
+    PARAM_SOIL_PH,
+    PARAM_SOIL_TEMPERATURE_C,
+    PARAM_SOIL_THETA,
 )
 
 
@@ -121,42 +128,50 @@ def _mock_http_response(payload: dict):
 
 class Test_HttpJson_translation:
     """
-    Dato un payload V1 ben formato, l'adapter produce un SoilReading
-    canonico con tutti i campi mappati correttamente.
+    Dato un payload V1 ben formato, l'adapter produce una lista di
+    `Measurement` canoniche con tutti i parametri mappati correttamente.
+
+    Dopo la migrazione alla spec sensori v1, ogni payload genera N
+    Measurement (una per parametro non-None), tutte con stesso
+    sensor_id e timestamp.
     """
 
-    def test_translates_full_payload(self):
-        """Caso completo: payload con tutti i campi → Reading completo."""
+    def test_translates_full_payload_to_measurements(self):
+        """Caso completo: payload con tutti i campi → 5 Measurement
+        (θ + T + EC + pH + battery)."""
         payload = _make_payload_v1()
         with patch(
             "fitosim.io.sensors.http_json.urllib.request.urlopen",
             return_value=_mock_http_response(payload),
         ):
             sensor = HttpJsonSoilSensor(base_url="http://test.local")
-            reading = sensor.current_state(channel_id="1")
+            measurements = sensor.current_state(channel_id="1")
 
-        assert isinstance(reading, SoilReading)
-        assert reading.theta_volumetric == 0.342
-        assert reading.temperature_c == 18.5
-        assert reading.ec_mscm == 1.85
-        assert reading.ph == 6.4
-        # Timestamp è UTC aware
-        assert reading.timestamp == datetime(
-            2026, 4, 27, 19, 55, 0, tzinfo=timezone.utc,
-        )
+        assert all(isinstance(m, Measurement) for m in measurements)
+        # 4 parametri di suolo + 1 battery = 5 Measurement.
+        assert len(measurements) == 5
+        by_param = {m.parameter: m.value for m in measurements}
+        assert by_param[PARAM_SOIL_THETA] == pytest.approx(0.342)
+        assert by_param[PARAM_SOIL_TEMPERATURE_C] == 18.5
+        assert by_param[PARAM_SOIL_EC_MSCM] == 1.85
+        assert by_param[PARAM_SOIL_PH] == 6.4
+        assert by_param[PARAM_BATTERY_LEVEL] == 0.78
+        # Tutte le Measurement condividono il timestamp.
+        expected_ts = datetime(2026, 4, 27, 19, 55, 0, tzinfo=timezone.utc)
+        assert all(m.timestamp == expected_ts for m in measurements)
 
-    def test_provider_specific_preserved_opaque(self):
+    def test_provider_specific_is_ignored_in_v1(self):
         """
-        Il dict provider_specific viene conservato verbatim, fitosim
-        non lo interpreta. È il punto di estensibilità per dati di
-        secondo livello come gli NPK derivati.
+        Il dict provider_specific era preservato nel vecchio
+        SoilReading; nella spec sensori v1 non c'è un equivalente
+        canonico, quindi viene ignorato silenziosamente (la
+        validazione strutturale resta — vedi
+        Test_HttpJson_schema_validation). Un'eventuale esposizione
+        futura sarà via parametri `custom:*`.
         """
         custom = {
             "npk_n_estimate_mg_kg": 42,
-            "ec_raw_uncompensated_mscm": 1.92,
-            "modbus_address": 1,
             "firmware_version": "ato-fw-2.3.1",
-            "totally_custom_key": [1, 2, 3],
         }
         payload = _make_payload_v1(provider_specific=custom)
         with patch(
@@ -164,14 +179,20 @@ class Test_HttpJson_translation:
             return_value=_mock_http_response(payload),
         ):
             sensor = HttpJsonSoilSensor(base_url="http://test.local")
-            reading = sensor.current_state(channel_id="1")
+            measurements = sensor.current_state(channel_id="1")
 
-        # Il dict è preservato verbatim, anche con chiavi/valori
-        # arbitrari che fitosim non comprende.
-        assert reading.provider_specific == custom
+        # Nessuna Measurement custom:* prodotta dai dati provider_specific.
+        params = {m.parameter for m in measurements}
+        assert not any(p.startswith("custom:") for p in params)
+        # I parametri canonici sono comunque presenti.
+        assert PARAM_SOIL_THETA in params
 
-    def test_quality_metadata_preserved(self):
-        """Il sotto-oggetto quality viene popolato correttamente."""
+    def test_battery_level_becomes_separate_measurement(self):
+        """
+        Il `quality.battery_level` del payload diventa una Measurement
+        canonica `battery_level` separata (spec sensori v1: i metadati
+        di device sono misure indipendenti, non campo annidato).
+        """
         payload = _make_payload_v1(quality={
             "battery_level": 0.42,
             "last_calibration": "2025-10-01",
@@ -182,19 +203,22 @@ class Test_HttpJson_translation:
             return_value=_mock_http_response(payload),
         ):
             sensor = HttpJsonSoilSensor(base_url="http://test.local")
-            reading = sensor.current_state(channel_id="1")
+            measurements = sensor.current_state(channel_id="1")
 
-        assert reading.quality.battery_level == 0.42
-        assert reading.quality.last_calibration == date(2025, 10, 1)
-        assert reading.quality.staleness_seconds == 120
+        battery = [
+            m for m in measurements if m.parameter == PARAM_BATTERY_LEVEL
+        ]
+        assert len(battery) == 1
+        assert battery[0].value == pytest.approx(0.42)
+        # last_calibration e staleness_seconds della spec v1 non hanno
+        # un canonico: si perdono senza errore.
 
-    def test_optional_fields_become_none(self):
+    def test_optional_fields_omit_measurements(self):
         """
-        Campi opzionali assenti dal payload diventano None nel Reading.
-        Caso d'uso: sensore WH51 esposto via HttpJson che fornisce solo
-        θ.
+        Campi opzionali assenti dal payload → corrispondenti
+        Measurement non emesse. Caso d'uso: WH51 via HttpJson che
+        fornisce solo θ → una sola Measurement.
         """
-        # Payload minimo: solo i campi obbligatori.
         minimal = {
             "schema_version": "v1",
             "timestamp": "2026-04-27T19:55:00Z",
@@ -205,16 +229,42 @@ class Test_HttpJson_translation:
             return_value=_mock_http_response(minimal),
         ):
             sensor = HttpJsonSoilSensor(base_url="http://test.local")
-            reading = sensor.current_state(channel_id="1")
+            measurements = sensor.current_state(channel_id="1")
 
-        assert reading.theta_volumetric == 0.32
-        assert reading.temperature_c is None
-        assert reading.ec_mscm is None
-        assert reading.ph is None
-        assert reading.provider_specific == {}
-        # quality default: tutti i campi None/0
-        assert reading.quality.battery_level is None
-        assert reading.quality.staleness_seconds == 0
+        # Solo una Measurement: soil_theta.
+        assert len(measurements) == 1
+        assert measurements[0].parameter == PARAM_SOIL_THETA
+        assert measurements[0].value == pytest.approx(0.32)
+
+    def test_all_measurements_share_sensor_id(self):
+        """Tutte le Measurement di un singolo current_state condividono
+        lo stesso sensor_id (la sorgente è una)."""
+        payload = _make_payload_v1()
+        with patch(
+            "fitosim.io.sensors.http_json.urllib.request.urlopen",
+            return_value=_mock_http_response(payload),
+        ):
+            sensor = HttpJsonSoilSensor(base_url="http://test.local")
+            measurements = sensor.current_state(channel_id="1")
+        sensor_ids = {m.sensor_id for m in measurements}
+        assert len(sensor_ids) == 1
+
+    def test_sensor_id_follows_convention(self):
+        """sensor_id segue la convenzione
+        `http_json:<hostname>:<channel_id>` per ciascun canale."""
+        sensor = HttpJsonSoilSensor(base_url="http://192.168.1.42")
+        assert sensor.sensor_id_for("3") == "http_json:192.168.1.42:3"
+        assert (
+            sensor.sensor_id_for("basilico_1")
+            == "http_json:192.168.1.42:basilico_1"
+        )
+
+    def test_sensor_id_extracts_hostname_from_url(self):
+        """Il hostname è estratto correttamente da URL con porta e path."""
+        sensor = HttpJsonSoilSensor(
+            base_url="https://gateway.local:8443/some/prefix",
+        )
+        assert sensor.sensor_id_for("1") == "http_json:gateway.local:1"
 
     def test_url_construction_with_trailing_slash(self):
         """base_url con / finale viene normalizzato (no doppio slash)."""

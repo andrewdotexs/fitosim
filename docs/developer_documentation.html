@@ -1,0 +1,1573 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>fitosim — Documentazione tecnica per sviluppatori</title>
+  <style>
+    :root {
+      --bg: #fafaf7;
+      --bg-alt: #f0eee6;
+      --fg: #2d2a26;
+      --fg-soft: #5d574e;
+      --fg-muted: #8a8478;
+      --accent: #4a7c59;
+      --accent-soft: #6b9a7a;
+      --accent-bg: #e8efea;
+      --border: #d8d3c4;
+      --code-bg: #2a2825;
+      --code-fg: #e8e3d6;
+      --code-inline-bg: #efece1;
+      --warn: #b85c1f;
+      --warn-bg: #fbeee0;
+      --info: #1f6f9c;
+      --info-bg: #e1edf4;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+      --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.65;
+      font-size: 16px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      max-width: 1400px;
+      margin: 0 auto;
+      min-height: 100vh;
+    }
+
+    /* Sidebar */
+    aside {
+      background: var(--bg-alt);
+      border-right: 1px solid var(--border);
+      padding: 2rem 1.5rem;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    aside h1 {
+      font-size: 1.4rem;
+      margin: 0 0 0.25rem 0;
+      color: var(--accent);
+      letter-spacing: -0.02em;
+    }
+    aside .tagline {
+      font-size: 0.85rem;
+      color: var(--fg-muted);
+      margin: 0 0 1.5rem 0;
+      font-style: italic;
+    }
+    aside nav ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    aside nav > ul > li {
+      margin: 0.4rem 0;
+    }
+    aside nav a {
+      color: var(--fg-soft);
+      text-decoration: none;
+      font-size: 0.92rem;
+      display: block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      transition: background 0.15s, color 0.15s;
+    }
+    aside nav a:hover {
+      background: var(--accent-bg);
+      color: var(--accent);
+    }
+    aside nav > ul > li > a { font-weight: 600; }
+    aside nav ul ul {
+      margin-left: 0.8rem;
+      border-left: 1px solid var(--border);
+      padding-left: 0.5rem;
+    }
+    aside nav ul ul a { font-weight: 400; font-size: 0.85rem; }
+
+    /* Main */
+    main {
+      padding: 3rem 4rem;
+      max-width: 900px;
+    }
+
+    h1, h2, h3, h4 {
+      color: var(--fg);
+      letter-spacing: -0.015em;
+      line-height: 1.3;
+    }
+    h1 { font-size: 2.2rem; margin: 0 0 0.5rem 0; }
+    h2 {
+      font-size: 1.6rem;
+      margin-top: 3rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid var(--border);
+    }
+    h3 {
+      font-size: 1.25rem;
+      margin-top: 2rem;
+      color: var(--accent);
+    }
+    h4 { font-size: 1.05rem; margin-top: 1.5rem; }
+
+    .subtitle {
+      font-size: 1.1rem;
+      color: var(--fg-soft);
+      margin: 0 0 2rem 0;
+    }
+
+    p { margin: 0.8rem 0; }
+
+    a { color: var(--accent); }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.88em;
+      background: var(--code-inline-bg);
+      padding: 0.1em 0.35em;
+      border-radius: 3px;
+      color: var(--fg);
+    }
+
+    pre {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      padding: 1.1rem 1.3rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1rem 0;
+      box-shadow: var(--shadow);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    /* Syntax-ish hints */
+    .kw { color: #c678dd; }
+    .str { color: #98c379; }
+    .com { color: #7c7466; font-style: italic; }
+    .fn { color: #61afef; }
+    .num { color: #d19a66; }
+
+    /* Badges */
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 1rem 0 2rem 0;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.7rem;
+      background: var(--accent-bg);
+      color: var(--accent);
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .badge.warn { background: var(--warn-bg); color: var(--warn); }
+    .badge.info { background: var(--info-bg); color: var(--info); }
+    .badge.neutral { background: var(--bg-alt); color: var(--fg-soft); }
+
+    /* Cards & layers */
+    .layer-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+    .layer-card {
+      border: 1px solid var(--border);
+      background: white;
+      border-radius: 8px;
+      padding: 1.2rem;
+      box-shadow: var(--shadow);
+    }
+    .layer-card h4 {
+      margin: 0 0 0.5rem 0;
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 1rem;
+    }
+    .layer-card .role {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+      margin-bottom: 0.5rem;
+    }
+    .layer-card p {
+      font-size: 0.88rem;
+      color: var(--fg-soft);
+      margin: 0.3rem 0;
+    }
+
+    /* Tables */
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1rem 0;
+      font-size: 0.9rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.6rem 0.8rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      background: var(--bg-alt);
+      font-weight: 600;
+      color: var(--fg);
+    }
+    td code { font-size: 0.82rem; }
+
+    /* Callouts */
+    .callout {
+      border-left: 4px solid var(--info);
+      background: var(--info-bg);
+      padding: 0.9rem 1.2rem;
+      margin: 1.2rem 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.92rem;
+    }
+    .callout.warn {
+      border-color: var(--warn);
+      background: var(--warn-bg);
+    }
+    .callout.note {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+    }
+    .callout strong:first-child {
+      display: block;
+      margin-bottom: 0.3rem;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* API blocks */
+    .api {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin: 1rem 0;
+      overflow: hidden;
+      background: white;
+      box-shadow: var(--shadow);
+    }
+    .api-head {
+      padding: 0.8rem 1.2rem;
+      background: var(--bg-alt);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+    .api-kind {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .api-kind.enum { background: var(--info); }
+    .api-kind.dc { background: var(--accent-soft); }
+    .api-kind.fn { background: var(--warn); }
+    .api-kind.proto { background: #6c4d9c; }
+    .api-name {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 1rem;
+    }
+    .api-body {
+      padding: 0.9rem 1.2rem;
+      font-size: 0.92rem;
+    }
+    .api-body p { margin: 0.4rem 0; }
+    .api-fields {
+      margin: 0.5rem 0;
+      font-size: 0.85rem;
+    }
+    .api-fields li {
+      margin: 0.25rem 0;
+    }
+    .api-fields code {
+      font-size: 0.85rem;
+    }
+
+    /* Dependency graph */
+    .dep-graph {
+      background: var(--bg-alt);
+      padding: 1.5rem;
+      border-radius: 8px;
+      margin: 1rem 0;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      white-space: pre;
+      overflow-x: auto;
+      color: var(--fg-soft);
+      border: 1px solid var(--border);
+    }
+
+    /* Footer */
+    footer {
+      margin-top: 5rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      color: var(--fg-muted);
+      font-size: 0.85rem;
+      text-align: center;
+    }
+
+    /* Responsive */
+    @media (max-width: 1000px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; }
+      main { padding: 2rem 1.5rem; }
+      .layer-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+  <aside>
+    <h1>fitosim</h1>
+    <p class="tagline">Documentazione tecnica per sviluppatori</p>
+    <nav>
+      <ul>
+        <li><a href="#panoramica">1. Panoramica</a></li>
+        <li><a href="#architettura">2. Architettura</a>
+          <ul>
+            <li><a href="#layer">2.1 I tre layer</a></li>
+            <li><a href="#dipendenze">2.2 Mappa dipendenze</a></li>
+            <li><a href="#principi">2.3 Principi di design</a></li>
+          </ul>
+        </li>
+        <li><a href="#setup">3. Setup ambiente</a></li>
+        <li><a href="#science">4. Layer <code>science</code></a>
+          <ul>
+            <li><a href="#science-et0"><code>et0</code></a></li>
+            <li><a href="#science-balance"><code>balance</code></a></li>
+            <li><a href="#science-substrate"><code>substrate</code></a></li>
+            <li><a href="#science-dual-kc"><code>dual_kc</code></a></li>
+            <li><a href="#science-pot-physics"><code>pot_physics</code></a></li>
+            <li><a href="#science-saucer"><code>saucer</code></a></li>
+            <li><a href="#science-fertigation"><code>fertigation</code></a></li>
+            <li><a href="#science-nutrition"><code>nutrition</code></a></li>
+            <li><a href="#science-radiation"><code>radiation</code></a></li>
+            <li><a href="#science-indoor"><code>indoor</code></a></li>
+            <li><a href="#science-calibration"><code>calibration</code></a></li>
+          </ul>
+        </li>
+        <li><a href="#domain">5. Layer <code>domain</code></a>
+          <ul>
+            <li><a href="#domain-species"><code>species</code></a></li>
+            <li><a href="#domain-pot"><code>pot</code></a></li>
+            <li><a href="#domain-room"><code>room</code></a></li>
+            <li><a href="#domain-weather"><code>weather</code></a></li>
+            <li><a href="#domain-garden"><code>garden</code></a></li>
+            <li><a href="#domain-scheduling"><code>scheduling</code></a></li>
+            <li><a href="#domain-scheduler"><code>scheduler</code></a></li>
+            <li><a href="#domain-alerts"><code>alerts</code></a></li>
+          </ul>
+        </li>
+        <li><a href="#io">6. Layer <code>io</code></a>
+          <ul>
+            <li><a href="#io-persistence"><code>persistence</code></a></li>
+            <li><a href="#io-serialization"><code>serialization</code></a></li>
+            <li><a href="#io-sensors">sensori (Protocol)</a></li>
+            <li><a href="#io-adapter">adapter concreti</a></li>
+          </ul>
+        </li>
+        <li><a href="#testing">7. Testing</a></li>
+        <li><a href="#convenzioni">8. Convenzioni</a></li>
+        <li><a href="#glossario">9. Glossario</a></li>
+      </ul>
+    </nav>
+  </aside>
+
+  <main>
+
+    <h1>fitosim</h1>
+    <p class="subtitle">Motore scientifico Python per la simulazione FAO-56 del bilancio idrico e chimico di piante in vaso.</p>
+
+    <div class="badges">
+      <span class="badge">v0.1.0</span>
+      <span class="badge neutral">Python ≥ 3.10</span>
+      <span class="badge info">stdlib only (core)</span>
+      <span class="badge">1137 test verdi</span>
+      <span class="badge neutral">MIT License</span>
+    </div>
+
+    <p>
+      Questo documento è la guida per <strong>chi sviluppa</strong> <code>fitosim</code>:
+      contiene la struttura del codice, i contratti pubblici dei tre layer
+      architetturali (<code>science</code>, <code>domain</code>, <code>io</code>),
+      le convenzioni di stile, e le istruzioni per testare e contribuire. Per
+      l'uso da utente finale, fare riferimento a <code>docs/fitosim_user_manual.docx</code>.
+    </p>
+
+    <!-- =================== 1. PANORAMICA =================== -->
+    <h2 id="panoramica">1. Panoramica</h2>
+
+    <p>
+      <code>fitosim</code> modella il <strong>bilancio idrico e chimico
+      giornaliero</strong> del singolo vaso domestico ed estende lo standard
+      FAO-56 con capacità specifiche del giardinaggio in vaso che i modelli
+      per il pieno campo non coprono:
+    </p>
+
+    <ul>
+      <li>geometrie reali del vaso (forma, materiale, colore, esposizione);</li>
+      <li>sottovaso come secondo serbatoio accoppiato al substrato;</li>
+      <li>miscele di substrati personalizzati via <code>compose_substrate</code>;</li>
+      <li>modello chimico (massa salina, pH, EC derivata) con coefficiente nutrizionale <code>Kn</code>;</li>
+      <li>bilancio indoor con microclima della stanza (<code>Room</code> + sensore WN31);</li>
+      <li>selettore "best available" del metodo di evapotraspirazione (Penman-Monteith fisico → standard FAO-56 → Hargreaves-Samani).</li>
+    </ul>
+
+    <p>
+      Sopra al modello del singolo vaso, <code>fitosim</code> espone un
+      <strong>dashboard operativo</strong>: il <code>Garden</code> orchestra
+      più vasi, la persistenza SQLite conserva la storia, gli eventi pianificati
+      e le previsioni anticipano gli interventi, e il sistema di allerte
+      trasforma le previsioni in raccomandazioni concrete.
+    </p>
+
+    <div class="callout note">
+      <strong>Domain confinato</strong>
+      Il dominio in cui la libreria sa fare bene il suo lavoro è il
+      <em>vaso domestico singolo o un piccolo gruppo di vasi su balcone</em>,
+      su scala temporale giornaliera, per piante individualmente
+      identificabili con substrati di parametri noti. Fuori da questo dominio
+      (parcelle di pieno campo, controllo elettrovalvole al minuto) i
+      risultati sono poco affidabili.
+    </div>
+
+    <!-- =================== 2. ARCHITETTURA =================== -->
+    <h2 id="architettura">2. Architettura</h2>
+
+    <h3 id="layer">2.1 I tre layer</h3>
+
+    <p>
+      La libreria è organizzata in tre layer con dipendenze unidirezionali:
+      <code>io</code> → <code>domain</code> → <code>science</code>. Il modello
+      scientifico non conosce né l'orchestrazione né la persistenza: puoi
+      sostituire SQLite con PostgreSQL senza toccare nulla del FAO-56.
+    </p>
+
+    <div class="layer-grid">
+      <div class="layer-card">
+        <div class="role">Layer 1 — base</div>
+        <h4>science/</h4>
+        <p>Funzioni pure FAO-56 esteso: bilancio idrico, ET, dual-Kc, fisica del vaso, chimica del substrato, radiazione, calibrazione.</p>
+        <p><em>Dipendenze: stdlib + radiation interno.</em></p>
+      </div>
+      <div class="layer-card">
+        <div class="role">Layer 2 — orchestrazione</div>
+        <h4>domain/</h4>
+        <p>Modello di dominio: <code>Pot</code>, <code>Garden</code>, <code>Species</code>, <code>Room</code>, <code>Alert</code>, <code>ScheduledEvent</code>, <code>WeatherDay</code>.</p>
+        <p><em>Dipendenze: <code>science</code>.</em></p>
+      </div>
+      <div class="layer-card">
+        <div class="role">Layer 3 — adapter</div>
+        <h4>io/</h4>
+        <p>Persistenza SQLite, serializzazione JSON, adapter sensori (Ecowitt, Open-Meteo, HTTP-JSON, fixture CSV) che implementano i <code>Protocol</code>.</p>
+        <p><em>Dipendenze: <code>domain</code>, <code>science</code>.</em></p>
+      </div>
+    </div>
+
+    <h3 id="dipendenze">2.2 Mappa delle dipendenze interne</h3>
+
+    <p>
+      All'interno di <code>science/</code> i moduli sono <em>quasi tutti
+      standalone</em>: solo <code>balance</code> e <code>et0</code> consumano
+      altri moduli. Tutto il resto sono funzioni pure indipendenti.
+    </p>
+
+    <div class="dep-graph">science/
+├── balance       ← et0 (EtMethod), substrate (Substrate, RAW)
+├── calibration   (standalone)
+├── dual_kc       (standalone)
+├── et0           ← radiation (per Ra astronomica)
+├── fertigation   (standalone)
+├── indoor        ← domain.room (LightExposure)
+├── nutrition     ← domain.species (Species)
+├── pot_physics   (standalone)
+├── radiation     (standalone)
+├── saucer        (standalone)
+└── substrate     (standalone)
+
+domain/
+├── species       (standalone)
+├── weather       (standalone)
+├── scheduling    (standalone)
+├── room          (standalone)
+├── alerts        ← pot
+├── pot           ← species, substrate, science.*
+├── garden        ← pot, room, scheduling, alerts, scheduler
+├── scheduler     ← pot, scheduling
+└── (alerts.py)   ← pot
+
+io/
+├── persistence   ← domain.*, science.substrate
+├── serialization ← domain.*, science.substrate
+└── sensors/
+    ├── types     (stdlib)
+    ├── errors    (stdlib)
+    ├── protocols ← types
+    ├── ecowitt   ← io.ecowitt (legacy), types, errors, protocols
+    ├── openmeteo ← io.openmeteo (legacy), types, errors, protocols
+    ├── http_json ← types, errors, protocols
+    └── fixtures  ← types, errors, protocols</div>
+
+    <h3 id="principi">2.3 Principi di design</h3>
+
+    <ul>
+      <li><strong>Zero dipendenze runtime nel core.</strong> Tutto gira con la stdlib di Python. Dev-deps (numpy, matplotlib) solo per test e validazione.</li>
+      <li><strong>Funzioni pure dove possibile.</strong> In <code>science/</code>, ogni funzione è <code>(input) → output</code> deterministica.</li>
+      <li><strong>Dataclass <code>frozen=True</code></strong> per risultati e value-object; mutabilità solo per <code>Pot.state_mm</code> e <code>Room.current_microclimate</code>.</li>
+      <li><strong>Stato canonico minimo + viste derivate.</strong> Il <code>Pot</code> ha solo 4 campi di stato dinamico (<code>state_mm</code>, <code>salt_mass_meq</code>, <code>ph_substrate</code>, <code>saucer_state_mm</code>); tutto il resto è property calcolata on-demand.</li>
+      <li><strong>Layout <code>src/</code></strong> per evitare import accidentali dal working dir.</li>
+      <li><strong>Tracciabilità del metodo</strong> via dataclass come <code>EtResult</code> (porta con sé il metodo usato per il calcolo).</li>
+      <li><strong>Protocol duck-typing</strong> per i sensori: adapter custom non devono importare nulla da fitosim.</li>
+      <li><strong>Unità metriche fisse</strong>: °C, mm, m/s, MJ/m²/d, frazione 0..1 per umidità (NON percentuale), timestamp UTC.</li>
+    </ul>
+
+    <!-- =================== 3. SETUP =================== -->
+    <h2 id="setup">3. Setup ambiente di sviluppo</h2>
+
+    <pre><code><span class="com"># Clone del repository</span>
+git clone https://github.com/&lt;tuo-username&gt;/fitosim.git
+cd fitosim
+
+<span class="com"># Install in editable mode con dev-deps</span>
+pip install -e <span class="str">'.[dev]'</span>
+
+<span class="com"># Esegui la suite (attesi ~1137 verdi)</span>
+python -m pytest tests/
+
+<span class="com"># Subset rapido per iterazione</span>
+python -m pytest tests/test_pot.py -x -q
+
+<span class="com"># Con coverage</span>
+python -m pytest --cov=fitosim --cov-report=html</code></pre>
+
+    <p>
+      In alternativa, senza installare il pacchetto:
+    </p>
+
+    <pre><code><span class="com"># Su Linux/macOS</span>
+PYTHONPATH=src python tuo_script.py
+
+<span class="com"># Su Windows (PowerShell)</span>
+$env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></pre>
+
+    <p>
+      <code>pyproject.toml</code> imposta già <code>pythonpath = ["src"]</code>
+      per <code>pytest</code>, quindi i test girano senza setup esplicito.
+    </p>
+
+    <!-- =================== 4. SCIENCE =================== -->
+    <h2 id="science">4. Layer <code>science</code></h2>
+
+    <p>
+      Funzioni pure e dataclass per il calcolo agronomico FAO-56 esteso.
+      Ogni modulo è autonomo (quasi tutti standalone) e testabile in isolamento.
+    </p>
+
+    <!-- ET0 -->
+    <h3 id="science-et0"><code>science/et0.py</code> — Evapotraspirazione di riferimento</h3>
+
+    <p>
+      Tre formule di calcolo dell'ET₀ (Penman-Monteith fisico, Penman-Monteith
+      standard FAO-56, Hargreaves-Samani) con selettore <em>best available</em>
+      che sceglie automaticamente la migliore disponibile in funzione di:
+      dati meteo presenti, parametri fisiologici della specie, robustezza
+      attesa nel contesto.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind enum">enum</span>
+        <span class="api-name">EtMethod</span>
+      </div>
+      <div class="api-body">
+        <p>Identifica univocamente il metodo usato dal selettore.</p>
+        <ul class="api-fields">
+          <li><code>HARGREAVES_SAMANI</code> — solo Tmin/Tmax; fallback robusto.</li>
+          <li><code>PENMAN_MONTEITH_STANDARD</code> — coltura riferimento FAO-56 (rs=70 s/m, h=0.12 m).</li>
+          <li><code>PENMAN_MONTEITH_PHYSICAL</code> — usa <code>stomatal_resistance_s_m</code> e <code>crop_height_m</code> della specie.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">EtResult</span>
+      </div>
+      <div class="api-body">
+        <p>Valore di ET₀ in mm/giorno con il metodo che lo ha generato (tracciabilità).</p>
+        <ul class="api-fields">
+          <li><code>value_mm: float</code></li>
+          <li><code>method: EtMethod</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind fn">function</span>
+        <span class="api-name">compute_et(weather, species, latitude_deg, current_date) → EtResult</span>
+      </div>
+      <div class="api-body">
+        <p>Selettore <em>best available</em>: prova PM fisico → PM standard → Hargreaves nell'ordine e ritorna il primo applicabile.</p>
+      </div>
+    </div>
+
+    <p>Altre funzioni esposte (helper pubblici): <code>saturation_vapor_pressure</code>, <code>slope_vapor_pressure</code>, <code>actual_vapor_pressure</code>, <code>atmospheric_pressure</code>, <code>psychrometric_constant</code>, <code>aerodynamic_resistance</code>, <code>et0_hargreaves_samani</code>, <code>compute_et0_penman_monteith</code>, <code>compute_et_penman_monteith_physical</code>.</p>
+
+    <!-- BALANCE -->
+    <h3 id="science-balance"><code>science/balance.py</code> — Bilancio idrico giornaliero</h3>
+
+    <p>
+      Cuore dell'algoritmo: implementa l'equazione di aggiornamento del
+      contenuto idrico del substrato secondo FAO-56. Traccia lo stato idrico
+      giornaliero, genera flag di allerta quando si scende sotto RAW
+      (<em>readily available water</em>), gestisce drenaggio come overflow.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">BalanceStepResult</span>
+      </div>
+      <div class="api-body">
+        <p>Esito immutabile di un passo: nuovo stato, drenaggio, flag allerta, deficit.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind fn">function</span>
+        <span class="api-name">water_balance_step_mm(state_mm, et_c_mm, water_input_mm, fc_mm, pwp_mm, ...) → BalanceStepResult</span>
+      </div>
+      <div class="api-body">
+        <p>Versione in mm (la più usata in <code>Pot</code>). Esiste anche <code>water_balance_step_theta</code> per la versione in frazione volumetrica e <code>water_balance_step</code> agnostica alle unità.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind fn">function</span>
+        <span class="api-name">stress_coefficient_ks(depletion, raw, taw) → float</span>
+      </div>
+      <div class="api-body">
+        <p>FAO-56 eq. 84: interpolazione lineare di Ks. Sotto RAW la pianta riduce la traspirazione proporzionalmente alla profondità del deficit.</p>
+      </div>
+    </div>
+
+    <!-- SUBSTRATE -->
+    <h3 id="science-substrate"><code>science/substrate.py</code> — Substrati e geometria</h3>
+
+    <p>
+      Catalogo di substrati con θ<sub>FC</sub>, θ<sub>PWP</sub>; utility per
+      conversioni unità (mm ↔ θ, volume), composizione di miscele
+      personalizzate da materiali base. Senza dubbio il modulo più ricco di
+      utility.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">Substrate</span>
+      </div>
+      <div class="api-body">
+        <p>Immutabile. Campi obbligatori: <code>name</code>, <code>theta_fc</code>, <code>theta_pwp</code>. Opzionali per dual-Kc: <code>rew_mm</code>, <code>tew_mm</code>. Opzionali per chimica: <code>cec_meq_per_100g</code>, <code>typical_ph</code>.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">BaseMaterial</span>
+      </div>
+      <div class="api-body">
+        <p>Materiale "ingrediente" di una miscela: torba, perlite, pomice, akadama, sabbia, kanuma, vermiculite, fibra di cocco, terriccio universale.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind fn">function</span>
+        <span class="api-name">compose_substrate(name, components) → Substrate</span>
+      </div>
+      <div class="api-body">
+        <p>Compone un substrato da una lista di <code>MixComponent(material, fraction)</code>. Calcola θ<sub>FC</sub>/PWP come media pesata delle proprietà dei materiali.</p>
+      </div>
+    </div>
+
+    <p>Catalogo predefinito: <code>UNIVERSAL_POTTING_SOIL</code>, <code>PEAT_BASED</code>, <code>COCO_COIR</code>, <code>PERLITE_RICH</code>, <code>CACTUS_MIX</code>.</p>
+
+    <p>Helper geometrici: <code>circular_pot_surface_area_m2</code>, <code>pot_substrate_depth_mm</code>, <code>theta_to_mm</code>, <code>mm_to_theta</code>, <code>total_available_water</code> (TAW), <code>readily_available_water</code> (RAW), <code>water_volume_*</code>.</p>
+
+    <!-- DUAL KC -->
+    <h3 id="science-dual-kc"><code>science/dual_kc.py</code> — Dual Kc (FAO-56 cap. 7)</h3>
+
+    <p>
+      Separa traspirazione (K<sub>cb</sub>) ed evaporazione superficiale
+      (K<sub>e</sub>) per catturare il consumo idrico reale post-irrigazione
+      (+15-25% nelle 24-48 h seguenti).
+    </p>
+
+    <p>Funzioni pubbliche: <code>evaporation_reduction_coefficient</code> (Kr a due fasi, energy-limited fino a REW, falling-rate verso TEW), <code>kcmax</code>, <code>soil_evaporation_coefficient</code> (FAO-56 eq. 71), <code>update_de</code> (evoluzione della cumulative depletion superficiale).</p>
+
+    <p>Costanti: <code>KCMAX_DEFAULT=1.20</code>, <code>KCMAX_FLOOR_MARGIN=0.05</code>, <code>DEFAULT_FEW=1.0</code>.</p>
+
+    <!-- POT PHYSICS -->
+    <h3 id="science-pot-physics"><code>science/pot_physics.py</code> — Fisica del contenitore</h3>
+
+    <p>
+      Modula ET<sub>c</sub> per materiale, colore ed esposizione solare.
+      Cattura permeabilità (terracotta) e assorbimento termico (colore).
+    </p>
+
+    <p>Enum: <code>PotMaterial</code> (PLASTIC, GLAZED_CERAMIC, TERRACOTTA, WOOD, METAL), <code>PotColor</code> (LIGHT, MEDIUM, DARK), <code>SunExposure</code> (FULL_SUN, PARTIAL_SHADE, SHADE).</p>
+
+    <p>Funzione: <code>pot_correction_factor(material, color, exposure) → float</code>. Kp = f_material × f_color × f_exposure. Range tipico 0.43–1.43 (terracotta +30%, ombra −55%).</p>
+
+    <!-- SAUCER -->
+    <h3 id="science-saucer"><code>science/saucer.py</code> — Sottovaso</h3>
+
+    <p>
+      Sottovaso come secondo serbatoio accoppiato al substrato. Risalita
+      capillare ed evaporazione del piattino riducono la frequenza di
+      irrigazione di circa il 10-20%.
+    </p>
+
+    <p>Funzioni: <code>capillary_transfer</code> (trasferimento proporzionale al deficit substrato), <code>saucer_evaporation</code> (frazione di ET₀, default 0.4).</p>
+
+    <!-- FERTIGATION -->
+    <h3 id="science-fertigation"><code>science/fertigation.py</code> — Bilancio chimico</h3>
+
+    <p>
+      Modella mescolamento istantaneo, drenaggio salino e variazione di pH
+      ad ogni irrigazione/pioggia. Implementa il meccanismo di "lisciviazione".
+    </p>
+
+    <p>Funzioni: <code>salt_balance_step</code> (conservazione massa salina con drenaggio proporzionale), <code>ph_after_mixing</code> (media pesata con buffer da CEC), <code>fertigation_step</code> (orchestrazione completa).</p>
+
+    <p>Costanti: <code>EC_TO_MEQ_PER_LITER=10</code>, <code>TYPICAL_SUBSTRATE_DENSITY_KG_PER_L=0.4</code>.</p>
+
+    <!-- NUTRITION -->
+    <h3 id="science-nutrition"><code>science/nutrition.py</code> — Coefficiente nutrizionale Kn</h3>
+
+    <p>
+      Modula la traspirazione in funzione dello stato chimico (EC, pH).
+      Stress salino e pH fuori range riducono la disponibilità idrica
+      apparente per effetti fisiologici.
+    </p>
+
+    <p>Funzione: <code>nutritional_factor(species, ec_mscm, ph) → float</code>. Prodotto di due fattori trapezoidali (1.0 dentro range, rampe lineari ai bordi, clamp a <code>Kn_min=0.3</code>).</p>
+
+    <!-- RADIATION -->
+    <h3 id="science-radiation"><code>science/radiation.py</code> — Radiazione</h3>
+
+    <p>
+      Calcola R<sub>a</sub> (extraterrestre, geometry pura) e R<sub>n</sub>
+      (netto, bilancio energetico). Input fondamentale per Penman-Monteith
+      e per la verifica di qualità del piranometro.
+    </p>
+
+    <p>Funzioni: <code>day_of_year</code>, <code>solar_declination</code>, <code>inverse_relative_distance</code>, <code>sunset_hour_angle</code>, <code>extraterrestrial_radiation</code> (FAO-56 eq. 21), <code>clear_sky_radiation</code>, <code>net_radiation</code> (Stefan-Boltzmann + umidità + nuvolosità).</p>
+
+    <!-- INDOOR -->
+    <h3 id="science-indoor"><code>science/indoor.py</code> — Radiazione indoor</h3>
+
+    <p>
+      Stima radiazione indoor da <code>LightExposure</code>. Due modalità:
+      categoriale (fallback, no stagionalità) e continua (frazione outdoor,
+      accurata).
+    </p>
+
+    <p>Funzioni: <code>categorical_indoor_radiation</code> (DARK=1.5, INDIRECT_BRIGHT=4.0, DIRECT_SUN=8.0 MJ/m²/d), <code>continuous_indoor_radiation</code> (frazioni 5%, 15%, 40%), <code>estimate_indoor_radiation</code> (selettore).</p>
+
+    <!-- CALIBRATION -->
+    <h3 id="science-calibration"><code>science/calibration.py</code> — Calibrazione da sensore</h3>
+
+    <p>
+      Stima θ<sub>FC</sub> e θ<sub>PWP</sub> effettivi (non quelli di
+      letteratura) dai dati storici del sensore WH51. Cattura compattazione
+      e peculiarità del singolo vaso.
+    </p>
+
+    <p>Funzioni: <code>find_peaks</code>, <code>find_valleys</code> (rilevamento robusto con filtro distanza/prominenza), <code>estimate_theta_fc</code> (percentile 75°), <code>estimate_theta_pwp</code> (percentile 10°), <code>calibrate_substrate</code> (pipeline completa).</p>
+
+    <!-- =================== 5. DOMAIN =================== -->
+    <h2 id="domain">5. Layer <code>domain</code></h2>
+
+    <p>
+      Modello di dominio: <code>Pot</code> e <code>Garden</code> sono le
+      entità centrali; tutto il resto le supporta o le compone. Le
+      dataclass <code>frozen=True</code> sono <strong>value object</strong>
+      immutabili (risultati, eventi); <code>Pot</code> e <code>Room</code>
+      hanno stato mutabile esplicito.
+    </p>
+
+    <!-- SPECIES -->
+    <h3 id="domain-species"><code>domain/species.py</code> — Caratterizzazione della pianta</h3>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind enum">enum</span>
+        <span class="api-name">PhenologicalStage</span>
+      </div>
+      <div class="api-body">
+        <p>FAO-56 stages discreti: <code>INITIAL</code>, <code>MID_SEASON</code>, <code>LATE_SEASON</code>.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">Species</span>
+      </div>
+      <div class="api-body">
+        <p>Caratterizzazione completa di una specie.</p>
+        <ul class="api-fields">
+          <li><strong>Kc</strong>: <code>kc_initial</code>, <code>kc_mid</code>, <code>kc_late</code></li>
+          <li><strong>Stress</strong>: <code>depletion_fraction</code> (soglia p)</li>
+          <li><strong>Fenologia</strong>: <code>initial_stage_days</code>, <code>mid_stage_days</code></li>
+          <li><strong>Dual-Kc</strong> (opz., tutti e tre): <code>kcb_initial</code>, <code>kcb_mid</code>, <code>kcb_late</code></li>
+          <li><strong>Chimica</strong> (opz., tutti e quattro): <code>ec_optimal_min/max_mscm</code>, <code>ph_optimal_min/max</code></li>
+          <li><strong>Fisiologia</strong> (per PM fisico): <code>stomatal_resistance_s_m</code>, <code>crop_height_m</code></li>
+        </ul>
+        <p>Property: <code>supports_dual_kc</code>, <code>supports_chemistry_model</code>. Metodo: <code>stage_at_day(days_since_planting)</code>.</p>
+      </div>
+    </div>
+
+    <p>Funzioni pubbliche: <code>kc_for_stage</code>, <code>potential_et_c</code> (Kc × ET₀), <code>actual_et_c</code> (Ks × Kc × ET₀).</p>
+
+    <p>Catalogo: <code>BASIL</code>, <code>TOMATO</code>, <code>LETTUCE</code>, <code>CITRUS</code>, <code>ROSEMARY</code>, <code>ALL_SPECIES</code>.</p>
+
+    <!-- POT -->
+    <h3 id="domain-pot"><code>domain/pot.py</code> — Entità centrale</h3>
+
+    <p>
+      Il singolo vaso reale. Concentra tutto il sapere agronomico in
+      un'entità coerente. È l'unica classe con <strong>stato mutabile</strong>
+      (<code>state_mm</code> evolve nel tempo).
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind enum">enum</span>
+        <span class="api-name">Location · PotShape</span>
+      </div>
+      <div class="api-body">
+        <ul class="api-fields">
+          <li><code>Location</code>: <code>OUTDOOR</code>, <code>INDOOR</code></li>
+          <li><code>PotShape</code>: <code>CYLINDRICAL</code>, <code>TRUNCATED_CONE</code>, <code>RECTANGULAR</code>, <code>OVAL</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">Pot</span>
+      </div>
+      <div class="api-body">
+        <p>Identificato univocamente da <code>label</code>.</p>
+        <p><strong>Immutabili dopo la creazione</strong>: <code>label</code>, <code>species</code>, <code>substrate</code>, geometry (<code>pot_volume_l</code>, <code>pot_diameter_cm</code>, <code>pot_shape</code>), <code>location</code>, <code>room_id</code>, <code>pot_material</code>, <code>pot_color</code>, <code>sun_exposure</code>, <code>rainfall_exposure</code>, <code>planting_date</code>.</p>
+        <p><strong>Stato mutabile</strong>: <code>state_mm</code>, <code>salt_mass_meq</code>, <code>ph_substrate</code>, <code>saucer_state_mm</code>.</p>
+        <p><strong>Property calcolate</strong> (derivate): <code>state_theta</code>, <code>fc_mm</code>, <code>pwp_mm</code>, <code>taw_mm</code>, <code>raw_mm</code>, <code>alert_mm</code>, <code>ec_substrate_mscm</code>, <code>kp</code>, <code>surface_area_m2</code>, <code>current_stage(date)</code>.</p>
+      </div>
+    </div>
+
+    <h4>Metodi di evoluzione dello stato</h4>
+
+    <ul>
+      <li><code>apply_step(et_0_mm, current_date, rainfall_volume_l) → FullStepResult</code> — passo completo (bilancio + pioggia + saucer).</li>
+      <li><code>apply_step_from_weather(weather, current_date, ...)</code> — usa <code>WeatherDay</code> + selettore best-available.</li>
+      <li><code>apply_balance_step_from_indoor(microclimate, water_input_mm, ..., room)</code> — versione indoor.</li>
+      <li><code>update_from_sensor(reading) → SensorUpdateResult</code> — riconcilia con misura sensore (discrepanza modello/realtà).</li>
+      <li><code>apply_fertigation_step(volume_l, ec_mscm, ph, current_date) → FertigationResult</code> — applicazione di soluzione fertilizzante.</li>
+    </ul>
+
+    <p>Tutti i risultati sono dataclass <code>frozen=True</code>: <code>FullStepResult</code>, <code>SensorUpdateResult</code>, <code>FertigationResult</code>.</p>
+
+    <!-- ROOM -->
+    <h3 id="domain-room"><code>domain/room.py</code> — Microclima indoor</h3>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind enum">enum</span>
+        <span class="api-name">LightExposure · MicroclimateKind</span>
+      </div>
+      <div class="api-body">
+        <ul class="api-fields">
+          <li><code>LightExposure</code>: <code>DARK</code>, <code>INDIRECT_BRIGHT</code>, <code>DIRECT_SUN</code> (qualitativo).</li>
+          <li><code>MicroclimateKind</code>: <code>INSTANT</code> (dashboard), <code>DAILY</code> (bilancio).</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">IndoorMicroclimate</span>
+      </div>
+      <div class="api-body">
+        <p>Variante istantanea (T, RH correnti) o giornaliera (Tmin, Tmax, RH).</p>
+        <p>Validazione in <code>__post_init__</code>: coerenza <code>kind</code> ↔ campi presenti.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">Room</span>
+      </div>
+      <div class="api-body">
+        <p>Una stanza = un sensore WN31 = N vasi con microclima condiviso.</p>
+        <ul class="api-fields">
+          <li><code>room_id</code> (id), <code>name</code>, <code>wn31_channel_id</code> (opz.), <code>current_microclimate</code> (INSTANT, mutabile), <code>default_wind_m_s</code>.</li>
+        </ul>
+        <p>Metodo: <code>update_current_microclimate(microclimate)</code> — accetta solo <code>INSTANT</code>.</p>
+      </div>
+    </div>
+
+    <!-- WEATHER -->
+    <h3 id="domain-weather"><code>domain/weather.py</code> — Meteo grezzo</h3>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">WeatherDay</span>
+      </div>
+      <div class="api-body">
+        <p>Dati grezzi giornalieri da stazione esterna.</p>
+        <ul class="api-fields">
+          <li><strong>Obbligatori</strong>: <code>date_</code>, <code>t_min</code>, <code>t_max</code> (per fallback Hargreaves).</li>
+          <li><strong>Opzionali</strong>: <code>humidity_relative</code>, <code>wind_speed_m_s</code>, <code>solar_radiation_mj_m2_day</code> (per Penman-Monteith).</li>
+        </ul>
+        <p>Property: <code>has_full_weather</code>.</p>
+      </div>
+    </div>
+
+    <!-- GARDEN -->
+    <h3 id="domain-garden"><code>domain/garden.py</code> — Orchestratore</h3>
+
+    <p>
+      Contenitore di tutti i vasi del balcone come entità coerente. Niente
+      persistenza interna: viste (allerte, forecast) sempre ricalcolate
+      on-demand dallo stato dei vasi.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">Garden</span>
+      </div>
+      <div class="api-body">
+        <p>Attributi: <code>name</code> (id immutabile), <code>location_description</code>, collezioni interne ordinate (<code>_pots</code>, <code>_rooms</code>, <code>_channel_mapping</code>, <code>_scheduled_events</code>).</p>
+        <p><strong>Invarianti</strong>: nome non vuoto; unicità di <code>label</code> vasi e <code>room_id</code>; vasi offline si saltano silenziosamente nelle operazioni batch.</p>
+      </div>
+    </div>
+
+    <h4>API principali</h4>
+
+    <table>
+      <thead>
+        <tr><th>Area</th><th>Metodi</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Vasi</strong></td><td><code>add_pot</code>, <code>remove_pot</code>, <code>get_pot</code>, <code>has_pot</code>, <code>pot_labels</code>, iterabile, <code>__len__</code></td></tr>
+        <tr><td><strong>Room</strong></td><td><code>add_room</code>, <code>get_room</code>, <code>has_room</code>, <code>remove_room</code>, <code>pots_in_room(room_id)</code></td></tr>
+        <tr><td><strong>Mapping sensori</strong></td><td><code>set_channel_id</code>, <code>get_channel_id</code>, <code>has_channel_id</code>, <code>remove_channel_id</code></td></tr>
+        <tr><td><strong>Aggiornamento sensori</strong></td><td><code>update_all_from_sensors(sensor)</code> → <code>Dict[label, SensorUpdateResult | Error]</code></td></tr>
+        <tr><td><strong>Evoluzione giornaliera</strong></td><td><code>apply_step_all</code>, <code>apply_step_all_from_weather</code>, <code>apply_step_all_from_indoor</code></td></tr>
+        <tr><td><strong>Eventi</strong></td><td><code>add_scheduled_event</code>, <code>cancel_scheduled_event</code>, <code>events_due_today</code>, <code>events_due_in_range</code></td></tr>
+        <tr><td><strong>Forecast</strong></td><td><code>forecast(weather_forecast) → ForecastResult</code>, <code>forecast_alerts(weather_forecast) → List[Alert]</code></td></tr>
+        <tr><td><strong>Allerte</strong></td><td><code>current_alerts(today)</code>, <code>forecast_alerts(weather_forecast)</code></td></tr>
+      </tbody>
+    </table>
+
+    <!-- SCHEDULING -->
+    <h3 id="domain-scheduling"><code>domain/scheduling.py</code> — Eventi e forecast meteo</h3>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">ScheduledEvent</span>
+      </div>
+      <div class="api-body">
+        <p>Evento futuro. Campi: <code>event_id</code> (univoco per <code>pot_label</code>), <code>pot_label</code>, <code>event_type</code> (<code>"fertigation"</code>, <code>"leaching"</code>, <code>"treatment"</code>), <code>scheduled_date</code>, <code>payload</code> (dict JSON-compatibile).</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">WeatherDayForecast</span>
+      </div>
+      <div class="api-body">
+        <p>Diverso da <code>WeatherDay</code>: già ha ET₀ pre-calcolato per evitare ricomputo su orizzonti N giorni. Campi: <code>date_</code>, <code>et_0_mm</code>, <code>rainfall_mm</code>.</p>
+      </div>
+    </div>
+
+    <!-- SCHEDULER -->
+    <h3 id="domain-scheduler"><code>domain/scheduler.py</code> — Pianificatore irrigazione</h3>
+
+    <p>
+      Trasforma il modello da descrittivo a <em>prescrittivo</em>: data una
+      previsione, raccomanda quando e quanto irrigare ciascun vaso.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind enum">enum</span>
+        <span class="api-name">IrrigationReason</span>
+      </div>
+      <div class="api-body">
+        <ul class="api-fields">
+          <li><code>CURRENTLY_IN_ALERT</code>, <code>PREDICTED_ALERT</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind fn">function</span>
+        <span class="api-name">plan_irrigations(inventory, forecast, latitude_deg, today, horizon_days=-1) → IrrigationPlan</span>
+      </div>
+      <div class="api-body">
+        <p>Algoritmo: simulazione forward con stato proiettato (non mutabile). Quando <code>state_mm &lt; alert_mm</code>, programma un evento di ripristino a FC.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">IrrigationPlan</span>
+      </div>
+      <div class="api-body">
+        <p>Utility: <code>events_for_date</code>, <code>events_for_pot</code>, <code>days_with_events</code>, <code>total_liters_on_date</code>, <code>pots_with_events</code>, <code>is_empty</code>.</p>
+      </div>
+    </div>
+
+    <!-- ALERTS -->
+    <h3 id="domain-alerts"><code>domain/alerts.py</code> — Sistema di allerte</h3>
+
+    <p>
+      Allerte derivate (mai persistite). Sono una <strong>vista</strong> dello
+      stato dei vasi, sempre ricalcolate on-demand dal <code>Garden</code>.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind enum">enum</span>
+        <span class="api-name">AlertSeverity · AlertCategory</span>
+      </div>
+      <div class="api-body">
+        <ul class="api-fields">
+          <li><code>AlertSeverity</code>: <code>INFO</code>, <code>WARNING</code>, <code>CRITICAL</code>.</li>
+          <li><code>AlertCategory</code>: irrigazione, fertilizzazione, EC alta, EC bassa, pH fuori range.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">Alert</span>
+      </div>
+      <div class="api-body">
+        <p>Allerta immutabile con <code>id</code> deterministico calcolato da <code>(pot_label, category, triggered_date)</code>. Utile per dedup tra refresh.</p>
+      </div>
+    </div>
+
+    <p>
+      <code>ALL_RULES</code> è una <code>tuple</code> di funzioni pure
+      <code>(Pot, date) → Optional[Alert]</code>:
+      <code>check_irrigation_needed</code>, <code>check_ec_too_high</code>,
+      <code>check_ec_too_low</code>, <code>check_fertilization_due</code>,
+      <code>check_ph_out_of_range</code>.
+    </p>
+
+    <!-- =================== 6. IO =================== -->
+    <h2 id="io">6. Layer <code>io</code></h2>
+
+    <p>
+      Adapter di ingresso e uscita. Persistenza e serializzazione sono
+      disaccoppiate tra loro; i sensori sono <code>Protocol</code> duck-typed
+      così che adapter custom non debbano importare nulla da <code>fitosim</code>.
+    </p>
+
+    <!-- PERSISTENCE -->
+    <h3 id="io-persistence"><code>io/persistence.py</code> — SQLite</h3>
+
+    <p>
+      Database operativo con storia completa degli stati. Schema versionato
+      (attualmente v3/v4 con migrazioni automatiche).
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind">class</span>
+        <span class="api-name">GardenPersistence</span>
+      </div>
+      <div class="api-body">
+        <p>API CRUD per giardini, vasi, room, snapshot di stato, catalogo (specie/substrati). Costruttore: <code>GardenPersistence(db_path)</code>. Migrazioni auto sull'inizializzazione.</p>
+        <p>Metodi principali: <code>register_species</code>, <code>register_substrate</code>, <code>save_garden(garden, snapshot_timestamp)</code>, <code>load_garden(name) → Garden</code>, <code>list_gardens()</code>, <code>load_pot_history(pot_label) → List[PotStateSnapshot]</code>.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">PotStateSnapshot</span>
+      </div>
+      <div class="api-body">
+        <p>Snapshot immutabile di uno stato vaso (per ricostruire l'andamento storico).</p>
+      </div>
+    </div>
+
+    <p>
+      Eccezioni canoniche: <code>PersistenceError</code> (base),
+      <code>SchemaVersionMismatch</code>, <code>CatalogMissingError</code>.
+    </p>
+
+    <!-- SERIALIZATION -->
+    <h3 id="io-serialization"><code>io/serialization.py</code> — JSON</h3>
+
+    <p>
+      Formato di trasporto autocontenuto per backup, migrazione, condivisione.
+      <strong>Non</strong> è persistenza: funzioni pure, niente file I/O,
+      niente DB. Il chiamante gestisce file e storage.
+    </p>
+
+    <pre><code><span class="kw">from</span> fitosim.io.serialization <span class="kw">import</span> export_garden_json, import_garden_json
+
+<span class="com"># Export</span>
+json_str = export_garden_json(garden)
+
+<span class="com"># Import</span>
+garden = import_garden_json(json_str)</code></pre>
+
+    <p>Eccezione: <code>SerializationError</code> per JSON malformato.</p>
+
+    <!-- SENSORS -->
+    <h3 id="io-sensors">Astrazione sensori — <code>io/sensors/</code></h3>
+
+    <div class="callout note">
+      <strong>Spec sensori v1</strong>
+      A partire dal 2026-05-15 il layer sensori adotta la <strong>spec
+      sensori canonica v1</strong> formalizzata in
+      <code>the-pot/docs/the_pot_sensors_spec.md</code>. Tutti gli adapter
+      operativi (Ecowitt, Open-Meteo, HTTP-JSON, fixture CSV)
+      restituiscono ora liste piatte di <code>Measurement</code>
+      <code>(sensor_id, timestamp, parameter, value)</code> con
+      vocabolario controllato (<code>air_temperature_c</code>,
+      <code>soil_theta</code>, ecc.) e namespace <code>custom:*</code>
+      per estensioni utente. I tipi legacy <code>EnvironmentReading</code>
+      e <code>SoilReading</code> restano disponibili nel modulo
+      <code>io/sensors/types.py</code> ma non sono più prodotti dagli
+      adapter.
+    </div>
+
+    <p>
+      Due interfacce asimmetriche, <code>Protocol</code> runtime-checkable
+      a zero dipendenze:
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind proto">protocol</span>
+        <span class="api-name">EnvironmentSensor</span>
+      </div>
+      <div class="api-body">
+        <pre><code><span class="kw">@runtime_checkable</span>
+<span class="kw">class</span> <span class="fn">EnvironmentSensor</span>(Protocol):
+    <span class="kw">def</span> <span class="fn">current_conditions</span>(<span class="kw">self</span>, lat: <span class="kw">float</span>, lon: <span class="kw">float</span>) -&gt; list[Measurement]: ...
+    <span class="kw">def</span> <span class="fn">forecast</span>(<span class="kw">self</span>, lat: <span class="kw">float</span>, lon: <span class="kw">float</span>, days: <span class="kw">int</span>) -&gt; list[Measurement]: ...</code></pre>
+        <p>Un sensore per molti vasi (coordinate geografiche). Una stazione meteo che misura T, RH, vento e pioggia produce 4 <code>Measurement</code> per ogni tick con stesso <code>sensor_id</code> e <code>timestamp</code>.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind proto">protocol</span>
+        <span class="api-name">SoilSensor</span>
+      </div>
+      <div class="api-body">
+        <pre><code><span class="kw">@runtime_checkable</span>
+<span class="kw">class</span> <span class="fn">SoilSensor</span>(Protocol):
+    <span class="kw">def</span> <span class="fn">current_state</span>(<span class="kw">self</span>, channel_id: <span class="kw">str</span>) -&gt; list[Measurement]: ...</code></pre>
+        <p>Un sensore per un vaso (channel_id). Un WH51 produce 1 Measurement (<code>soil_theta</code>); un WH52 fino a 3 (θ + T + EC).</p>
+      </div>
+    </div>
+
+    <h4>Tipo canonico <code>Measurement</code> (<code>io/sensors/measurement.py</code>)</h4>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">Measurement</span>
+      </div>
+      <div class="api-body">
+        <p>4 campi, validati in <code>__post_init__</code>:</p>
+        <ul class="api-fields">
+          <li><code>sensor_id: str</code> — opaco lato spec, convenzione raccomandata <code>&lt;provider&gt;:&lt;device_type&gt;[:&lt;scope&gt;]:&lt;instance&gt;</code></li>
+          <li><code>timestamp: datetime</code> — obbligatoriamente timezone-aware</li>
+          <li><code>parameter: str</code> — uno dei canonici (sotto) o prefisso <code>custom:</code></li>
+          <li><code>value: float</code> — finito (no NaN/inf), dentro il range plausibile del parametro</li>
+        </ul>
+        <p>Validazione: <code>MeasurementValidationError</code> per timestamp naive, parameter sconosciuto, value fuori range.</p>
+      </div>
+    </div>
+
+    <h4>Vocabolario canonico dei parametri</h4>
+
+    <table>
+      <thead>
+        <tr><th>Categoria</th><th>Parametri</th><th>Range</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Ambiente</td>
+          <td><code>air_temperature_c</code>, <code>air_humidity</code> (0..1), <code>wind_speed_m_s</code>, <code>solar_radiation_mj_m2</code>, <code>rainfall_mm</code>, <code>barometric_pressure_hpa</code></td>
+          <td>Plausibili fisici (es. -50..70 °C, 0..1.05 per θ, 800..1100 hPa)</td>
+        </tr>
+        <tr>
+          <td>Substrato</td>
+          <td><code>soil_theta</code> (0..1.05), <code>soil_temperature_c</code>, <code>soil_ec_mscm</code>, <code>soil_ph</code></td>
+          <td>Idem</td>
+        </tr>
+        <tr>
+          <td>Sistema</td>
+          <td><code>battery_level</code>, <code>signal_strength</code></td>
+          <td>0..1 (frazione, NON %)</td>
+        </tr>
+        <tr>
+          <td>Extension</td>
+          <td><code>custom:&lt;arbitrary&gt;</code> (es. <code>custom:co2_ppm</code>, <code>custom:et0_mm</code>)</td>
+          <td>Opachi, nessuna validazione di range</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      Esportati come costanti dal modulo: <code>PARAM_AIR_TEMPERATURE_C</code>,
+      <code>PARAM_SOIL_THETA</code>, ecc., più il frozenset
+      <code>CANONICAL_PARAMETERS</code> e il prefisso
+      <code>CUSTOM_NAMESPACE_PREFIX = "custom:"</code>. Costante di
+      versione: <code>SCHEMA_VERSION = 1</code>.
+    </p>
+
+    <h4>Tipi legacy (<code>io/sensors/types.py</code>) — in deprecation</h4>
+
+    <p>
+      <code>EnvironmentReading</code>, <code>SoilReading</code>,
+      <code>ReadingQuality</code> restano disponibili nel modulo per
+      retrocompatibilità con codice che le importa, ma <strong>nessun
+      adapter operativo le produce più</strong>. Saranno rimosse in una
+      futura versione una volta che il backend di The Pot (e il dominio
+      di fitosim) avrà migrato i suoi consumatori.
+    </p>
+
+    <h4>Eccezioni canoniche (<code>io/sensors/errors.py</code>)</h4>
+
+    <table>
+      <thead>
+        <tr><th>Eccezione</th><th>Quando</th><th>Strategia chiamante</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>SensorTemporaryError</code></td>
+          <td>Rete giù, timeout, gateway non risponde</td>
+          <td>Retry o leggi da cache</td>
+        </tr>
+        <tr>
+          <td><code>SensorPermanentError</code></td>
+          <td>Credenziali sbagliate, hardware rotto, parametri invalidi</td>
+          <td>Intervento manuale richiesto</td>
+        </tr>
+        <tr>
+          <td><code>SensorDataQualityError</code></td>
+          <td>Valore non plausibile (θ negativo, pH fuori [0,14])</td>
+          <td>Marca offline, ricalibra</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- ADAPTERS -->
+    <h3 id="io-adapter">Adapter concreti</h3>
+
+    <table>
+      <thead>
+        <tr><th>Adapter</th><th>Protocol</th><th>Formato <code>sensor_id</code></th><th>Sorgente</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>EcowittEnvironmentSensor</code></td>
+          <td>EnvironmentSensor</td>
+          <td><code>ecowitt:weather_station:&lt;mac_cleaned&gt;</code></td>
+          <td>API cloud Ecowitt (stazione fisica). <code>forecast()</code> → <code>NotImplementedError</code>.</td>
+        </tr>
+        <tr>
+          <td><code>EcowittWH51SoilSensor</code></td>
+          <td>SoilSensor</td>
+          <td><code>ecowitt:wh51|wh52:&lt;mac_cleaned&gt;:ch&lt;N&gt;</code></td>
+          <td>Sensore substrato Ecowitt WH51/WH52 (parametrizzato via <code>model</code>).</td>
+        </tr>
+        <tr>
+          <td><code>EcowittAmbientSensor</code></td>
+          <td>(custom — non implementa il Protocol)</td>
+          <td>n/a</td>
+          <td>Sensore Ecowitt WN31 per microclima indoor. Produce <code>IndoorMicroclimate</code> consumato direttamente dal dominio indoor; non migrato a <code>Measurement</code> per scelta architetturale.</td>
+        </tr>
+        <tr>
+          <td><code>OpenMeteoEnvironmentSensor</code></td>
+          <td>EnvironmentSensor</td>
+          <td><code>openmeteo:lat&lt;lat&gt;_lon&lt;lon&gt;</code> (4 decimali)</td>
+          <td>API Open-Meteo (no auth, grigliata globale, forecast 1-16 giorni). Cache su disco con TTL.</td>
+        </tr>
+        <tr>
+          <td><code>HttpJsonSoilSensor</code></td>
+          <td>SoilSensor</td>
+          <td><code>http_json:&lt;hostname&gt;:&lt;channel_id&gt;</code></td>
+          <td>Gateway HTTP locale (es. ESP32 + Modbus RS485). Schema JSON V1 documentato in <code>HttpJsonSchemaV1</code>.</td>
+        </tr>
+        <tr>
+          <td><code>CsvEnvironmentFixture</code></td>
+          <td>EnvironmentSensor</td>
+          <td><code>csv_fixture:&lt;filename_stem&gt;</code> (override possibile)</td>
+          <td>Test offline deterministico da CSV.</td>
+        </tr>
+        <tr>
+          <td><code>CsvSoilFixture</code></td>
+          <td>SoilSensor</td>
+          <td><code>csv_fixture:&lt;filename_stem&gt;</code> (override possibile)</td>
+          <td>Test offline deterministico da CSV.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      Ogni adapter espone un helper per produrre il <code>sensor_id</code>
+      che userà nelle Measurement: <code>EcowittEnvironmentSensor.sensor_id</code>
+      (property), <code>EcowittWH51SoilSensor.sensor_id_for(channel_id)</code>,
+      <code>OpenMeteoEnvironmentSensor.sensor_id_for(lat, lon)</code>,
+      <code>HttpJsonSoilSensor.sensor_id_for(channel_id)</code>,
+      <code>CsvEnvironmentFixture.sensor_id</code> /
+      <code>CsvSoilFixture.sensor_id</code> (property).
+    </p>
+
+    <div class="callout warn">
+      <strong>Legacy vs nuovo</strong>
+      Il modulo <code>io/ecowitt.py</code> (vecchio) espone funzioni low-level
+      che restituiscono <code>EcowittObservation</code> (snapshot raw,
+      dettagli provider esposti). I nuovi adapter in <code>io/sensors/</code>
+      restituiscono <code>list[Measurement]</code> canoniche secondo la spec
+      sensori v1 e implementano i <code>Protocol</code>. <strong>Preferire i
+      nuovi</strong>; il legacy <code>EcowittObservation</code> e i tipi
+      <code>EnvironmentReading</code>/<code>SoilReading</code> sono mantenuti
+      perché il nuovo adapter Ecowitt riusa internamente <code>fetch_real_time</code>
+      e i tipi legacy potrebbero ancora essere importati da codice utente
+      esistente.
+    </div>
+
+    <h4>Variabili d'ambiente per credenziali</h4>
+
+    <pre><code><span class="com"># Ecowitt (con fallback al naming legacy)</span>
+FITOSIM_ECOWITT_APPLICATION_KEY=...
+FITOSIM_ECOWITT_API_KEY=...
+FITOSIM_ECOWITT_MAC=...
+
+<span class="com"># HTTP-JSON gateway (opzionale)</span>
+FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
+
+    <p>
+      I costruttori espongono <code>from_env()</code> come metodo di classe
+      per istanziare l'adapter senza passare manualmente le credenziali.
+    </p>
+
+    <!-- =================== 7. TESTING =================== -->
+    <h2 id="testing">7. Testing</h2>
+
+    <p>
+      <code>fitosim</code> ha <strong>1137 test verdi</strong> (357 sub-test)
+      che girano in ~8 secondi su laptop standard. La suite è la rete di
+      sicurezza primaria del refactoring.
+    </p>
+
+    <h3>Struttura</h3>
+
+    <p>
+      Ogni modulo ha un test file dedicato (<code>tests/test_&lt;module&gt;.py</code>).
+      I test seguono lo stile narrativo: <code>test_&lt;contesto&gt;_&lt;comportamento&gt;</code>
+      (es. <code>test_balance_drainage_caps_state_at_fc</code>).
+    </p>
+
+    <h3>Categorie di test</h3>
+
+    <table>
+      <thead>
+        <tr><th>Categoria</th><th>File</th><th>Cosa testa</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Unit scientifici</td><td><code>test_balance</code>, <code>test_et0</code>, <code>test_substrate</code>, ...</td><td>Funzioni pure FAO-56 e helper.</td></tr>
+        <tr><td>Unit dominio</td><td><code>test_pot</code>, <code>test_garden</code>, <code>test_alerts</code>, ...</td><td>Entità di dominio e invarianti.</td></tr>
+        <tr><td>Integrazione I/O</td><td><code>test_persistence</code>, <code>test_serialization</code></td><td>Round-trip SQLite/JSON.</td></tr>
+        <tr><td>Spec sensori v1</td><td><code>test_measurement</code></td><td>Validazione della dataclass canonica <code>Measurement</code>: sensor_id, timestamp tz-aware, vocabolario, range fisici (109 test).</td></tr>
+        <tr><td>Adapter sensori</td><td><code>test_sensors_ecowitt</code>, <code>test_sensors_openmeteo</code>, <code>test_sensors_http_json</code>, <code>test_sensors_fixtures</code></td><td>Mapping payload → <code>list[Measurement]</code> canoniche, gestione errori, conformità Protocol.</td></tr>
+        <tr><td>End-to-end</td><td><code>test_demo_appartamento</code></td><td>Demo eseguibile che testa l'intero flusso.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Fixture per HTTP</h3>
+
+    <p>
+      Per i test degli adapter HTTP, <code>fitosim</code> usa
+      <strong>fixture JSON statiche</strong> in <code>tests/fixtures/</code>:
+      no mock, no monkey-patching pesante, parsing puro su payload reali
+      catturati.
+    </p>
+
+    <h3>Esempi di esecuzione</h3>
+
+    <pre><code><span class="com"># Suite completa</span>
+python -m pytest tests/
+
+<span class="com"># Singolo modulo verbose</span>
+python -m pytest tests/test_pot.py -v
+
+<span class="com"># Filtro per nome test</span>
+python -m pytest -k <span class="str">"drainage"</span>
+
+<span class="com"># Fast fail + output minimale</span>
+python -m pytest -x -q
+
+<span class="com"># Coverage report</span>
+python -m pytest --cov=fitosim --cov-report=term-missing</code></pre>
+
+    <!-- =================== 8. CONVENZIONI =================== -->
+    <h2 id="convenzioni">8. Convenzioni di codice</h2>
+
+    <h3>Naming</h3>
+
+    <ul>
+      <li><strong>Snake_case</strong> per funzioni, variabili, moduli; <strong>PascalCase</strong> per classi/dataclass/enum.</li>
+      <li><strong>Suffisso unità</strong> esplicito nei nomi: <code>state_mm</code>, <code>volume_l</code>, <code>ec_mscm</code>, <code>temperature_c</code>, <code>theta_volumetric</code>.</li>
+      <li><strong>Costanti maiuscole</strong> in cima al modulo: <code>DEFAULT_DEPLETION_FRACTION</code>, <code>KCMAX_DEFAULT</code>.</li>
+    </ul>
+
+    <h3>Tipi</h3>
+
+    <ul>
+      <li>Type hints <strong>obbligatori</strong> su tutte le funzioni pubbliche.</li>
+      <li><code>Optional[...]</code> esplicito; mai <code>= None</code> implicito su parametri tipizzati senza marcatura.</li>
+      <li><code>Protocol</code> per duck-typing (vedi <code>io/sensors/protocols.py</code>); preferiti rispetto ad ABC perché non richiedono ereditarietà esplicita.</li>
+    </ul>
+
+    <h3>Dataclass</h3>
+
+    <ul>
+      <li><code>@dataclass(frozen=True)</code> per <strong>value object</strong>: risultati, eventi, letture sensori, parametri.</li>
+      <li><code>@dataclass</code> mutabile <strong>solo</strong> per le entità con stato che evolve nel tempo: <code>Pot</code>, <code>Garden</code>, <code>Room</code>.</li>
+      <li><code>__post_init__</code> per <strong>validazione fisica</strong> all'istanziazione (es. range di pH 0..14).</li>
+    </ul>
+
+    <h3>Errori</h3>
+
+    <ul>
+      <li>Eccezioni canoniche con gerarchia chiara (es. <code>SensorError</code> → <code>SensorTemporaryError</code>/<code>SensorPermanentError</code>/<code>SensorDataQualityError</code>).</li>
+      <li>Adapter <strong>catturano</strong> eccezioni native (urllib, ValueError) e <strong>ri-sollevano</strong> quelle canoniche per disaccoppiare i chiamanti dai dettagli di trasporto.</li>
+      <li><code>ValueError</code> per parametri logicamente invalidi; <code>TypeError</code> per type mismatch.</li>
+    </ul>
+
+    <h3>Stile</h3>
+
+    <ul>
+      <li>Docstring brevi sopra le funzioni pubbliche; descrivono il <strong>perché</strong>, non il <strong>cosa</strong>.</li>
+      <li>Commenti rari, solo dove l'invariante o il vincolo è non ovvio (es. riferimento all'equazione FAO-56).</li>
+      <li>Funzioni < 50 righe; helper estratti quando il flusso si annida oltre 3 livelli.</li>
+    </ul>
+
+    <h3>Cosa NON fare</h3>
+
+    <ul>
+      <li>❌ Importare <code>numpy</code>, <code>pandas</code>, <code>requests</code> nel core (<code>src/fitosim/</code>). Solo in test/demo.</li>
+      <li>❌ Persistere allerte. Sono viste derivate, sempre ricalcolate.</li>
+      <li>❌ Mutare campi "immutabili" di un <code>Pot</code> (es. <code>species</code>, <code>substrate</code>): creare un nuovo <code>Pot</code>.</li>
+      <li>❌ Far dipendere <code>science</code> da <code>domain</code> o <code>io</code>. Le dipendenze sono unidirezionali.</li>
+      <li>❌ Usare floating-point per equality nei test. Usare <code>pytest.approx</code> con tolleranze esplicite.</li>
+    </ul>
+
+    <!-- =================== 9. GLOSSARIO =================== -->
+    <h2 id="glossario">9. Glossario tecnico</h2>
+
+    <table>
+      <thead>
+        <tr><th>Termine</th><th>Significato</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>FAO-56</td><td>Pubblicazione di riferimento FAO "Crop evapotranspiration — Guidelines for computing crop water requirements".</td></tr>
+        <tr><td>ET₀</td><td>Evapotraspirazione di riferimento. Domanda atmosferica standard, calcolata su coltura riferimento (rs=70 s/m, h=0.12 m).</td></tr>
+        <tr><td>ET<sub>c</sub></td><td>Evapotraspirazione colturale. ET₀ × K<sub>c</sub>.</td></tr>
+        <tr><td>K<sub>c</sub></td><td>Coefficiente colturale. Modula ET₀ in funzione della specie e dello stadio fenologico.</td></tr>
+        <tr><td>K<sub>cb</sub> · K<sub>e</sub></td><td>Decomposizione dual-Kc: K<sub>cb</sub> traspirazione basale, K<sub>e</sub> evaporazione superficiale.</td></tr>
+        <tr><td>K<sub>p</sub></td><td>Coefficiente di vaso. Modula ET<sub>c</sub> per materiale, colore, esposizione.</td></tr>
+        <tr><td>K<sub>n</sub></td><td>Coefficiente nutrizionale. Modula la traspirazione in funzione di EC e pH.</td></tr>
+        <tr><td>K<sub>s</sub></td><td>Coefficiente di stress idrico. Riduce la traspirazione sotto la soglia RAW.</td></tr>
+        <tr><td>θ<sub>FC</sub></td><td>Field Capacity. Contenuto idrico volumetrico al limite superiore (post drenaggio).</td></tr>
+        <tr><td>θ<sub>PWP</sub></td><td>Permanent Wilting Point. Contenuto idrico al limite inferiore (pianta non riesce più ad estrarre acqua).</td></tr>
+        <tr><td>TAW</td><td>Total Available Water = θ<sub>FC</sub> − θ<sub>PWP</sub>.</td></tr>
+        <tr><td>RAW</td><td>Readily Available Water = p × TAW (con p depletion fraction). Sotto RAW comincia lo stress.</td></tr>
+        <tr><td>REW · TEW</td><td>Readily / Total Evaporable Water dallo strato superficiale (dual-Kc).</td></tr>
+        <tr><td>WH51 / WH52</td><td>Sensori Ecowitt di umidità del substrato. WH52 aggiunge temperatura ed EC.</td></tr>
+        <tr><td>WN31</td><td>Sensore Ecowitt di temperatura/umidità indoor.</td></tr>
+        <tr><td>EC</td><td>Conducibilità elettrica del substrato (mS/cm). Proxy della concentrazione salina totale.</td></tr>
+        <tr><td>CEC</td><td>Cation Exchange Capacity. Capacità del substrato di tamponare il pH.</td></tr>
+        <tr><td>Penman-Monteith</td><td>Equazione di riferimento per ET. "Standard FAO-56" usa coltura riferimento; "fisica" usa parametri reali della specie.</td></tr>
+        <tr><td>Hargreaves-Samani</td><td>Formula semplificata di ET₀ che richiede solo Tmin/Tmax (fallback robusto).</td></tr>
+      </tbody>
+    </table>
+
+    <footer>
+      Generato per <code>fitosim</code> v0.1.0 · Documentazione tecnica per sviluppatori.<br>
+      Per documenti complementari vedere <code>docs/fitosim_user_manual.docx</code> (manuale utente), <code>docs/fitosim_status_report.docx</code> (status report), <code>docs/uml/</code> (diagrammi).
+    </footer>
+
+  </main>
+</div>
+</body>
+</html>

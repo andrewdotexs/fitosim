@@ -28,10 +28,15 @@ import pytest
 
 from fitosim.io.openmeteo import fetch_daily_forecast
 from fitosim.io.sensors import (
-    EnvironmentReading,
+    Measurement,
     OpenMeteoEnvironmentSensor,
     SensorPermanentError,
     SensorTemporaryError,
+)
+from fitosim.io.sensors.measurement import (
+    CUSTOM_NAMESPACE_PREFIX,
+    PARAM_AIR_TEMPERATURE_C,
+    PARAM_RAINFALL_MM,
 )
 
 
@@ -100,24 +105,13 @@ class Test_mock_fetcher_works:
 # --------------------------------------------------------------------------
 
 class Test_OpenMeteo_translation:
-    """L'adapter traduce correttamente i dati legacy nel formato canonico."""
+    """L'adapter traduce correttamente i dati legacy nel formato canonico.
 
-    def test_returns_one_reading_per_day(self):
-        """Forecast a N giorni → lista di N Reading."""
-        sensor = OpenMeteoEnvironmentSensor(use_cache=False)
-        payload = _make_openmeteo_payload(num_days=3)
-        # Per iniettare il fetcher dobbiamo ricostruire la chiamata,
-        # ma l'adapter non espone fetcher direttamente. Usiamo
-        # monkey-patching del modulo legacy via fixture pytest.
-        # Per ora aggiriamo testando il fetcher direttamente (vedi
-        # Test_translation_via_fetcher_injection sotto).
-        # Questo test è più simbolico: verifichiamo solo che il flusso
-        # base "1 giorno → 1 Reading" sia coerente, usando una
-        # chiamata che NON fa rete (use_cache=False ma con cache vuota
-        # → eccezione, che dimostra il path di errore corretto).
-        # Per i veri test di traduzione vedi sotto.
-        # Il test reale di traduzione è in test_translation_with_mock.
-        pytest.skip("Vedi test_translation_with_mock per la verifica reale")
+    Dopo la migrazione alla spec sensori v1, l'output è
+    `list[Measurement]` flat. Ogni giorno produce 2-3 Measurement
+    (`air_temperature_c`, `rainfall_mm`, e `custom:et0_mm` se
+    Open-Meteo lo fornisce).
+    """
 
     def test_translation_with_mock(self, monkeypatch):
         """
@@ -146,29 +140,52 @@ class Test_OpenMeteo_translation:
         )
 
         sensor = OpenMeteoEnvironmentSensor()
-        readings = sensor.forecast(latitude=45.46, longitude=9.19, days=3)
+        measurements = sensor.forecast(
+            latitude=45.46, longitude=9.19, days=3,
+        )
 
-        assert len(readings) == 3
-        # Ogni reading è del tipo giusto.
-        assert all(isinstance(r, EnvironmentReading) for r in readings)
-        # Timestamp UTC alle 12:00 del giorno corrispondente.
-        assert readings[0].timestamp == datetime(
-            2026, 5, 1, 12, 0, tzinfo=timezone.utc
+        # 3 giorni × 3 parametri (temp + rain + et0) = 9 Measurement.
+        assert len(measurements) == 9
+        assert all(isinstance(m, Measurement) for m in measurements)
+
+        # Filtro: temperatura del primo giorno.
+        temp_d1 = next(
+            m for m in measurements
+            if m.parameter == PARAM_AIR_TEMPERATURE_C
+            and m.timestamp.date().isoformat() == "2026-05-01"
         )
-        assert readings[1].timestamp == datetime(
-            2026, 5, 2, 12, 0, tzinfo=timezone.utc
+        assert temp_d1.value == (11.0 + 21.0) / 2
+        assert temp_d1.timestamp == datetime(
+            2026, 5, 1, 12, 0, tzinfo=timezone.utc,
         )
-        # Temperatura media calcolata correttamente come (t_min+t_max)/2.
-        assert readings[0].temperature_c == (11.0 + 21.0) / 2
-        assert readings[1].temperature_c == (12.0 + 22.0) / 2
-        # Precipitazione preservata.
-        assert readings[0].rain_mm == 1.0
-        assert readings[2].rain_mm == 3.0
-        # ET₀ preservato.
-        assert readings[0].et0_mm == pytest.approx(4.1)
+
+        # Filtro: temperatura del secondo giorno.
+        temp_d2 = next(
+            m for m in measurements
+            if m.parameter == PARAM_AIR_TEMPERATURE_C
+            and m.timestamp.date().isoformat() == "2026-05-02"
+        )
+        assert temp_d2.value == (12.0 + 22.0) / 2
+
+        # Filtro: pioggia.
+        rains = [m for m in measurements if m.parameter == PARAM_RAINFALL_MM]
+        rain_values_by_date = {
+            m.timestamp.date().isoformat(): m.value for m in rains
+        }
+        assert rain_values_by_date["2026-05-01"] == 1.0
+        assert rain_values_by_date["2026-05-03"] == 3.0
+
+        # Filtro: ET₀ (custom:et0_mm).
+        et0_d1 = next(
+            m for m in measurements
+            if m.parameter == f"{CUSTOM_NAMESPACE_PREFIX}et0_mm"
+            and m.timestamp.date().isoformat() == "2026-05-01"
+        )
+        assert et0_d1.value == pytest.approx(4.1)
 
     def test_current_conditions_returns_first_day(self, monkeypatch):
-        """current_conditions() ritorna il primo giorno del forecast."""
+        """current_conditions() ritorna le Measurement del primo
+        giorno (forecast a 1 giorno)."""
         from fitosim.io.openmeteo import DailyWeather
         from datetime import date
 
@@ -187,14 +204,23 @@ class Test_OpenMeteo_translation:
             mock_fetch,
         )
         sensor = OpenMeteoEnvironmentSensor()
-        reading = sensor.current_conditions(latitude=45.46, longitude=9.19)
+        measurements = sensor.current_conditions(
+            latitude=45.46, longitude=9.19,
+        )
 
-        assert isinstance(reading, EnvironmentReading)
-        assert reading.temperature_c == 20.0  # media (15+25)/2
+        # 3 Measurement (temp + rain + et0) tutte per lo stesso giorno.
+        assert len(measurements) == 3
+        assert all(isinstance(m, Measurement) for m in measurements)
+        temp = next(
+            m for m in measurements if m.parameter == PARAM_AIR_TEMPERATURE_C
+        )
+        assert temp.value == 20.0  # media (15+25)/2
 
-    def test_translation_preserves_none_et0(self, monkeypatch):
+    def test_missing_et0_omits_measurement(self, monkeypatch):
         """Se Open-Meteo non fornisce et0 per un giorno (zona o data
-        non coperte), il Reading mantiene None."""
+        non coperte), la Measurement custom:et0_mm NON viene prodotta
+        (la spec sensori v1 richiede value obbligatorio float, non
+        None)."""
         from fitosim.io.openmeteo import DailyWeather
         from datetime import date
 
@@ -212,8 +238,56 @@ class Test_OpenMeteo_translation:
             mock_fetch,
         )
         sensor = OpenMeteoEnvironmentSensor()
-        readings = sensor.forecast(latitude=45.46, longitude=9.19, days=1)
-        assert readings[0].et0_mm is None
+        measurements = sensor.forecast(
+            latitude=45.46, longitude=9.19, days=1,
+        )
+        # Solo 2 Measurement (temp + rain), niente et0.
+        assert len(measurements) == 2
+        params = {m.parameter for m in measurements}
+        assert PARAM_AIR_TEMPERATURE_C in params
+        assert PARAM_RAINFALL_MM in params
+        assert not any(p.startswith("custom:") for p in params)
+
+    def test_all_measurements_share_sensor_id(self, monkeypatch):
+        """Tutte le Measurement di una stessa coordinata condividono
+        lo stesso sensor_id."""
+        from fitosim.io.openmeteo import DailyWeather
+        from datetime import date
+
+        def mock_fetch(latitude, longitude, days, **kwargs):
+            return [
+                DailyWeather(
+                    day=date(2026, 5, d),
+                    t_min=10.0 + d, t_max=20.0 + d,
+                    precipitation_mm=0.0, et0_mm=4.0,
+                )
+                for d in range(1, days + 1)
+            ]
+
+        monkeypatch.setattr(
+            "fitosim.io.sensors.openmeteo.fetch_daily_forecast",
+            mock_fetch,
+        )
+        sensor = OpenMeteoEnvironmentSensor()
+        measurements = sensor.forecast(
+            latitude=45.46, longitude=9.19, days=3,
+        )
+        sensor_ids = {m.sensor_id for m in measurements}
+        assert len(sensor_ids) == 1
+
+    def test_sensor_id_follows_convention(self):
+        """sensor_id segue la convenzione
+        `openmeteo:lat<lat>_lon<lon>` con 4 decimali."""
+        sensor = OpenMeteoEnvironmentSensor()
+        assert (
+            sensor.sensor_id_for(45.4642, 9.1900)
+            == "openmeteo:lat45.4642_lon9.1900"
+        )
+        # Coordinate negative formattate correttamente.
+        assert (
+            sensor.sensor_id_for(-33.8688, 151.2093)
+            == "openmeteo:lat-33.8688_lon151.2093"
+        )
 
 
 # --------------------------------------------------------------------------

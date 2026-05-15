@@ -64,8 +64,17 @@ from fitosim.io.sensors.errors import (
     SensorPermanentError,
     SensorTemporaryError,
 )
+from fitosim.io.sensors.measurement import (
+    Measurement,
+    PARAM_AIR_HUMIDITY,
+    PARAM_AIR_TEMPERATURE_C,
+    PARAM_RAINFALL_MM,
+    PARAM_SOIL_EC_MSCM,
+    PARAM_SOIL_TEMPERATURE_C,
+    PARAM_SOIL_THETA,
+    PARAM_WIND_SPEED_M_S,
+)
 from fitosim.io.sensors.types import (
-    EnvironmentReading,
     ReadingQuality,
     SoilReading,
 )
@@ -122,60 +131,70 @@ def _read_credential(
     return None
 
 
-def _observation_to_reading(obs: EcowittObservation) -> EnvironmentReading:
+def _clean_mac_for_sensor_id(mac: str) -> str:
     """
-    Traduce un EcowittObservation legacy in EnvironmentReading canonico.
+    Pulisce un MAC address per l'uso come componente di sensor_id.
 
-    Estrae solo i campi ambientali (outdoor_*, solar, wind, rain,
-    pressure). I campi del suolo (`soil_moisture_pct`) sono ignorati
-    da questo adapter: vengono gestiti separatamente da
-    `EcowittWH51SoilSensor` che produce `SoilReading` per ogni canale.
-
-    Conversione di unità:
-      - outdoor_humidity_pct (0-100) → humidity_relative (0-1)
-      - solar_w_m2 (W/m² istantaneo) NON viene convertito in MJ/m²/g
-        perché serve un'aggregazione su 24 ore che richiede dati
-        storici. Resta come campo non valorizzato per ora; l'estensione
-        Penman-Monteith della tappa 5 fornirà la conversione corretta.
-      - rain: usiamo `rain_24h_mm` come "pioggia delle ultime 24 ore"
-        che è la convenzione del nostro Reading.
+    Rimuove i separatori `:` e `-` e normalizza in uppercase, così che
+    "AA:BB:CC:DD:EE:FF", "aa-bb-cc-dd-ee-ff" e "AABBCCDDEEFF" producano
+    tutti lo stesso sensor_id stabile.
     """
-    # Conversione umidità da percentuale a frazione, se presente.
-    humidity_relative = None
-    if obs.outdoor_humidity_pct is not None:
-        humidity_relative = obs.outdoor_humidity_pct / 100.0
+    return mac.replace(":", "").replace("-", "").upper()
 
-    # Calcolo della staleness della lettura: se il timestamp del provider
-    # è significativamente nel passato rispetto a "ora", la lettura è
-    # vecchia (sensore offline da un po'). La calcoliamo qui per esporla
-    # nei metadati di qualità.
-    from datetime import datetime, timezone
-    now_utc = datetime.now(timezone.utc)
-    # Il timestamp di Ecowitt è già in UTC (come da docstring legacy).
-    age_seconds = max(0, int((now_utc - obs.timestamp).total_seconds()))
 
-    return EnvironmentReading(
-        timestamp=obs.timestamp,
-        temperature_c=obs.outdoor_temp_c,
-        humidity_relative=humidity_relative,
-        # solar_w_m2 e radiation_mj_m2 sono unità diverse: non convertiamo.
-        # Sarà gestito propriamente in tappa 5 (Penman-Monteith).
-        radiation_mj_m2=None,
-        wind_speed_m_s=obs.wind_speed_m_s,
-        rain_mm=obs.rain_24h_mm,
-        # Ecowitt non calcola ET₀: fitosim la calcolerà internamente
-        # da temperatura+radiazione quando serve.
-        et0_mm=None,
-        quality=ReadingQuality(
-            staleness_seconds=age_seconds,
-            # battery_level: il livello batteria dei sensori Ecowitt
-            # è esposto in EcowittObservation come campi separati per
-            # ogni sensore (battery_*). Per la stazione principale
-            # potremmo aggregarli, ma per ora lasciamo None: l'estensione
-            # è semplice se servirà.
-            battery_level=None,
-        ),
-    )
+def _observation_to_measurements(
+    obs: EcowittObservation, sensor_id: str,
+) -> list[Measurement]:
+    """
+    Traduce un EcowittObservation legacy in una lista di `Measurement`
+    canoniche secondo la spec sensori v1.
+
+    Tutte le Measurement prodotte condividono `sensor_id` e `timestamp`
+    (= timestamp della observation, già UTC dal legacy). Mappatura
+    campi → parametri canonici:
+
+      - `outdoor_temp_c` → `air_temperature_c`
+      - `outdoor_humidity_pct` (0-100) → `air_humidity` (frazione 0-1)
+      - `wind_speed_m_s` → `wind_speed_m_s`
+      - `rain_24h_mm` → `rainfall_mm`
+
+    Campi del suolo (`soil_moisture_pct`, ecc.) sono ignorati da questo
+    adapter: vengono gestiti da `EcowittWH51SoilSensor` che produce
+    Measurement con parametri `soil_*` separati. La radiazione solare
+    (`solar_w_m2`, unità istantanea) non viene convertita in
+    `solar_radiation_mj_m2` (unità giornaliera): l'integrazione su 24
+    ore richiede dati storici e arriverà con l'estensione
+    Penman-Monteith della tappa 5.
+
+    Note di transizione (spec sensori v1)
+    -------------------------------------
+    Lo `staleness_seconds` del precedente `ReadingQuality` non ha un
+    parametro canonico nella spec v1 e viene perso. Il chiamante può
+    confrontare `Measurement.timestamp` con `datetime.now(timezone.utc)`
+    per ottenere lo stesso dato. Allo stesso modo `battery_level` della
+    stazione principale non viene esposto qui (i campi `battery_*` di
+    `EcowittObservation` sono per-sensore e dovrebbero idealmente
+    diventare Measurement separate per ciascun sensore-source).
+    """
+    out: list[Measurement] = []
+
+    def _add(parameter: str, value, *, divisor: float = 1.0) -> None:
+        if value is None:
+            return
+        out.append(Measurement(
+            sensor_id=sensor_id,
+            timestamp=obs.timestamp,
+            parameter=parameter,
+            value=float(value) / divisor,
+        ))
+
+    _add(PARAM_AIR_TEMPERATURE_C, obs.outdoor_temp_c)
+    # Conversione % → frazione 0-1 via divisor=100.
+    _add(PARAM_AIR_HUMIDITY, obs.outdoor_humidity_pct, divisor=100.0)
+    _add(PARAM_WIND_SPEED_M_S, obs.wind_speed_m_s)
+    _add(PARAM_RAINFALL_MM, obs.rain_24h_mm)
+
+    return out
 
 
 class EcowittEnvironmentSensor:
@@ -291,11 +310,34 @@ class EcowittEnvironmentSensor:
             mac=mac,
         )
 
+    @property
+    def sensor_id(self) -> str:
+        """sensor_id canonico per le Measurement prodotte dalla stazione.
+
+        Formato: `ecowitt:weather_station:<mac_cleaned>` dove
+        `<mac_cleaned>` è il MAC senza separatori e in uppercase
+        (es. `AABBCCDDEEFF`). Tutte le Measurement di una singola
+        stazione condividono questo identificatore.
+        """
+        return (
+            f"{PROVIDER_NAME}:weather_station:"
+            f"{_clean_mac_for_sensor_id(self._mac)}"
+        )
+
     def current_conditions(
         self, latitude: float, longitude: float,
-    ) -> EnvironmentReading:
+    ) -> list[Measurement]:
         """
-        Restituisce le condizioni meteo correnti misurate dalla stazione.
+        Restituisce le condizioni meteo correnti misurate dalla
+        stazione come lista piatta di `Measurement` canoniche (spec
+        sensori v1).
+
+        Per una stazione meteo tipica (T, RH, vento, pioggia 24h) la
+        lista contiene 4 Measurement con stesso sensor_id e timestamp.
+        Una stazione che non espone uno dei campi (es. niente sensore
+        di pioggia) produce meno Measurement: i campi `None` non
+        diventano Measurement con value=None (la spec v1 richiede
+        value float obbligatorio).
 
         I parametri `latitude` e `longitude` sono accettati per
         conformità al Protocol EnvironmentSensor ma sono ignorati:
@@ -339,11 +381,11 @@ class EcowittEnvironmentSensor:
                 provider=PROVIDER_NAME,
             ) from e
 
-        return _observation_to_reading(obs)
+        return _observation_to_measurements(obs, sensor_id=self.sensor_id)
 
     def forecast(
         self, latitude: float, longitude: float, days: int,
-    ) -> list[EnvironmentReading]:
+    ) -> list[Measurement]:
         """
         Forecast NON supportato dalla stazione Ecowitt.
 
@@ -506,9 +548,29 @@ class EcowittWH51SoilSensor:
             model=model,
         )
 
-    def current_state(self, channel_id: str) -> SoilReading:
+    def sensor_id_for(self, channel_id: str) -> str:
+        """sensor_id canonico per un canale specifico del sensore.
+
+        Formato: `ecowitt:<model>:<mac_cleaned>:ch<N>` (es.
+        `ecowitt:wh51:AABBCCDDEEFF:ch3`). Il MAC è incluso per
+        disambiguazione tra più stazioni dello stesso utente; `<N>` è
+        il numero del canale.
         """
-        Restituisce lo stato corrente del substrato per il canale WH51.
+        channel_int = _channel_id_to_int(channel_id)
+        return (
+            f"{PROVIDER_NAME}:{self._model.lower()}:"
+            f"{_clean_mac_for_sensor_id(self._mac)}:ch{channel_int}"
+        )
+
+    def current_state(self, channel_id: str) -> list[Measurement]:
+        """
+        Restituisce lo stato corrente del substrato per il canale come
+        lista piatta di `Measurement` canoniche (spec sensori v1).
+
+        Numero di Measurement prodotte:
+          - WH51: 1 Measurement (`soil_theta`).
+          - WH52: 1-3 Measurement (`soil_theta` sempre, più
+            `soil_temperature_c` e `soil_ec_mscm` se presenti).
 
         Solleva:
           - SensorPermanentError se il channel_id non è valido o non è
@@ -567,40 +629,40 @@ class EcowittWH51SoilSensor:
                 provider=PROVIDER_NAME,
             )
 
-        moisture_pct = obs.soil_moisture_pct[channel_int]
-        # Conversione percentuale → frazione canonica.
-        theta = moisture_pct / 100.0
-
-        # Calcolo staleness come per EcowittEnvironmentSensor.
-        from datetime import datetime, timezone
-        now_utc = datetime.now(timezone.utc)
-        age_seconds = max(0, int((now_utc - obs.timestamp).total_seconds()))
+        sensor_id = self.sensor_id_for(channel_id)
+        out: list[Measurement] = [
+            # Conversione percentuale → frazione canonica via /100.
+            Measurement(
+                sensor_id=sensor_id,
+                timestamp=obs.timestamp,
+                parameter=PARAM_SOIL_THETA,
+                value=obs.soil_moisture_pct[channel_int] / 100.0,
+            ),
+        ]
 
         # Per il WH52 popoliamo anche T ed EC del substrato dalla
         # observation, quando i dati sono disponibili. Per il WH51
-        # questi dati non esistono e i campi corrispondenti del
-        # SoilReading restano None come prima.
-        temperature_c: Optional[float] = None
-        ec_mscm: Optional[float] = None
+        # questi dati non esistono e non emettiamo Measurement
+        # corrispondenti.
         if self._model == "WH52":
-            temperature_c = obs.soil_temperature_c.get(channel_int)
-            ec_mscm = obs.soil_ec_mscm.get(channel_int)
+            soil_t = obs.soil_temperature_c.get(channel_int)
+            if soil_t is not None:
+                out.append(Measurement(
+                    sensor_id=sensor_id,
+                    timestamp=obs.timestamp,
+                    parameter=PARAM_SOIL_TEMPERATURE_C,
+                    value=soil_t,
+                ))
+            soil_ec = obs.soil_ec_mscm.get(channel_int)
+            if soil_ec is not None:
+                out.append(Measurement(
+                    sensor_id=sensor_id,
+                    timestamp=obs.timestamp,
+                    parameter=PARAM_SOIL_EC_MSCM,
+                    value=soil_ec,
+                ))
 
-        return SoilReading(
-            timestamp=obs.timestamp,
-            theta_volumetric=theta,
-            # WH51: tutti None. WH52: T ed EC popolati se disponibili,
-            # pH resta sempre None (nessun WH52 lo misura).
-            temperature_c=temperature_c,
-            ec_mscm=ec_mscm,
-            ph=None,
-            quality=ReadingQuality(
-                staleness_seconds=age_seconds,
-                # Anche qui battery_level potrebbe essere estratto in
-                # futuro dai campi battery_* di EcowittObservation.
-                battery_level=None,
-            ),
-        )
+        return out
 
 
 # =====================================================================
