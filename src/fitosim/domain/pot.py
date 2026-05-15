@@ -70,8 +70,10 @@ from fitosim.science.indoor import estimate_indoor_radiation
 from fitosim.science.pot_physics import (
     PotColor,
     PotMaterial,
+    ShelterLevel,
     SunExposure,
     pot_correction_factor,
+    shelter_wind_factor,
 )
 from fitosim.science.radiation import (
     day_of_year,
@@ -497,6 +499,7 @@ class Pot:
     pot_material: PotMaterial = PotMaterial.PLASTIC
     pot_color: PotColor = PotColor.MEDIUM
     sun_exposure: SunExposure = SunExposure.FULL_SUN
+    shelter_level: ShelterLevel = ShelterLevel.STANDARD
     active_depth_fraction: float = 1.0
     # ----- Esposizione alla pioggia (sotto-tappa F tappa 3 fascia 2) -----
     # Frazione [0, 1] della pioggia che effettivamente raggiunge il vaso
@@ -1569,6 +1572,20 @@ class Pot:
                 elevation_m=effective_elevation,
             )
 
+        # Modulazione del vento ambientale per il riparo del vaso:
+        # `shelter_wind_factor` produce 0.30 per SHELTERED, 1.00 per
+        # STANDARD (no-op), 1.20 per EXPOSED. La correzione si applica
+        # all'INPUT del selettore ET, non al suo output (Kp resta
+        # un'altra cosa, vedi `science.pot_physics`). Se il provider
+        # meteo non fornisce il vento, lasciamo None: il selettore
+        # ripiegherà su Hargreaves-Samani che non lo usa.
+        effective_wind_m_s: Optional[float] = None
+        if weather.wind_speed_m_s is not None:
+            effective_wind_m_s = (
+                weather.wind_speed_m_s
+                * shelter_wind_factor(self.shelter_level)
+            )
+
         # Chiamata al selettore "best available". Il selettore decide
         # internamente quale formula usare in base ai parametri
         # presenti/assenti, e restituisce un EtResult con valore
@@ -1579,7 +1596,7 @@ class Pot:
             latitude_deg=effective_latitude,
             j=day_of_year(weather.date_),
             humidity_relative=weather.humidity_relative,
-            wind_speed_m_s=weather.wind_speed_m_s,
+            wind_speed_m_s=effective_wind_m_s,
             net_radiation_mj_m2_day=rn_mj_m2_day,
             stomatal_resistance_s_m=self.species.stomatal_resistance_s_m,
             crop_height_m=self.species.crop_height_m,

@@ -2691,6 +2691,161 @@ class TestPotApplyBalanceStepFromWeather(unittest.TestCase):
 
 
 # =====================================================================
+#  Test del nuovo campo shelter_level (v0_21)
+#
+#  `shelter_level` modula la velocità del vento ambientale che entra
+#  nel selettore Penman-Monteith. Il default `STANDARD` (fattore 1.00)
+#  garantisce retro-compatibilità con i Pot esistenti. SHELTERED
+#  (0.30) e EXPOSED (1.20) modificano l'input del calcolo ET.
+# =====================================================================
+
+
+class TestPotShelterLevel(unittest.TestCase):
+
+    def _make_basil_pot(self, **overrides):
+        """Helper: vaso di basilico per i test con coordinate Milano."""
+        from fitosim.domain.species import BASIL
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+        defaults = dict(
+            label="Basilico-test", species=BASIL,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=2.0, pot_diameter_cm=15.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 6, 1),
+            latitude_deg=45.47, elevation_m=150.0,
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    def test_default_shelter_level_is_standard(self):
+        """Pot senza specifica `shelter_level` ha il default STANDARD,
+        cioè il fattore moltiplicativo del vento è 1.00 (no-op)."""
+        from fitosim.science.pot_physics import ShelterLevel
+        pot = self._make_basil_pot()
+        self.assertEqual(pot.shelter_level, ShelterLevel.STANDARD)
+
+    def test_explicit_shelter_level_preserved(self):
+        """Pot costruito con shelter_level esplicito conserva il valore."""
+        from fitosim.science.pot_physics import ShelterLevel
+        pot = self._make_basil_pot(shelter_level=ShelterLevel.SHELTERED)
+        self.assertEqual(pot.shelter_level, ShelterLevel.SHELTERED)
+
+    def test_sheltered_pot_consumes_less_water_than_exposed(self):
+        """A parità di meteo (con vento sostenuto), un vaso SHELTERED
+        consuma meno acqua di uno EXPOSED, perché Penman-Monteith
+        riceve una velocità del vento minore. È il banco di prova
+        end-to-end della propagazione del fattore vento."""
+        from fitosim.domain.weather import WeatherDay
+        from fitosim.science.pot_physics import ShelterLevel
+
+        # Meteo con vento ben sopra la media: amplifica la differenza
+        # tra i due livelli di shelter.
+        weather = WeatherDay(
+            date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+            humidity_relative=0.55, wind_speed_m_s=5.0,
+            solar_radiation_mj_m2_day=24.0,
+        )
+
+        pot_sheltered = self._make_basil_pot(
+            label="Vaso-sheltered",
+            shelter_level=ShelterLevel.SHELTERED,
+        )
+        pot_exposed = self._make_basil_pot(
+            label="Vaso-exposed",
+            shelter_level=ShelterLevel.EXPOSED,
+        )
+
+        initial_state = pot_sheltered.state_mm
+        # I due vasi partono dallo stesso stato (fc_mm).
+        self.assertEqual(initial_state, pot_exposed.state_mm)
+
+        result_sheltered = pot_sheltered.apply_balance_step_from_weather(
+            weather=weather, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        result_exposed = pot_exposed.apply_balance_step_from_weather(
+            weather=weather, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+
+        # Il vaso sheltered ha consumato MENO acqua → state più alto
+        # rispetto a quello exposed.
+        et_sheltered = initial_state - result_sheltered.new_state
+        et_exposed = initial_state - result_exposed.new_state
+        self.assertGreater(et_exposed, et_sheltered)
+
+    def test_standard_shelter_matches_pre_migration_behaviour(self):
+        """Il default STANDARD (fattore 1.00) lascia il vento invariato:
+        il consumo idrico è identico a quello che otteneva il codice
+        pre-migrazione, garanzia di retro-compatibilità."""
+        from fitosim.domain.weather import WeatherDay
+        from fitosim.science.pot_physics import ShelterLevel
+
+        weather = WeatherDay(
+            date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+            humidity_relative=0.55, wind_speed_m_s=3.0,
+            solar_radiation_mj_m2_day=24.0,
+        )
+
+        # Due Pot identici: uno usa il default implicito (STANDARD),
+        # l'altro lo specifica esplicitamente. Devono produrre lo
+        # stesso risultato bit-perfect.
+        pot_implicit = self._make_basil_pot(label="vaso-implicit")
+        pot_explicit = self._make_basil_pot(
+            label="vaso-explicit",
+            shelter_level=ShelterLevel.STANDARD,
+        )
+
+        r_implicit = pot_implicit.apply_balance_step_from_weather(
+            weather=weather, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        r_explicit = pot_explicit.apply_balance_step_from_weather(
+            weather=weather, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        self.assertEqual(r_implicit.new_state, r_explicit.new_state)
+
+    def test_shelter_has_no_effect_when_wind_is_none(self):
+        """Quando `wind_speed_m_s` è None nel WeatherDay, il selettore
+        ripiega su Hargreaves-Samani (che non usa il vento). In quel
+        caso lo shelter_level non deve influenzare il risultato: i
+        due Pot consumano la stessa acqua."""
+        from fitosim.domain.weather import WeatherDay
+        from fitosim.science.et0 import EtMethod
+        from fitosim.science.pot_physics import ShelterLevel
+
+        # Meteo minimo (solo T): forza fallback a Hargreaves.
+        weather = WeatherDay(
+            date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+        )
+
+        pot_sheltered = self._make_basil_pot(
+            label="vaso-sheltered",
+            shelter_level=ShelterLevel.SHELTERED,
+        )
+        pot_exposed = self._make_basil_pot(
+            label="vaso-exposed",
+            shelter_level=ShelterLevel.EXPOSED,
+        )
+
+        r_sheltered = pot_sheltered.apply_balance_step_from_weather(
+            weather=weather, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        r_exposed = pot_exposed.apply_balance_step_from_weather(
+            weather=weather, water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+
+        # Senza vento, il metodo selezionato è Hargreaves.
+        self.assertEqual(r_sheltered.et_method, EtMethod.HARGREAVES_SAMANI)
+        self.assertEqual(r_exposed.et_method, EtMethod.HARGREAVES_SAMANI)
+        # I due Pot consumano la stessa acqua.
+        self.assertEqual(r_sheltered.new_state, r_exposed.new_state)
+
+
+# =====================================================================
 #  Test dei nuovi campi room_id e light_exposure (sotto-tappa D fase 1)
 #
 #  La fase D1 della sotto-tappa D ha aggiunto due campi opzionali al

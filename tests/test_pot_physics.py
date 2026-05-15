@@ -16,11 +16,13 @@ from fitosim.science.pot_physics import (
     NEUTRAL_POT_CORRECTION,
     PotColor,
     PotMaterial,
+    ShelterLevel,
     SunExposure,
     color_correction_factor,
     exposure_correction_factor,
     material_correction_factor,
     pot_correction_factor,
+    shelter_wind_factor,
 )
 
 
@@ -280,6 +282,84 @@ class TestRealisticScenarios(unittest.TestCase):
         )
         # Almeno +30% rispetto al riferimento neutro.
         self.assertGreater(kp, 1.30)
+
+
+# =======================================================================
+#  6. ShelterLevel: fattore di modulazione del vento ambientale
+# =======================================================================
+#
+# `shelter_wind_factor` è strutturalmente diverso dai tre fattori
+# agronomici sopra: NON moltiplica Kp ma il `wind_speed_m_s` di input
+# del selettore ET. I test verificano la copertura completa dell'enum,
+# il valore neutro di STANDARD, e l'ordinamento monotono dei tre
+# livelli (SHELTERED < STANDARD < EXPOSED).
+
+class TestShelterWindFactor(unittest.TestCase):
+    """Tabella `_SHELTER_WIND_FACTOR` accessibile via lookup pubblico."""
+
+    def test_all_levels_have_a_factor(self):
+        """Ogni valore dell'enum produce un float senza KeyError."""
+        for level in ShelterLevel:
+            with self.subTest(level=level):
+                value = shelter_wind_factor(level)
+                self.assertIsInstance(value, float)
+
+    def test_standard_is_neutral(self):
+        """STANDARD è il riferimento neutro: vento ambientale invariato."""
+        self.assertEqual(
+            shelter_wind_factor(ShelterLevel.STANDARD), 1.00,
+        )
+
+    def test_sheltered_attenuates_wind(self):
+        """SHELTERED → fattore < 1 (vento attenuato)."""
+        self.assertLess(
+            shelter_wind_factor(ShelterLevel.SHELTERED), 1.0,
+        )
+
+    def test_exposed_amplifies_wind(self):
+        """EXPOSED → fattore > 1 (vento amplificato per canalizzazione)."""
+        self.assertGreater(
+            shelter_wind_factor(ShelterLevel.EXPOSED), 1.0,
+        )
+
+    def test_monotonic_ordering(self):
+        """L'ordinamento dei tre livelli è monotono crescente:
+        SHELTERED < STANDARD < EXPOSED."""
+        sheltered = shelter_wind_factor(ShelterLevel.SHELTERED)
+        standard = shelter_wind_factor(ShelterLevel.STANDARD)
+        exposed = shelter_wind_factor(ShelterLevel.EXPOSED)
+        self.assertLess(sheltered, standard)
+        self.assertLess(standard, exposed)
+
+    def test_sheltered_stronger_than_exposed_in_magnitude(self):
+        """L'asimmetria documentata: il riparo attenua il vento più di
+        quanto l'esposizione lo amplifichi. |1 - sheltered| > |exposed - 1|."""
+        sheltered_delta = 1.0 - shelter_wind_factor(ShelterLevel.SHELTERED)
+        exposed_delta = shelter_wind_factor(ShelterLevel.EXPOSED) - 1.0
+        self.assertGreater(sheltered_delta, exposed_delta)
+
+    def test_factor_does_not_modify_kp(self):
+        """`pot_correction_factor` (Kp) NON dipende da ShelterLevel:
+        questo conferma la separazione architetturale tra il fattore
+        agronomico Kp e la correzione fisica al vento."""
+        # Kp è funzione solo di material+color+exposure, non vede shelter.
+        kp_a = pot_correction_factor(
+            PotMaterial.PLASTIC, PotColor.MEDIUM, SunExposure.FULL_SUN,
+        )
+        kp_b = pot_correction_factor(
+            PotMaterial.PLASTIC, PotColor.MEDIUM, SunExposure.FULL_SUN,
+        )
+        self.assertEqual(kp_a, kp_b)
+        # E `pot_correction_factor` non accetta ShelterLevel come argomento
+        # (signature stabile): se qualcuno provasse a passarlo come 4°
+        # argomento, otterrebbe TypeError. Verifichiamolo difensivamente.
+        with self.assertRaises(TypeError):
+            pot_correction_factor(  # type: ignore[call-arg]
+                PotMaterial.PLASTIC,
+                PotColor.MEDIUM,
+                SunExposure.FULL_SUN,
+                ShelterLevel.SHELTERED,
+            )
 
 
 if __name__ == "__main__":

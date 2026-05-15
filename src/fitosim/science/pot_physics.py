@@ -42,12 +42,34 @@ ancora meno. Questo è probabilmente l'effetto più sostanzioso dei tre
 (può essere -30% o -50%), ed è anche il più facile per il giardiniere
 da osservare e classificare a vista.
 
+Effetto del riparo dal vento
+-----------------------------
+
+Il vento ambientale misurato dalla stazione meteo (o stimato da
+Open-Meteo) è la velocità del vento "in cielo aperto" alla quota
+standard di 2 m, non quella che arriva sul singolo vaso. Un vaso
+**sheltered** (sottoportico, balcone coperto, dietro una balaustra
+massiccia) riceve solo una frazione di quel vento; un vaso
+**exposed** (angolo del terrazzo, terreno aperto, balcone all'ultimo
+piano) può ricevere venti anche leggermente più forti per effetto di
+canalizzazione locale. Questo influisce direttamente sull'input
+aerodinamico di Penman-Monteith: la velocità del vento entra in
+modo quasi-lineare nella domanda evapotraspirativa.
+
+A differenza degli altri tre effetti, lo **shelter level NON modula
+Kp** (cioè non moltiplica direttamente ET_c). Modula invece la
+velocità del vento *prima* che entri nel selettore ET, perché il
+modello fisico di Penman-Monteith vuole il vento "che arriva
+effettivamente al vaso". Questo riflette la natura diversa dei due
+effetti: Kp è un fattore agronomico che modula la domanda della
+specie, lo shelter è una correzione fisica al campo di input.
+
 Approccio modellistico
 ----------------------
 
-Tutti e tre questi effetti vengono codificati come **fattori
-moltiplicativi adimensionali** che modulano ET_c. La forma finale del
-bilancio idrico diventa:
+Tutti e tre gli effetti agronomici (materiale, colore, esposizione)
+vengono codificati come **fattori moltiplicativi adimensionali** che
+modulano ET_c. La forma finale del bilancio idrico diventa:
 
     ET_c,act = Ks × Kp × Kc × ET_0
 
@@ -55,6 +77,11 @@ dove Kp è un "coefficiente di vaso" (pot coefficient) che è il
 prodotto di tre sotto-coefficienti indipendenti:
 
     Kp = f_material × f_color × f_exposure
+
+Lo shelter level applica invece una correzione *all'input* del
+calcolo ET: `effective_wind = ambient_wind × f_shelter`. Il valore
+modificato entra in Penman-Monteith, mentre il resto dei parametri
+meteo (temperatura, radiazione, umidità) resta invariato.
 
 I valori delle tabelle sono ricavati dalla letteratura agronomica
 sulla coltivazione in vivaio (in particolare gli studi sull'irrigazione
@@ -147,6 +174,38 @@ class SunExposure(Enum):
     """
 
 
+class ShelterLevel(Enum):
+    """
+    Livello di riparo del vaso dal vento e dagli eventi meteorologici
+    estremi. È un'autovalutazione del giardiniere, ortogonale a
+    `SunExposure` (un vaso può essere `FULL_SUN` e `SHELTERED` se vive
+    su un balcone soleggiato ma coperto da una pergola; oppure `SHADE`
+    e `EXPOSED` se sta in un cortile ventoso sotto un albero).
+    """
+
+    SHELTERED = "sheltered"
+    """
+    Riparato: sottoportico, balcone coperto, dietro una balaustra
+    massiccia o pareti che bloccano il vento dominante. Il vaso vede
+    solo una frazione del vento ambientale.
+    """
+
+    STANDARD = "standard"
+    """
+    Posizione tipica: balcone aperto, giardino di città, terreno
+    senza ostacoli particolari né accelerazioni di vento. Riferimento
+    neutro: il vento del vaso coincide con quello ambientale.
+    """
+
+    EXPOSED = "exposed"
+    """
+    Esposto: angolo del terrazzo, balcone all'ultimo piano, terreno
+    aperto in collina, posizione che canalizza il vento (es. fra due
+    palazzi). Il vaso può ricevere venti leggermente superiori a
+    quelli ambientali.
+    """
+
+
 # =======================================================================
 #  Tabelle dei fattori moltiplicativi
 # =======================================================================
@@ -181,6 +240,23 @@ _EXPOSURE_FACTOR: dict[SunExposure, float] = {
 }
 
 
+# Shelter level: moltiplicatore del vento ambientale per ottenere il
+# vento "effettivo" sul vaso. NON si applica a Kp: questa tabella è
+# consumata da `Pot.apply_step_from_weather` prima di passare il
+# vento al selettore ET, non da `pot_correction_factor`. Range
+# 0.30..1.20 asimmetrico verso il basso perché "essere riparati" è
+# un effetto più forte che "essere esposti": una barriera che blocca
+# fisicamente il vento può abbassarlo del 70%, mentre l'amplificazione
+# per canalizzazione locale è raramente oltre il 20-30%. I valori sono
+# stime da letteratura sull'irrigazione di vivai; sono tarabili in
+# fascia 3 contro i dati reali del balcone.
+_SHELTER_WIND_FACTOR: dict[ShelterLevel, float] = {
+    ShelterLevel.SHELTERED: 0.30,
+    ShelterLevel.STANDARD: 1.00,
+    ShelterLevel.EXPOSED: 1.20,
+}
+
+
 # =======================================================================
 #  Funzioni di lookup e composizione
 # =======================================================================
@@ -198,6 +274,23 @@ def color_correction_factor(color: PotColor) -> float:
 def exposure_correction_factor(exposure: SunExposure) -> float:
     """Fattore moltiplicativo per l'esposizione solare del vaso."""
     return _EXPOSURE_FACTOR[exposure]
+
+
+def shelter_wind_factor(level: ShelterLevel) -> float:
+    """Fattore moltiplicativo del vento ambientale per il vaso.
+
+    A differenza degli altri fattori di questo modulo, questo NON
+    moltiplica direttamente ET_c (cioè non è parte di Kp). È invece
+    pensato per essere applicato all'input `wind_speed_m_s` prima
+    di passarlo al selettore Penman-Monteith:
+
+        effective_wind = ambient_wind * shelter_wind_factor(level)
+
+    Per `STANDARD` vale esattamente 1.00 (vento ambientale invariato);
+    per `SHELTERED` 0.30 (il vento arriva attenuato del 70%); per
+    `EXPOSED` 1.20 (lieve amplificazione per canalizzazione locale).
+    """
+    return _SHELTER_WIND_FACTOR[level]
 
 
 def pot_correction_factor(
