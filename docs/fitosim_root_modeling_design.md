@@ -1,7 +1,7 @@
 # Design: modellazione del pane radicale (fascia 3)
 
 **Data:** 2026-06-01
-**Status:** Decisione di design registrata, NON implementata. Candidata alla fascia 3 (calibrazione). Il livello "minimo" (regime come stato) è anticipabile alla fase 1 di The Pot.
+**Status:** Decisione di design registrata, NON implementata. Candidata alla fascia 3 (calibrazione). Il livello "minimo" (regime come stato) è anticipabile alla fase 1 di The Pot. Concetto validato per simulazione il 2026-06-01 (vedi sezione "Raffinamenti emersi dalla simulazione" e `examples/root_ball_water_curve.py`).
 **Autore della riflessione:** Andrea, con analisi tecnica in sessione.
 
 ## In una frase
@@ -88,6 +88,32 @@ Quando si rinvasa:
 
 È lo stesso identico fenomeno della talea, a partire da un punto più alto. Avevamo già deciso "il post-rinvaso non blocca i consigli idrici di fitosim ma li rende più conservativi" — `root_fraction` è il **meccanismo fisico** dietro quell'intuizione, e `post_rinvaso_until` ne è la finestra temporale.
 
+## Raffinamenti emersi dalla simulazione (2026-06-01)
+
+Una simulazione dimostrativa (overlay `root_fraction` sopra la fisica FAO-56 di fitosim, 5 specie × 4 stagioni, vaso da 5 L, vedi `examples/root_ball_water_curve.py`) ha validato il concetto e fatto emergere due precisazioni che vincolano l'implementazione.
+
+### 1. `root_fraction` modula SOLO la traspirazione e il serbatoio, MAI l'evaporazione
+
+L'evaporazione superficiale dipende dalla **chioma** (che ombreggia il substrato) e dallo stato di bagnatura della superficie, **non dalle radici**. Due piante con la stessa chioma ma radici diverse ombreggiano il substrato allo stesso modo → evaporano allo stesso modo.
+
+C'è una trappola implementativa concreta: il dual-Kc di FAO-56 lega l'evaporazione all'energia residua tramite `Ke ≤ Kr · (Kcmax − Kcb)`. Se si passa la `Kcb_eff` ridotta dalle radici a questo limite, si ottiene l'artefatto per cui **la pianta con poche radici evapora di più** ("l'energia non traspirata va all'evaporazione"). Questo è corretto nel caso FAO-56 standard, dove `Kcb` basso significa chioma rada e quindi più suolo esposto — ma è **falso** qui, dove la chioma è fissa e cambiano solo le radici.
+
+Vincolo per l'implementazione: nel calcolo di `Ke` va usata la **Kcb della chioma** (piena, root-independent), non `Kcb_eff`. Solo la traspirazione riceve il fattore `root_fraction`:
+
+```
+Kcb_eff = root_fraction · Kcb          (traspirazione, root-dependent)
+Ke      = dual_kc(Kcb_chioma, ...)     (evaporazione, root-INDEPENDENT)
+Ks      = Ks(θ)                        (stress, dipende da θ, non dal serbatoio)
+```
+
+### 2. Il rischio va pesato con il `p` (depletion_fraction) della specie
+
+La simulazione multi-specie ha mostrato che l'ampiezza dell'effetto radicale scala con `Kc` (più la pianta traspira, più conta lo stato radicale), ma il **rischio** del giovane/rinvasato non dipende solo da `root_fraction`: dipende da **quanto la specie tollera il substrato bagnato**, cioè dal suo `p`.
+
+Il combo pericoloso è **poche radici + specie xerofila + stagione fredda**: una specie con `p` alto (rosmarino p=0.60, limone p=0.50 — "substrato drenante obbligatorio per evitare marciume") vuole asciugarsi tra un'irrigazione e l'altra. Se ha poche radici e bassa domanda (inverno), il substrato resta saturo attorno alle poche radici → marciume quasi certo. Una specie tollerante all'umido (basilico, lattuga) perdona molto di più lo stesso stato.
+
+Vincolo per l'implementazione (livello "minimo"/regime e allerte): il modificatore conservativo applicato al giovane/rinvasato **non è costante** — va reso più prudente (soglia di irrigazione più bassa, allerta marciume più assertiva) quanto più alto è il `p` della specie. `root_fraction` va incrociato con `depletion_fraction`, non usato da solo.
+
 ## Come inferire `root_fraction` (è non osservabile)
 
 L'utente domestico non sa quantificare lo stato radicale, e il WH51 misura θ senza distinguere zona radicale da inerte. Tre strade di inferenza, in ordine di sofisticazione:
@@ -119,10 +145,12 @@ L'utente domestico non sa quantificare lo stato radicale, e il WH51 misura θ se
 3. **Dove vive `root_fraction`** — campo di stato su `Pot` in fitosim, o derivato dal backend di The Pot e passato come input al calcolo? Coerenza con la decisione "lo stato dinamico vive in fitosim".
 4. **Integrazione con il dual-Kc esistente** — il `Kcb_eff = root_fraction · Kcb` si innesta naturalmente nel modulo `science/dual_kc.py`, ma va verificato l'effetto sul limite energetico `Kcmax`.
 5. **Reset al rinvaso** — il contratto tra il lineage di The Pot e fitosim: chi resetta `root_fraction`, con quale valore iniziale, e come lo comunica.
+6. **Curva del modificatore di rischio in funzione di `p`** — come esattamente il `depletion_fraction` della specie modula la prudenza del consiglio per il giovane/rinvasato (vedi raffinamento 2). Lineare in `p`? A soglie? Da tarare in fascia 3.
 
 ## Riferimenti
 
 - Modello fisico attuale: `src/fitosim/science/balance.py` (TAW/RAW), `src/fitosim/science/dual_kc.py` (Kcb/Ke), `src/fitosim/science/substrate.py` (θ_FC/θ_PWP, geometria).
+- Simulazione dimostrativa dell'overlay: `examples/root_ball_water_curve.py` (5 specie × 4 stagioni, curve idriche + tabella comparativa dei giorni di allerta).
 - Variabili del modello: vedi inventario completo discusso in sessione (8 tipologie di input).
 - Collegamento post-rinvaso: `the-pot/docs/the_pot_fitosim_integration.md` §8.6, `the-pot/docs/the_pot_vision.md` cap. 16.
 - Calibrazione passiva: `docs/fitosim_calibration_manual.md`.
