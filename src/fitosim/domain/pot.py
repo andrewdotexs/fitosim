@@ -39,6 +39,7 @@ from enum import Enum
 from typing import Optional
 
 from fitosim.domain.species import (
+    GrowthStage,
     PhenologicalStage,
     Species,
     actual_et_c,
@@ -910,9 +911,27 @@ class Pot:
         return (current_date - self.planting_date).days
 
     def current_stage(self, current_date: date) -> PhenologicalStage:
-        """Stadio fenologico in vigore alla data corrente."""
-        return self.species.stage_at_day(
-            self.days_since_planting(current_date)
+        """
+        Stadio FAO-56 in vigore alla data corrente, usato per il Kc.
+
+        Delega a `Species.stage_at`, che sa se la specie è ancorata
+        all'impianto (annuali) o alla stagione (perenni). È l'unico
+        punto da cui il resto del motore ricava lo stadio: cambiando
+        qui, il Kc, il dual-Kc e il pianificatore seguono.
+        """
+        return self.species.stage_at(current_date, self.planting_date)
+
+    def growth_stages(self, current_date: date) -> tuple[GrowthStage, ...]:
+        """
+        Vista botanica degli stadi attivi alla data corrente.
+
+        È il vocabolario osservabile ("sta fiorendo") condiviso con
+        The Pot, distinto dallo stadio FAO-56 che pilota il Kc. Può
+        contenere più stadi simultanei. Serve alla UI e al feedback
+        fenologico, non al calcolo del bilancio idrico.
+        """
+        return self.species.growth_stages_at(
+            current_date, self.planting_date,
         )
 
     @property

@@ -2691,6 +2691,74 @@ class TestPotApplyBalanceStepFromWeather(unittest.TestCase):
 
 
 # =====================================================================
+#  Vista botanica e ancoraggio fenologico sul Pot
+# =====================================================================
+
+
+class TestPotPhenologyViews(unittest.TestCase):
+    """`current_stage` (FAO-56, per il Kc) e `growth_stages` (botanica)."""
+
+    def _pot(self, species, planting_date, **overrides):
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+        defaults = dict(
+            label="test", species=species,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=5.0, pot_diameter_cm=22.0,
+            location=Location.OUTDOOR,
+            planting_date=planting_date,
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    def test_annual_pot_stage_unchanged(self):
+        from fitosim.domain.species import BASIL
+        planting = date(2026, 5, 1)
+        pot = self._pot(BASIL, planting)
+        # Il vaso delega alla specie, che per un'annuale usa i giorni.
+        self.assertEqual(
+            pot.current_stage(date(2026, 5, 6)),
+            BASIL.stage_at_day(5),
+        )
+
+    def test_perennial_pot_follows_season(self):
+        # Un rosmarino piantato anni fa cambia stadio con la stagione,
+        # non resta bloccato a fine ciclo.
+        from fitosim.domain.species import ROSEMARY
+        from fitosim.domain.species import PhenologicalStage as PS
+        pot = self._pot(ROSEMARY, date(2020, 4, 1))
+        self.assertEqual(pot.current_stage(date(2026, 1, 15)), PS.INITIAL)
+        self.assertEqual(pot.current_stage(date(2026, 7, 15)), PS.MID_SEASON)
+
+    def test_growth_stages_exposes_botanical_view(self):
+        from fitosim.domain.species import ROSEMARY, GrowthStage
+        pot = self._pot(ROSEMARY, date(2020, 4, 1))
+        self.assertEqual(
+            pot.growth_stages(date(2026, 1, 15)), (GrowthStage.REST,),
+        )
+        self.assertIn(
+            GrowthStage.FLOWERING, pot.growth_stages(date(2026, 6, 15)),
+        )
+
+    def test_perennial_consumes_less_water_in_winter(self):
+        # Verifica end-to-end: a parità di ET0, lo stesso vaso perenne
+        # consuma meno d'inverno perché lo stadio (e quindi il Kc) segue
+        # la stagione.
+        from fitosim.domain.species import ROSEMARY
+        winter_pot = self._pot(ROSEMARY, date(2020, 4, 1), label="inverno")
+        summer_pot = self._pot(ROSEMARY, date(2020, 4, 1), label="estate")
+        start = winter_pot.state_mm
+        r_win = winter_pot.apply_balance_step(
+            et_0_mm=3.0, water_input_mm=0.0, current_date=date(2026, 1, 15),
+        )
+        r_sum = summer_pot.apply_balance_step(
+            et_0_mm=3.0, water_input_mm=0.0, current_date=date(2026, 7, 15),
+        )
+        consumo_inverno = start - r_win.new_state
+        consumo_estate = start - r_sum.new_state
+        self.assertLess(consumo_inverno, consumo_estate)
+
+
+# =====================================================================
 #  Test del nuovo campo shelter_level (v0_21)
 #
 #  `shelter_level` modula la velocità del vento ambientale che entra

@@ -10,16 +10,22 @@ Organizzati in quattro famiglie:
 
 import unittest
 
+from datetime import date
+
 from fitosim.domain.species import (
     ALL_SPECIES,
     BASIL,
     CITRUS,
+    DEFAULT_ANNUAL_GROWTH_STAGES,
     LETTUCE,
     ROSEMARY,
     TOMATO,
+    GrowthStage,
     PhenologicalStage,
+    PhenologyAnchor,
     Species,
     actual_et_c,
+    fao56_stage_from_growth_stages,
     kc_for_stage,
     potential_et_c,
 )
@@ -458,6 +464,222 @@ class TestSpeciesChemistryModel(unittest.TestCase):
         )
         self.assertTrue(s.supports_dual_kc)
         self.assertTrue(s.supports_chemistry_model)
+
+
+# =======================================================================
+#  Ancoraggio fenologico e vista botanica
+# =======================================================================
+#
+# Le annuali hanno il ciclo ancorato all'impianto, le perenni alla
+# stagione. Prima di questa distinzione le perenni, dopo qualche anno,
+# restavano inchiodate per sempre in LATE_SEASON.
+
+class TestGrowthStageVocabulary(unittest.TestCase):
+    """Il vocabolario botanico condiviso con The Pot."""
+
+    def test_values_match_the_pot_vocabulary(self):
+        # Le stringhe devono coincidere esattamente con il vocabolario
+        # controllato di The Pot (DEFAULT_PHENOLOGY_BY_GROUP), altrimenti
+        # le due basi dati non si parlano.
+        self.assertEqual(GrowthStage.DORMANCY.value, "dormienza")
+        self.assertEqual(GrowthStage.REST.value, "riposo")
+        self.assertEqual(GrowthStage.BUD_BREAK.value, "germogliamento")
+        self.assertEqual(GrowthStage.VEGETATIVE.value, "vegetativo")
+        self.assertEqual(GrowthStage.FLOWERING.value, "fioritura")
+        self.assertEqual(GrowthStage.FRUITING.value, "fruttificazione")
+
+    def test_six_stages(self):
+        self.assertEqual(len(list(GrowthStage)), 6)
+
+
+class TestFao56Reduction(unittest.TestCase):
+    """Riduzione da stadi botanici (anche simultanei) a stadio FAO-56."""
+
+    def test_fruiting_or_flowering_is_mid_season(self):
+        for stages in (
+            (GrowthStage.FRUITING,),
+            (GrowthStage.FLOWERING,),
+            (GrowthStage.VEGETATIVE, GrowthStage.FLOWERING),
+            (GrowthStage.REST, GrowthStage.FRUITING),
+        ):
+            with self.subTest(stages=stages):
+                self.assertEqual(
+                    fao56_stage_from_growth_stages(stages),
+                    PhenologicalStage.MID_SEASON,
+                )
+
+    def test_vegetative_alone_is_mid_season(self):
+        self.assertEqual(
+            fao56_stage_from_growth_stages((GrowthStage.VEGETATIVE,)),
+            PhenologicalStage.MID_SEASON,
+        )
+
+    def test_dormancy_and_rest_are_initial(self):
+        for stages in (
+            (GrowthStage.DORMANCY,),
+            (GrowthStage.REST,),
+            (GrowthStage.BUD_BREAK,),
+        ):
+            with self.subTest(stages=stages):
+                self.assertEqual(
+                    fao56_stage_from_growth_stages(stages),
+                    PhenologicalStage.INITIAL,
+                )
+
+
+class TestAnnualAnchoring(unittest.TestCase):
+    """Le annuali restano ancorate all'impianto (comportamento storico)."""
+
+    def test_existing_species_default_to_annual(self):
+        for sp in (BASIL, TOMATO, LETTUCE):
+            with self.subTest(species=sp.common_name):
+                self.assertEqual(sp.phenology_anchor, PhenologyAnchor.ANNUAL)
+
+    def test_stage_at_matches_stage_at_day(self):
+        # Retrocompatibilità: per un'annuale il nuovo metodo consapevole
+        # dell'ancoraggio deve dare esattamente il vecchio risultato.
+        planting = date(2026, 5, 1)
+        for offset in (0, 5, 19, 20, 45, 69, 70, 120):
+            with self.subTest(offset=offset):
+                current = date.fromordinal(planting.toordinal() + offset)
+                self.assertEqual(
+                    BASIL.stage_at(current, planting),
+                    BASIL.stage_at_day(offset),
+                )
+
+    def test_default_botanical_mapping(self):
+        planting = date(2026, 5, 1)
+        # INITIAL -> vegetativo
+        self.assertEqual(
+            BASIL.growth_stages_at(date(2026, 5, 6), planting),
+            DEFAULT_ANNUAL_GROWTH_STAGES[PhenologicalStage.INITIAL],
+        )
+        # MID -> vegetativo + fioritura
+        mid = date.fromordinal(planting.toordinal() + 30)
+        self.assertIn(GrowthStage.FLOWERING, BASIL.growth_stages_at(mid, planting))
+
+    def test_leaf_crop_never_flowers(self):
+        # La lattuga si raccoglie prima della salita a seme: in nessuno
+        # stadio deve comparire la fioritura.
+        planting = date(2026, 5, 1)
+        for offset in (2, 20, 40, 60):
+            with self.subTest(offset=offset):
+                stages = LETTUCE.growth_stages_at(
+                    date.fromordinal(planting.toordinal() + offset), planting,
+                )
+                self.assertNotIn(GrowthStage.FLOWERING, stages)
+                self.assertNotIn(GrowthStage.FRUITING, stages)
+
+
+class TestPerennialAnchoring(unittest.TestCase):
+    """Le perenni seguono la stagione, non i giorni dall'impianto."""
+
+    def test_perennial_species_declare_anchor_and_calendar(self):
+        for sp in (CITRUS, ROSEMARY):
+            with self.subTest(species=sp.common_name):
+                self.assertEqual(
+                    sp.phenology_anchor, PhenologyAnchor.PERENNIAL,
+                )
+                self.assertIsNotNone(sp.phenology_calendar)
+                self.assertEqual(len(sp.phenology_calendar), 12)
+
+    def test_old_perennial_is_not_stuck_in_late_season(self):
+        # E' il bug che questo refactor risolve: con l'ancoraggio ai
+        # giorni, un limone piantato cinque anni fa sarebbe per sempre
+        # in LATE_SEASON.
+        planting = date(2021, 3, 1)
+        far_future = date(2026, 5, 15)
+        self.assertEqual(
+            CITRUS.stage_at_day((far_future - planting).days),
+            PhenologicalStage.LATE_SEASON,
+        )
+        self.assertNotEqual(
+            CITRUS.stage_at(far_future, planting),
+            PhenologicalStage.LATE_SEASON,
+        )
+
+    def test_stage_depends_on_season_not_on_planting_date(self):
+        # Due limoni piantati ad anni di distanza, osservati lo stesso
+        # giorno, devono essere nello stesso stadio.
+        observed = date(2026, 7, 15)
+        old_plant = date(2015, 4, 1)
+        young_plant = date(2025, 9, 20)
+        self.assertEqual(
+            CITRUS.stage_at(observed, old_plant),
+            CITRUS.stage_at(observed, young_plant),
+        )
+
+    def test_rosemary_winter_consumes_less_than_summer(self):
+        # Il guadagno concreto del refactor: il rosmarino in riposo
+        # invernale ha un Kc nettamente più basso che in piena estate.
+        planting = date(2020, 4, 1)
+        winter_kc = kc_for_stage(
+            ROSEMARY, ROSEMARY.stage_at(date(2026, 1, 15), planting),
+        )
+        summer_kc = kc_for_stage(
+            ROSEMARY, ROSEMARY.stage_at(date(2026, 7, 15), planting),
+        )
+        self.assertLess(winter_kc, summer_kc)
+
+    def test_rosemary_botanical_view_follows_season(self):
+        planting = date(2020, 4, 1)
+        self.assertEqual(
+            ROSEMARY.growth_stages_at(date(2026, 1, 15), planting),
+            (GrowthStage.REST,),
+        )
+        self.assertIn(
+            GrowthStage.FLOWERING,
+            ROSEMARY.growth_stages_at(date(2026, 6, 15), planting),
+        )
+
+    def test_citrus_carries_fruit_in_winter(self):
+        # Caratteristica nota del catalogo: il limone porta frutti anche
+        # d'inverno, quindi a gennaio dichiara riposo E fruttificazione.
+        planting = date(2020, 4, 1)
+        stages = CITRUS.growth_stages_at(date(2026, 1, 15), planting)
+        self.assertIn(GrowthStage.REST, stages)
+        self.assertIn(GrowthStage.FRUITING, stages)
+
+
+class TestPerennialValidation(unittest.TestCase):
+    """Una perenne senza calendario non saprebbe in che stadio si trova."""
+
+    def _base_kwargs(self, **overrides):
+        kwargs = dict(
+            common_name="Test", scientific_name="Testus testus",
+            kc_initial=0.5, kc_mid=1.0, kc_late=0.8,
+            phenology_anchor=PhenologyAnchor.PERENNIAL,
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_perennial_without_calendar_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            Species(**self._base_kwargs())
+        self.assertIn("phenology_calendar", str(ctx.exception))
+
+    def test_calendar_with_wrong_length_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            Species(**self._base_kwargs(
+                phenology_calendar=((GrowthStage.VEGETATIVE,),) * 11,
+            ))
+        self.assertIn("12", str(ctx.exception))
+
+    def test_empty_month_raises(self):
+        calendar = [(GrowthStage.VEGETATIVE,)] * 12
+        calendar[5] = ()
+        with self.assertRaises(ValueError) as ctx:
+            Species(**self._base_kwargs(phenology_calendar=tuple(calendar)))
+        self.assertIn("vuoto", str(ctx.exception))
+
+    def test_annual_does_not_require_calendar(self):
+        # Il caso di gran lunga più comune resta senza attriti.
+        s = Species(
+            common_name="Test", scientific_name="Testus testus",
+            kc_initial=0.5, kc_mid=1.0, kc_late=0.8,
+        )
+        self.assertEqual(s.phenology_anchor, PhenologyAnchor.ANNUAL)
+        self.assertIsNone(s.phenology_calendar)
 
 
 if __name__ == "__main__":

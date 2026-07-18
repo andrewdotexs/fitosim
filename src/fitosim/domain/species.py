@@ -47,6 +47,7 @@ Riferimento: Allen, Pereira, Raes, Smith (1998), FAO-56 cap. 6-8.
 """
 
 from dataclasses import dataclass
+from datetime import date
 from enum import Enum
 
 from fitosim.science.balance import stress_coefficient_ks
@@ -66,6 +67,77 @@ class PhenologicalStage(Enum):
     INITIAL = "initial"           # impianto, germinazione, radicamento
     MID_SEASON = "mid_season"     # piena vegetazione, fioritura, fruttificazione
     LATE_SEASON = "late_season"   # maturazione, senescenza, raccolta
+
+
+class GrowthStage(Enum):
+    """
+    Stadio botanico osservabile, vocabolario condiviso con The Pot.
+
+    Mentre `PhenologicalStage` è l'astrazione FAO-56 che pilota il Kc
+    (tre plateau, mutuamente esclusivi), questo enum è il vocabolario
+    che il **giardiniere osserva e riporta**: "sta germogliando", "è
+    in fiore". È il linguaggio del diario, e quindi la chiave con cui
+    il feedback fenologico entra nel modello.
+
+    I due vocabolari convivono per design: sono due viste della stessa
+    posizione temporale, non uno la traduzione lossy dell'altro. La
+    vista botanica serve all'utente e al feedback, quella FAO-56 serve
+    al calcolo del Kc.
+
+    A differenza degli stadi FAO-56, questi possono essere
+    **simultanei**: un agrume a maggio è contemporaneamente in
+    vegetazione e in fioritura.
+
+    I valori delle stringhe corrispondono esattamente al vocabolario
+    controllato di The Pot (`DEFAULT_PHENOLOGY_BY_GROUP` nel catalogo),
+    così che le due basi dati parlino la stessa lingua senza mappature.
+    """
+
+    DORMANCY = "dormienza"            # riposo profondo, gemme chiuse
+    REST = "riposo"                   # riposo leggero, attività ridotta
+    BUD_BREAK = "germogliamento"      # rottura gemme, ripresa
+    VEGETATIVE = "vegetativo"         # crescita di foglie e rami
+    FLOWERING = "fioritura"           # emissione dei fiori
+    FRUITING = "fruttificazione"      # allegagione e maturazione
+
+
+class PhenologyAnchor(Enum):
+    """
+    A cosa è ancorato il ciclo fenologico della specie.
+
+    È la distinzione che i due modelli precedenti sbagliavano in modo
+    speculare, ciascuno assumendo universale il proprio caso:
+
+      - Le **annuali** hanno il ciclo ancorato alla semina. Un basilico
+        seminato a luglio è in fase iniziale a luglio, non "in piena
+        vegetazione" come direbbe il calendario stagionale.
+      - Le **perenni** hanno il ciclo ancorato alla stagione. Un limone
+        di cinque anni fiorisce a maggio a prescindere da quando è
+        stato messo a dimora, e i "giorni dall'impianto" non dicono
+        più nulla di utile.
+
+    Prima di questa distinzione le perenni usavano durate di stadio
+    dichiaratamente convenzionali (vedi le note di CITRUS e ROSEMARY),
+    che con l'andare degli anni collassavano permanentemente
+    nell'ultimo stadio.
+    """
+
+    ANNUAL = "annual"          # ciclo ancorato alla data di impianto
+    PERENNIAL = "perennial"    # ciclo ancorato alla stagione
+
+
+# Mappatura di default dagli stadi FAO-56 a quelli botanici per le
+# specie ANNUALI che non dichiarano una mappatura propria. Il modello
+# di fitosim parte da una piantina già insediata (l'impianto è il
+# momento in cui la metti nel vaso), quindi la germinazione vera e
+# propria non è modellata e `BUD_BREAK` resta un concetto da perenni.
+DEFAULT_ANNUAL_GROWTH_STAGES: dict[PhenologicalStage, tuple] = {
+    PhenologicalStage.INITIAL: (GrowthStage.VEGETATIVE,),
+    PhenologicalStage.MID_SEASON: (
+        GrowthStage.VEGETATIVE, GrowthStage.FLOWERING,
+    ),
+    PhenologicalStage.LATE_SEASON: (GrowthStage.FRUITING,),
+}
 
 
 @dataclass(frozen=True)
@@ -199,6 +271,29 @@ class Species:
     # per differenziare le specie nel modello.
     stomatal_resistance_s_m: float | None = None
     crop_height_m: float | None = None
+    # ----- Ancoraggio fenologico e vista botanica -----
+    # `phenology_anchor` dichiara se il ciclo della specie è ancorato
+    # all'impianto (annuali) o alla stagione (perenni). Il default
+    # ANNUAL preserva il comportamento storico di tutte le specie
+    # esistenti.
+    #
+    # `phenology_calendar` è obbligatorio per le PERENNI: dodici
+    # elementi, uno per mese da gennaio a dicembre, ciascuno con la
+    # tupla degli stadi botanici attivi in quel mese (possono essere
+    # più d'uno). Gli stessi dati vivono in The Pot come
+    # DEFAULT_PHENOLOGY_BY_GROUP.
+    #
+    # `annual_growth_stages` permette a una specie ANNUALE di
+    # sovrascrivere la mappatura FAO-56 → botanica di default, che
+    # assume un ciclo con fioritura e fruttificazione. Serve per le
+    # colture da foglia raccolte prima della fioritura (la lattuga
+    # che va a seme è un difetto, non uno stadio previsto).
+    phenology_anchor: PhenologyAnchor = PhenologyAnchor.ANNUAL
+    phenology_calendar: tuple[tuple[GrowthStage, ...], ...] | None = None
+    annual_growth_stages: (
+        tuple[tuple[GrowthStage, ...], tuple[GrowthStage, ...],
+              tuple[GrowthStage, ...]] | None
+    ) = None
 
     def __post_init__(self) -> None:
         # Validazione dei Kc: scorriamo la terna con zip per un
@@ -295,6 +390,30 @@ class Species:
                     f"< max ({self.ph_optimal_max}) ≤ 14."
                 )
 
+        # Coerenza dell'ancoraggio fenologico: una perenne senza
+        # calendario non saprebbe in che stadio si trova, perché per
+        # lei i giorni dall'impianto non sono informativi.
+        if self.phenology_anchor is PhenologyAnchor.PERENNIAL:
+            if self.phenology_calendar is None:
+                raise ValueError(
+                    f"Specie '{self.common_name}': una specie PERENNIAL "
+                    f"richiede phenology_calendar (12 mesi), perché il suo "
+                    f"ciclo è ancorato alla stagione e non all'impianto."
+                )
+            if len(self.phenology_calendar) != 12:
+                raise ValueError(
+                    f"Specie '{self.common_name}': phenology_calendar deve "
+                    f"avere esattamente 12 elementi (gennaio-dicembre), "
+                    f"ricevuti {len(self.phenology_calendar)}."
+                )
+            for month_idx, stages in enumerate(self.phenology_calendar, 1):
+                if not stages:
+                    raise ValueError(
+                        f"Specie '{self.common_name}': il mese {month_idx} "
+                        f"del phenology_calendar è vuoto. Ogni mese deve "
+                        f"dichiarare almeno uno stadio botanico."
+                    )
+
     @property
     def supports_dual_kc(self) -> bool:
         """
@@ -347,10 +466,96 @@ class Species:
             return PhenologicalStage.MID_SEASON
         return PhenologicalStage.LATE_SEASON
 
+    def growth_stages_at(
+        self, current_date: "date", planting_date: "date",
+    ) -> tuple[GrowthStage, ...]:
+        """
+        Vista botanica: gli stadi osservabili attivi alla data indicata.
+
+        È il vocabolario del diario e del feedback fenologico. Può
+        restituire più stadi contemporaneamente (un agrume a maggio è
+        in vegetazione *e* in fioritura).
+
+        Per le PERENNI legge il calendario stagionale; per le ANNUALI
+        deriva dallo stadio FAO-56, usando la mappatura della specie se
+        dichiarata o quella di default.
+        """
+        if self.phenology_anchor is PhenologyAnchor.PERENNIAL:
+            # Il calendario è garantito presente e completo da __post_init__.
+            return self.phenology_calendar[current_date.month - 1]
+
+        fao_stage = self.stage_at_day((current_date - planting_date).days)
+        if self.annual_growth_stages is not None:
+            index = {
+                PhenologicalStage.INITIAL: 0,
+                PhenologicalStage.MID_SEASON: 1,
+                PhenologicalStage.LATE_SEASON: 2,
+            }[fao_stage]
+            return self.annual_growth_stages[index]
+        return DEFAULT_ANNUAL_GROWTH_STAGES[fao_stage]
+
+    def stage_at(
+        self, current_date: "date", planting_date: "date",
+    ) -> PhenologicalStage:
+        """
+        Stadio FAO-56 in vigore, consapevole dell'ancoraggio della specie.
+
+        È il metodo che il motore deve usare per il Kc, al posto del
+        più vecchio `stage_at_day`: quest'ultimo assume implicitamente
+        l'ancoraggio annuale ed è corretto solo per le annuali.
+
+        Per le ANNUALI il comportamento è identico a `stage_at_day`.
+        Per le PERENNI lo stadio viene dedotto dalla stagione: senza
+        questo, una pianta perenne dopo qualche anno resterebbe
+        inchiodata per sempre in LATE_SEASON, perché i giorni
+        dall'impianto crescono senza limite.
+        """
+        if self.phenology_anchor is PhenologyAnchor.ANNUAL:
+            return self.stage_at_day((current_date - planting_date).days)
+
+        stages = self.growth_stages_at(current_date, planting_date)
+        return fao56_stage_from_growth_stages(stages)
+
 
 # =======================================================================
 #  Funzioni di dominio
 # =======================================================================
+
+def fao56_stage_from_growth_stages(
+    stages: tuple[GrowthStage, ...],
+) -> PhenologicalStage:
+    """
+    Riduce un insieme di stadi botanici (anche simultanei) allo stadio
+    FAO-56 corrispondente, che è mutuamente esclusivo.
+
+    È la cerniera tra i due vocabolari, e serve perché il Kc deve
+    essere un numero solo in ogni istante mentre la vista botanica può
+    dichiarare più stadi insieme.
+
+    Regola di priorità, dalla domanda idrica più alta alla più bassa:
+
+      - fruttificazione o fioritura  → MID_SEASON (picco di domanda)
+      - vegetativo                   → MID_SEASON (crescita attiva)
+      - germogliamento               → INITIAL (ripresa, chioma ridotta)
+      - dormienza o riposo           → INITIAL (domanda minima)
+
+    Nota: LATE_SEASON non viene mai prodotto da questa riduzione. Per
+    le perenni non esiste una "fine ciclo" annuale come per le colture
+    seminate: il ciclo si richiude nella dormienza. Le specie perenni
+    del catalogo hanno infatti kc_late ≈ kc_initial, quindi la scelta
+    non introduce distorsioni.
+
+    La riduzione di Kc durante la dormienza vera (un sempreverde
+    dormiente traspira molto meno di uno in ripresa) è un raffinamento
+    successivo, deliberatamente fuori da questo passaggio perché
+    cambierebbe i numeri del bilancio idrico e non solo il vocabolario.
+    """
+    stage_set = set(stages)
+    if stage_set & {GrowthStage.FRUITING, GrowthStage.FLOWERING}:
+        return PhenologicalStage.MID_SEASON
+    if GrowthStage.VEGETATIVE in stage_set:
+        return PhenologicalStage.MID_SEASON
+    return PhenologicalStage.INITIAL
 
 def kc_for_stage(species: Species, stage: PhenologicalStage) -> float:
     """
@@ -489,6 +694,13 @@ LETTUCE = Species(
     ),
     stomatal_resistance_s_m=100.0,
     crop_height_m=0.20,
+    # Coltura da foglia: si raccoglie sempre prima della fioritura
+    # (la salita a seme è un difetto, non uno stadio previsto).
+    annual_growth_stages=(
+        (GrowthStage.VEGETATIVE,),   # INITIAL
+        (GrowthStage.VEGETATIVE,),   # MID_SEASON
+        (GrowthStage.VEGETATIVE,),   # LATE_SEASON
+    ),
 )
 
 CITRUS = Species(
@@ -506,10 +718,29 @@ CITRUS = Species(
         "foglie cerose. Tollera meglio lo stress (p=0.50) grazie alla "
         "cuticola spessa che limita la traspirazione. Richiede "
         "ricovero invernale al riparo dal gelo a latitudini padane. "
-        "Per le perenni le durate sono convenzionali, riferite all'anno."
+        "Specie PERENNIAL: lo stadio segue la stagione, non i giorni "
+        "dall'impianto. Le durate initial/mid_stage_days restano per "
+        "retrocompatibilità ma non vengono usate nel calcolo."
     ),
     stomatal_resistance_s_m=140.0,
     crop_height_m=2.00,
+    phenology_anchor=PhenologyAnchor.PERENNIAL,
+    # Sempreverde: fioritura primaverile, fruttificazione lunga fino
+    # all'inverno. Stessi dati del gruppo "agrume" di The Pot.
+    phenology_calendar=(
+        (GrowthStage.REST, GrowthStage.FRUITING),          # gennaio
+        (GrowthStage.VEGETATIVE, GrowthStage.FRUITING),    # febbraio
+        (GrowthStage.VEGETATIVE,),                         # marzo
+        (GrowthStage.VEGETATIVE, GrowthStage.FLOWERING),   # aprile
+        (GrowthStage.VEGETATIVE, GrowthStage.FLOWERING),   # maggio
+        (GrowthStage.VEGETATIVE, GrowthStage.FRUITING),    # giugno
+        (GrowthStage.FRUITING,),                           # luglio
+        (GrowthStage.FRUITING,),                           # agosto
+        (GrowthStage.FRUITING,),                           # settembre
+        (GrowthStage.FRUITING,),                           # ottobre
+        (GrowthStage.REST, GrowthStage.FRUITING),          # novembre
+        (GrowthStage.REST, GrowthStage.FRUITING),          # dicembre
+    ),
 )
 
 ROSEMARY = Species(
@@ -526,10 +757,29 @@ ROSEMARY = Species(
         "aridi estivi. Kc contenuto, tolleranza allo stress elevata "
         "(p=0.60): preferisce terreno asciutto tra un'irrigazione e "
         "l'altra. Substrato drenante obbligatorio per evitare marciume "
-        "radicale. Perenne outdoor a latitudini italiane."
+        "radicale. Perenne outdoor a latitudini italiane: lo stadio "
+        "segue la stagione, non i giorni dall'impianto."
     ),
     stomatal_resistance_s_m=200.0,
     crop_height_m=0.60,
+    phenology_anchor=PhenologyAnchor.PERENNIAL,
+    # Aromatica perenne mediterranea: riposo invernale, ripresa a
+    # marzo, fioritura tarda primavera-estate. Stessi dati del gruppo
+    # "aromatica" di The Pot.
+    phenology_calendar=(
+        (GrowthStage.REST,),                               # gennaio
+        (GrowthStage.REST,),                               # febbraio
+        (GrowthStage.VEGETATIVE,),                         # marzo
+        (GrowthStage.VEGETATIVE,),                         # aprile
+        (GrowthStage.VEGETATIVE, GrowthStage.FLOWERING),   # maggio
+        (GrowthStage.VEGETATIVE, GrowthStage.FLOWERING),   # giugno
+        (GrowthStage.VEGETATIVE, GrowthStage.FLOWERING),   # luglio
+        (GrowthStage.VEGETATIVE,),                         # agosto
+        (GrowthStage.VEGETATIVE,),                         # settembre
+        (GrowthStage.REST,),                               # ottobre
+        (GrowthStage.REST,),                               # novembre
+        (GrowthStage.REST,),                               # dicembre
+    ),
 )
 
 
