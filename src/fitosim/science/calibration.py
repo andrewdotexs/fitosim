@@ -74,6 +74,13 @@ Workflow tipico
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterable, Optional
+
+from fitosim.science.balance import stress_coefficient_ks
+from fitosim.science.substrate import (
+    DEFAULT_DEPLETION_FRACTION,
+    Substrate,
+)
 
 
 # Parametri di default per il rilevamento di picchi/valli su dati
@@ -84,6 +91,21 @@ DEFAULT_MIN_DISTANCE = 2          # giorni tra picchi/valli successivi
 DEFAULT_MIN_PROMINENCE = 0.02     # soglia di emergenza in θ
 DEFAULT_FC_PERCENTILE = 75        # percentile dei picchi per FC
 DEFAULT_PWP_PERCENTILE = 10       # percentile delle valli per PWP
+
+# Parametri di default per la calibrazione di Kc dalla pendenza
+# (vedi la sezione "Calibrazione del consumo" più sotto).
+DEFAULT_MIN_WINDOW_DAYS = 3       # durata minima di una finestra di asciugamento
+DEFAULT_MIN_WINDOW_DEPLETION = 0.03   # calo minimo in θ perché il segnale
+                                      # emerga dal rumore del sensore
+DEFAULT_RISE_TOLERANCE = 0.01     # risalita in θ tollerata come rumore
+                                  # (oltre questa soglia = apporto idrico)
+
+# Limiti di plausibilità fisica per una stima di Kc. Fuori da questo
+# intervallo la finestra è quasi certamente contaminata (irrigazione
+# non registrata, glitch del sensore, substrato che drena ancora) e
+# viene scartata anziché inquinare la mediana.
+KC_MIN_PLAUSIBLE = 0.05
+KC_MAX_PLAUSIBLE = 2.50
 
 # Soglie di numerosità per i livelli di confidenza. Sono regole di
 # pollice basate sull'osservazione che con meno di 5 cicli di
@@ -533,5 +555,423 @@ def calibrate_substrate(
         n_valleys=n_valleys,
         confidence_fc=fc_conf,
         confidence_pwp=pwp_conf,
+        notes=" ".join(notes_parts),
+    )
+
+
+# =======================================================================
+#  Calibrazione del consumo: Kc dalla pendenza di asciugamento
+# =======================================================================
+#
+# Il secondo segnale del sensore
+# ------------------------------
+#
+# Le funzioni sopra sfruttano le ANCORE della serie: i picchi
+# raccontano θ_FC, le valli raccontano un limite superiore di θ_PWP.
+# Dicono quanto è grande il serbatoio.
+#
+# Esiste però un secondo segnale, indipendente e altrettanto prezioso:
+# la PENDENZA con cui la curva scende tra due irrigazioni. Se il
+# modello prevede un consumo di 4 mm/giorno e il sensore ne mostra 6,
+# il Kc di quel vaso è sottostimato del 50%. La pendenza dice quanto
+# in fretta il serbatoio si svuota — ed è questa, non la sua capacità,
+# a determinare *quando irrigare*.
+#
+# La relazione fisica invertita
+# -----------------------------
+#
+# Il bilancio idrico giornaliero, in assenza di apporti, è:
+#
+#     deplezione_mm = Ks · Kp · Kc · ET₀
+#
+# Tutti i termini a destra sono noti o osservabili tranne Kc:
+#   - la deplezione la misura il sensore (Δθ × profondità);
+#   - ET₀ viene dal meteo;
+#   - Kp è il coefficiente di vaso (materiale, colore, esposizione);
+#   - Ks lo calcoliamo dal θ osservato, senza doverlo stimare — è il
+#     vantaggio di avere il sensore: non ipotizziamo lo stress, lo
+#     leggiamo.
+#
+# Invertendo su una finestra di N giorni:
+#
+#     Kc = Σ(deplezione_mm) / (Kp · Σ(Ks_i · ET₀_i))
+#
+# Il Kc così stimato è il Kc "bulk" del modello a singolo coefficiente:
+# include traspirazione ed evaporazione insieme, esattamente come il
+# Kc del catalogo che va a correggere.
+#
+# Cosa può andare storto (e come lo gestiamo)
+# -------------------------------------------
+#
+#   1. Apporto idrico dentro la finestra (irrigazione o pioggia).
+#      Invalida la stima. Lo rileviamo come risalita di θ oltre la
+#      tolleranza di rumore, e spezziamo la finestra.
+#
+#   2. Irrigazione INVISIBILE. Se il campionamento è giornaliero e
+#      l'utente irriga e il vaso drena tra due letture, la risalita
+#      non si vede: osserviamo un calo più piccolo del reale e
+#      sottostimiamo Kc. È il limite principale del metodo. Mitigazione:
+#      il chiamante può passare `known_water_input_days` con i giorni
+#      in cui il diario registra un apporto, e quelle transizioni
+#      vengono escluse.
+#
+#   3. Rumore del sensore. Su finestre corte o con cali piccoli il
+#      rumore domina il segnale. Imponiamo una durata minima e un calo
+#      minimo perché la finestra sia considerata.
+#
+#   4. Stress idrico. Verso il fondo della curva Ks scende sotto 1 e
+#      l'asciugamento rallenta: ignorarlo porterebbe a sottostimare Kc.
+#      Calcolando Ks giorno per giorno dal θ osservato il problema è
+#      gestito esattamente.
+#
+#   5. Drenaggio residuo. Nelle ore successive a un'irrigazione
+#      abbondante il vaso perde acqua per gravità, non per ET: la
+#      pendenza iniziale è più ripida del consumo reale. Il filtro di
+#      plausibilità su Kc scarta i casi peggiori; per il resto la
+#      mediana su più finestre assorbe l'effetto.
+#
+# Ordine consigliato: prima `calibrate_substrate` (ancore), poi
+# `calibrate_kc` usando il Substrate calibrato — così la conversione
+# θ→mm e il calcolo di Ks usano i parametri veri di quel vaso.
+
+
+@dataclass(frozen=True)
+class DryingWindow:
+    """
+    Un tratto di serie in cui il vaso si sta asciugando senza apporti.
+
+    Gli indici si riferiscono alla serie θ passata in ingresso e sono
+    inclusivi: la finestra copre le letture da `start_index` a
+    `end_index`, cioè `n_days` transizioni giornaliere.
+
+    Attributi
+    ---------
+    start_index, end_index : int
+        Estremi inclusivi nella serie θ.
+    n_days : int
+        Numero di transizioni giornaliere coperte (end - start).
+    theta_start, theta_end : float
+        Umidità volumetrica agli estremi.
+    total_depletion_theta : float
+        Calo complessivo in θ (sempre ≥ 0 per costruzione).
+    """
+
+    start_index: int
+    end_index: int
+    n_days: int
+    theta_start: float
+    theta_end: float
+    total_depletion_theta: float
+
+
+@dataclass(frozen=True)
+class KcCalibrationResult:
+    """
+    Risultato della calibrazione del coefficiente colturale.
+
+    Attributi
+    ---------
+    kc_estimate : float | None
+        Stima robusta (mediana) del Kc effettivo del vaso, o `None`
+        se nessuna finestra utilizzabile è stata trovata.
+    n_windows : int
+        Numero di finestre di asciugamento che hanno prodotto una
+        stima plausibile.
+    confidence : str
+        "high" / "medium" / "low" / "insufficient", con le stesse
+        soglie di numerosità usate per la calibrazione del substrato.
+    window_estimates : tuple[float, ...]
+        Le stime delle singole finestre, in ordine cronologico. Utili
+        per diagnostica: una dispersione ampia segnala dati rumorosi o
+        apporti idrici non registrati.
+    notes : str
+        Spiegazione in linguaggio naturale, pensata per essere mostrata
+        all'utente insieme alla stima.
+    """
+
+    kc_estimate: Optional[float]
+    n_windows: int
+    confidence: str
+    window_estimates: tuple[float, ...]
+    notes: str
+
+
+def find_drying_windows(
+    theta_series: list[float],
+    *,
+    min_days: int = DEFAULT_MIN_WINDOW_DAYS,
+    min_depletion: float = DEFAULT_MIN_WINDOW_DEPLETION,
+    rise_tolerance: float = DEFAULT_RISE_TOLERANCE,
+    known_water_input_days: Optional[Iterable[int]] = None,
+) -> list[DryingWindow]:
+    """
+    Individua i tratti di serie in cui il vaso si asciuga senza apporti.
+
+    Una finestra è un tratto massimale in cui θ non risale mai oltre
+    `rise_tolerance` da una lettura alla successiva. Le piccole
+    oscillazioni (rumore del sensore) non spezzano la finestra; una
+    risalita significativa sì, perché segnala un'irrigazione o una
+    pioggia.
+
+    Parametri
+    ---------
+    theta_series : list[float]
+        Serie di umidità volumetrica, tipicamente giornaliera e in
+        ordine cronologico crescente.
+    min_days : int, opzionale
+        Numero minimo di transizioni perché la finestra sia utile.
+        Finestre più corte hanno troppo poco segnale.
+    min_depletion : float, opzionale
+        Calo minimo complessivo in θ. Sotto questa soglia il rumore
+        del sensore è dello stesso ordine del segnale.
+    rise_tolerance : float, opzionale
+        Risalita di θ tollerata come rumore tra due letture.
+    known_water_input_days : iterable[int], opzionale
+        Indici in cui il diario registra un apporto idrico. La
+        transizione che porta a quell'indice viene esclusa anche se
+        il sensore non mostra risalita (irrigazione "invisibile").
+
+    Ritorna
+    -------
+    list[DryingWindow]
+        Finestre valide in ordine cronologico. Lista vuota se la serie
+        non contiene tratti di asciugamento sufficientemente lunghi.
+    """
+    if len(theta_series) < 2:
+        return []
+
+    excluded = set(known_water_input_days or ())
+    windows: list[DryingWindow] = []
+
+    start = 0
+    for i in range(1, len(theta_series)):
+        # La transizione i-1 → i è contaminata se il sensore mostra una
+        # risalita significativa oppure se il diario dichiara un apporto.
+        rise = theta_series[i] - theta_series[i - 1]
+        contaminated = (rise > rise_tolerance) or (i in excluded)
+
+        if contaminated:
+            _append_window_if_valid(
+                windows, theta_series, start, i - 1,
+                min_days, min_depletion,
+            )
+            start = i
+
+    # Chiusura dell'ultima finestra aperta.
+    _append_window_if_valid(
+        windows, theta_series, start, len(theta_series) - 1,
+        min_days, min_depletion,
+    )
+    return windows
+
+
+def _append_window_if_valid(
+    windows: list[DryingWindow],
+    theta_series: list[float],
+    start: int,
+    end: int,
+    min_days: int,
+    min_depletion: float,
+) -> None:
+    """Aggiunge la finestra [start, end] se supera i filtri di validità."""
+    n_days = end - start
+    if n_days < min_days:
+        return
+    depletion = theta_series[start] - theta_series[end]
+    if depletion < min_depletion:
+        return
+    windows.append(DryingWindow(
+        start_index=start,
+        end_index=end,
+        n_days=n_days,
+        theta_start=theta_series[start],
+        theta_end=theta_series[end],
+        total_depletion_theta=depletion,
+    ))
+
+
+def estimate_kc_from_window(
+    window: DryingWindow,
+    theta_series: list[float],
+    et0_series: list[float],
+    substrate: Substrate,
+    substrate_depth_mm: float,
+    *,
+    depletion_fraction: float = DEFAULT_DEPLETION_FRACTION,
+    kp: float = 1.0,
+) -> Optional[float]:
+    """
+    Stima il Kc effettivo da una singola finestra di asciugamento.
+
+    Applica l'inversione del bilancio idrico descritta in testa alla
+    sezione, calcolando Ks giorno per giorno dal θ osservato all'inizio
+    di ciascuna giornata.
+
+    Convenzione sugli indici: `et0_series[i]` è l'ET₀ della giornata
+    che ha portato alla lettura `theta_series[i]`. La deplezione tra
+    `theta_series[i-1]` e `theta_series[i]` è quindi guidata da
+    `et0_series[i]`.
+
+    Parametri
+    ---------
+    window : DryingWindow
+        La finestra da valutare.
+    theta_series, et0_series : list[float]
+        Serie allineate per indice.
+    substrate : Substrate
+        Preferibilmente quello CALIBRATO su questo vaso: θ_FC e θ_PWP
+        entrano nel calcolo di Ks.
+    substrate_depth_mm : float
+        Profondità del substrato, per convertire θ in mm.
+    depletion_fraction : float, opzionale
+        Frazione p della specie, per la soglia di stress.
+    kp : float, opzionale
+        Coefficiente di vaso. Default 1.0 (vaso neutro).
+
+    Ritorna
+    -------
+    float | None
+        La stima di Kc, oppure `None` se la finestra non produce un
+        valore fisicamente plausibile (domanda evapotraspirativa nulla,
+        oppure Kc fuori dai limiti di plausibilità).
+    """
+    demand = 0.0
+    for i in range(window.start_index + 1, window.end_index + 1):
+        # Ks valutato sullo stato di INIZIO giornata.
+        ks = stress_coefficient_ks(
+            theta_series[i - 1], substrate,
+            depletion_fraction=depletion_fraction,
+        )
+        demand += ks * et0_series[i]
+
+    if demand <= 0.0 or kp <= 0.0:
+        return None
+
+    depletion_mm = window.total_depletion_theta * substrate_depth_mm
+    kc = depletion_mm / (kp * demand)
+
+    if not (KC_MIN_PLAUSIBLE <= kc <= KC_MAX_PLAUSIBLE):
+        return None
+    return kc
+
+
+def calibrate_kc(
+    theta_series: list[float],
+    et0_series: list[float],
+    substrate: Substrate,
+    substrate_depth_mm: float,
+    *,
+    depletion_fraction: float = DEFAULT_DEPLETION_FRACTION,
+    kp: float = 1.0,
+    min_days: int = DEFAULT_MIN_WINDOW_DAYS,
+    min_depletion: float = DEFAULT_MIN_WINDOW_DEPLETION,
+    rise_tolerance: float = DEFAULT_RISE_TOLERANCE,
+    known_water_input_days: Optional[Iterable[int]] = None,
+) -> KcCalibrationResult:
+    """
+    Stima il coefficiente colturale effettivo di un vaso dalla velocità
+    con cui si asciuga.
+
+    Individua tutte le finestre di asciugamento della serie, stima Kc
+    su ciascuna, e aggrega con la MEDIANA — robusta agli outlier
+    prodotti da finestre contaminate sfuggite ai filtri.
+
+    Il valore restituito è il Kc "bulk" (traspirazione + evaporazione)
+    confrontabile direttamente con `kc_for_stage(species, stage)` del
+    catalogo. Il rapporto tra i due è il fattore di correzione da
+    applicare a quel vaso.
+
+    Parametri
+    ---------
+    theta_series, et0_series : list[float]
+        Serie allineate per indice e di pari lunghezza. `et0_series[i]`
+        è l'ET₀ della giornata che ha portato a `theta_series[i]`; il
+        primo elemento non viene mai usato ed è convenzionalmente 0.
+    substrate : Substrate
+        Preferibilmente calibrato (vedi `calibrate_substrate`).
+    substrate_depth_mm : float
+        Profondità del substrato nel vaso.
+    depletion_fraction, kp : float, opzionali
+        Parametri della specie e del vaso.
+    min_days, min_depletion, rise_tolerance : opzionali
+        Soglie di validità delle finestre.
+    known_water_input_days : iterable[int], opzionale
+        Giorni in cui il diario registra un apporto idrico.
+
+    Ritorna
+    -------
+    KcCalibrationResult
+
+    Solleva
+    -------
+    ValueError
+        Se le due serie hanno lunghezze diverse.
+    """
+    if len(theta_series) != len(et0_series):
+        raise ValueError(
+            f"theta_series ({len(theta_series)}) e et0_series "
+            f"({len(et0_series)}) devono avere la stessa lunghezza: "
+            f"l'elemento i-esimo di et0_series è l'ET0 della giornata "
+            f"che ha portato alla lettura i-esima di theta_series."
+        )
+
+    windows = find_drying_windows(
+        theta_series,
+        min_days=min_days,
+        min_depletion=min_depletion,
+        rise_tolerance=rise_tolerance,
+        known_water_input_days=known_water_input_days,
+    )
+
+    estimates: list[float] = []
+    for w in windows:
+        kc = estimate_kc_from_window(
+            w, theta_series, et0_series, substrate, substrate_depth_mm,
+            depletion_fraction=depletion_fraction, kp=kp,
+        )
+        if kc is not None:
+            estimates.append(kc)
+
+    n = len(estimates)
+    confidence = _confidence_level(n)
+
+    if n == 0:
+        notes = (
+            "Nessuna finestra di asciugamento utilizzabile. Possibili "
+            "cause: serie troppo corta, irrigazioni troppo frequenti "
+            "per lasciare tratti di asciugamento continui, oppure cali "
+            "troppo piccoli rispetto al rumore del sensore."
+        )
+        return KcCalibrationResult(
+            kc_estimate=None, n_windows=0, confidence=confidence,
+            window_estimates=(), notes=notes,
+        )
+
+    kc_estimate = _percentile(sorted(estimates), 50.0)
+
+    notes_parts = [
+        f"Stima da {n} finestra/e di asciugamento "
+        f"({len(windows)} candidate)."
+    ]
+    if confidence == "insufficient":
+        notes_parts.append(
+            "Numerosita' troppo bassa per una stima affidabile: usare "
+            "il Kc di catalogo e attendere altri cicli."
+        )
+    spread = max(estimates) - min(estimates)
+    if n >= 2 and spread > 0.5 * kc_estimate:
+        notes_parts.append(
+            f"Dispersione ampia tra le finestre (min {min(estimates):.2f}, "
+            f"max {max(estimates):.2f}): possibili apporti idrici non "
+            f"registrati nel diario."
+        )
+    if not notes_parts[1:]:
+        notes_parts.append("Dispersione contenuta, stima coerente.")
+
+    return KcCalibrationResult(
+        kc_estimate=kc_estimate,
+        n_windows=n,
+        confidence=confidence,
+        window_estimates=tuple(estimates),
         notes=" ".join(notes_parts),
     )
