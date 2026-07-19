@@ -39,7 +39,7 @@ from datetime import date, datetime, timedelta, timezone
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.scheduling import ScheduledEvent
-from fitosim.domain.species import Species
+from fitosim.domain.species import PhenologyAnchor, Species
 from fitosim.io.persistence import (
     CatalogMissingError,
     GardenPersistence,
@@ -823,7 +823,7 @@ class TestChannelIdPersistence(unittest.TestCase):
                     "SELECT version FROM schema_metadata "
                     "ORDER BY id DESC LIMIT 1"
                 )
-                self.assertEqual(cursor.fetchone()["version"], 4)
+                self.assertEqual(cursor.fetchone()["version"], SCHEMA_VERSION)
                 # E la colonna channel_id esiste:
                 cursor = p._conn.execute("PRAGMA table_info(pots)")
                 cols = [r["name"] for r in cursor.fetchall()]
@@ -847,12 +847,12 @@ class TestScheduledEventsPersistence(unittest.TestCase):
     def tearDown(self):
         self.persistence.close()
 
-    def test_schema_version_is_4(self):
+    def test_schema_version_is_current(self):
         cursor = self.persistence._conn.execute(
             "SELECT version FROM schema_metadata "
             "ORDER BY id DESC LIMIT 1"
         )
-        self.assertEqual(cursor.fetchone()["version"], 4)
+        self.assertEqual(cursor.fetchone()["version"], SCHEMA_VERSION)
 
     def test_round_trip_with_scheduled_events(self):
         garden = Garden(name="balcone")
@@ -1003,7 +1003,7 @@ class TestScheduledEventsPersistence(unittest.TestCase):
                     "SELECT version FROM schema_metadata "
                     "ORDER BY id DESC LIMIT 1"
                 )
-                self.assertEqual(cursor.fetchone()["version"], 4)
+                self.assertEqual(cursor.fetchone()["version"], SCHEMA_VERSION)
                 # La tabella scheduled_events esiste.
                 cursor = p._conn.execute(
                     "SELECT name FROM sqlite_master "
@@ -1191,6 +1191,310 @@ class TestRoomsAndIndoorPotPersistence(unittest.TestCase):
         loaded = self.persistence.load_garden("Casa di Andrea")
         room = loaded.get_room("salotto")
         self.assertIsNone(room.current_microclimate)
+
+
+# =======================================================================
+#  Persistenza dei gradi-giorno (schema v5)
+# =======================================================================
+#
+# La colonna e' nullable per design: NULL significa "questo vaso non
+# traccia i GDD" e fa ricadere sulla fenologia a calendario. La
+# distinzione NULL / 0.0 deve sopravvivere al round-trip, altrimenti un
+# vaso maturo ricaricato si crederebbe appena seminato.
+
+def _make_basil_with_gdd() -> Species:
+    """Basilico con le soglie in gradi-giorno valorizzate."""
+    return Species(
+        common_name="basilico gdd",
+        scientific_name="Ocimum basilicum",
+        kc_initial=0.50, kc_mid=1.10, kc_late=0.85,
+        t_base_c=10.0, gdd_to_mid=240.0, gdd_to_late=840.0,
+    )
+
+
+class TestGddPersistence(unittest.TestCase):
+
+    def setUp(self):
+        self.persistence = GardenPersistence(":memory:")
+        self.species = _make_basil_with_gdd()
+        self.substrate = _make_universal_substrate()
+        self.persistence.register_species(self.species)
+        self.persistence.register_substrate(self.substrate)
+
+    def tearDown(self):
+        self.persistence.close()
+
+    def _garden_with_pot(self, **pot_overrides):
+        garden = Garden(name="balcone")
+        kwargs = dict(
+            label="basilico-1", species=self.species,
+            substrate=self.substrate,
+            pot_volume_l=2.0, pot_diameter_cm=18.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 5, 1),
+        )
+        kwargs.update(pot_overrides)
+        garden.add_pot(Pot(**kwargs))
+        return garden
+
+    def test_column_exists_in_fresh_database(self):
+        cursor = self.persistence._conn.execute(
+            "PRAGMA table_info(pot_states)"
+        )
+        cols = [r["name"] for r in cursor.fetchall()]
+        self.assertIn("gdd_accumulated", cols)
+
+    def test_tracked_value_survives_round_trip(self):
+        garden = self._garden_with_pot(gdd_accumulated=347.5)
+        self.persistence.save_garden(
+            garden, snapshot_timestamp=datetime(2026, 6, 1, 12, 0),
+        )
+        loaded = self.persistence.load_garden("balcone")
+        self.assertAlmostEqual(
+            loaded.get_pot("basilico-1").gdd_accumulated, 347.5,
+        )
+
+    def test_none_survives_as_none(self):
+        # Il caso critico: None NON deve diventare 0.0, altrimenti il
+        # vaso ricaricato si crederebbe appena seminato.
+        garden = self._garden_with_pot()
+        self.assertIsNone(garden.get_pot("basilico-1").gdd_accumulated)
+        self.persistence.save_garden(
+            garden, snapshot_timestamp=datetime(2026, 6, 1, 12, 0),
+        )
+        loaded = self.persistence.load_garden("balcone")
+        self.assertIsNone(loaded.get_pot("basilico-1").gdd_accumulated)
+
+    def test_zero_is_distinct_from_none(self):
+        # 0.0 significa "traccio, accumulo appena iniziato": deve
+        # restare 0.0 e non collassare in None.
+        garden = self._garden_with_pot(gdd_accumulated=0.0)
+        self.persistence.save_garden(
+            garden, snapshot_timestamp=datetime(2026, 6, 1, 12, 0),
+        )
+        loaded = self.persistence.load_garden("balcone")
+        reloaded = loaded.get_pot("basilico-1").gdd_accumulated
+        self.assertIsNotNone(reloaded)
+        self.assertEqual(reloaded, 0.0)
+
+    def test_reloaded_pot_keeps_its_phenology_method(self):
+        # La conseguenza che conta davvero: un vaso che tracciava i GDD
+        # continua a usarli dopo il reload, invece di ricadere sul
+        # conteggio dei giorni.
+        from fitosim.domain.species import PhenologyMethod
+        garden = self._garden_with_pot(gdd_accumulated=500.0)
+        self.persistence.save_garden(
+            garden, snapshot_timestamp=datetime(2026, 6, 1, 12, 0),
+        )
+        loaded = self.persistence.load_garden("balcone")
+        self.assertEqual(
+            loaded.get_pot("basilico-1").phenology_method(),
+            PhenologyMethod.GROWING_DEGREE_DAYS,
+        )
+
+    def test_reloaded_pot_keeps_its_stage(self):
+        # 500 GDD superano la soglia MID del basilico (240): dopo il
+        # reload lo stadio deve restare MID_SEASON.
+        from fitosim.domain.species import PhenologicalStage
+        garden = self._garden_with_pot(gdd_accumulated=500.0)
+        self.persistence.save_garden(
+            garden, snapshot_timestamp=datetime(2026, 6, 1, 12, 0),
+        )
+        loaded = self.persistence.load_garden("balcone")
+        self.assertEqual(
+            loaded.get_pot("basilico-1").current_stage(date(2026, 5, 10)),
+            PhenologicalStage.MID_SEASON,
+        )
+
+    def test_snapshot_history_exposes_gdd(self):
+        garden = self._garden_with_pot(gdd_accumulated=100.0)
+        self.persistence.save_garden(
+            garden, snapshot_timestamp=datetime(2026, 6, 1, 12, 0),
+        )
+        pot = garden.get_pot("basilico-1")
+        pot.gdd_accumulated = 250.0
+        self.persistence.save_garden(
+            garden, snapshot_timestamp=datetime(2026, 6, 10, 12, 0),
+        )
+        history = self.persistence.query_states("balcone", "basilico-1")
+        values = [s.gdd_accumulated for s in history]
+        self.assertIn(100.0, values)
+        self.assertIn(250.0, values)
+
+    def test_v4_database_migrates_to_v5(self):
+        # Un database v4 (senza la colonna) deve migrare, e i suoi
+        # snapshot storici devono risultare NULL — cioe' "non tracciavo
+        # i GDD", esattamente il comportamento che avevano allora.
+        # Come gli altri test di migrazione usiamo un file temporaneo,
+        # perche' :memory: e' isolato per connessione.
+        import os
+        import sqlite3
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            conn = sqlite3.connect(tmp_path)
+            conn.execute("""
+                CREATE TABLE schema_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version INTEGER NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE pot_states (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pot_id            INTEGER NOT NULL,
+                    timestamp         TEXT NOT NULL,
+                    state_mm          REAL NOT NULL,
+                    salt_mass_meq     REAL NOT NULL,
+                    ph_substrate      REAL NOT NULL,
+                    saucer_state_mm   REAL NOT NULL,
+                    de_mm             REAL NOT NULL,
+                    UNIQUE (pot_id, timestamp)
+                )
+            """)
+            conn.execute(
+                "INSERT INTO pot_states (pot_id, timestamp, state_mm, "
+                "salt_mass_meq, ph_substrate, saucer_state_mm, de_mm) "
+                "VALUES (1, '2026-05-01T12:00:00', 30.0, 0.0, 6.5, 0.0, 0.0)"
+            )
+            conn.execute("INSERT INTO schema_metadata (version) VALUES (4)")
+            conn.commit()
+            conn.close()
+
+            with GardenPersistence(tmp_path) as p:
+                cursor = p._conn.execute("PRAGMA table_info(pot_states)")
+                cols = [r["name"] for r in cursor.fetchall()]
+                self.assertIn("gdd_accumulated", cols)
+                # Lo snapshot storico e' NULL, non 0.0.
+                cursor = p._conn.execute(
+                    "SELECT gdd_accumulated FROM pot_states"
+                )
+                self.assertIsNone(cursor.fetchone()["gdd_accumulated"])
+        finally:
+            os.unlink(tmp_path)
+
+    def test_migration_is_idempotent(self):
+        # Ri-applicare la migrazione su uno schema gia' migrato non
+        # deve sollevare: serve a sopravvivere a una migrazione
+        # interrotta a meta'.
+        self.persistence._migrate_v4_to_v5()
+        self.persistence._migrate_v4_to_v5()
+        cursor = self.persistence._conn.execute(
+            "PRAGMA table_info(pot_states)"
+        )
+        cols = [r["name"] for r in cursor.fetchall()]
+        self.assertEqual(cols.count("gdd_accumulated"), 1)
+
+    def test_migration_skips_missing_table(self):
+        # Database parziale senza pot_states: la migrazione salta in
+        # silenzio invece di esplodere.
+        self.persistence._conn.execute("DROP TABLE pot_states")
+        self.persistence._migrate_v4_to_v5()   # non deve sollevare
+
+
+# =======================================================================
+#  Round-trip della configurazione della specie (schema v5)
+# =======================================================================
+#
+# Scrivendo i test dei GDD e' emerso che la tabella species non salvava
+# diversi parametri: alcuni introdotti da v0_22/v0_24 (fenologia), altri
+# mancanti da sempre (depletion_fraction, resistenza stomatica, altezza
+# colturale). Una specie ricaricata tornava ai default, il che cambiava
+# soglia di allerta, Ks e selezione del metodo di evapotraspirazione.
+
+class TestSpeciesConfigRoundTrip(unittest.TestCase):
+
+    def setUp(self):
+        self.persistence = GardenPersistence(":memory:")
+
+    def tearDown(self):
+        self.persistence.close()
+
+    def _round_trip(self, species: Species) -> Species:
+        self.persistence.register_species(species)
+        return self.persistence.get_species(species.common_name)
+
+    def test_depletion_fraction_survives(self):
+        # Lacuna pre-esistente: governa la soglia di allerta e Ks.
+        original = Species(
+            common_name="xerofila", scientific_name="Testus siccus",
+            kc_initial=0.4, kc_mid=0.75, kc_late=0.65,
+            depletion_fraction=0.60,
+        )
+        self.assertAlmostEqual(
+            self._round_trip(original).depletion_fraction, 0.60,
+        )
+
+    def test_physiological_params_survive(self):
+        # Lacuna pre-esistente: senza questi il selettore di ET non
+        # sceglierebbe mai Penman-Monteith fisico dopo un reload.
+        original = Species(
+            common_name="fisiologica", scientific_name="Testus physicus",
+            kc_initial=0.5, kc_mid=1.0, kc_late=0.8,
+            stomatal_resistance_s_m=140.0, crop_height_m=2.0,
+        )
+        loaded = self._round_trip(original)
+        self.assertEqual(loaded.stomatal_resistance_s_m, 140.0)
+        self.assertEqual(loaded.crop_height_m, 2.0)
+
+    def test_gdd_thresholds_survive(self):
+        original = _make_basil_with_gdd()
+        loaded = self._round_trip(original)
+        self.assertTrue(loaded.supports_gdd)
+        self.assertEqual(loaded.t_base_c, 10.0)
+        self.assertEqual(loaded.gdd_to_mid, 240.0)
+        self.assertEqual(loaded.gdd_to_late, 840.0)
+
+    def test_perennial_stays_perennial(self):
+        # Il caso peggiore: senza la persistenza dell'ancoraggio, una
+        # perenne ricaricata tornava ANNUAL e restava inchiodata in
+        # LATE_SEASON dopo qualche anno.
+        from fitosim.domain.species import CITRUS, PhenologicalStage
+        loaded = self._round_trip(CITRUS)
+        self.assertEqual(loaded.phenology_anchor, PhenologyAnchor.PERENNIAL)
+        self.assertIsNotNone(loaded.phenology_calendar)
+        self.assertEqual(len(loaded.phenology_calendar), 12)
+        # E lo stadio continua a seguire la stagione.
+        planting = date(2020, 4, 1)
+        self.assertNotEqual(
+            loaded.stage_at(date(2026, 5, 15), planting),
+            PhenologicalStage.LATE_SEASON,
+        )
+
+    def test_perennial_calendar_is_faithful(self):
+        from fitosim.domain.species import CITRUS
+        loaded = self._round_trip(CITRUS)
+        self.assertEqual(
+            loaded.phenology_calendar, CITRUS.phenology_calendar,
+        )
+
+    def test_annual_growth_stages_survive(self):
+        # La lattuga dichiara che non fiorisce mai in coltivazione.
+        from fitosim.domain.species import LETTUCE, GrowthStage as GS
+        loaded = self._round_trip(LETTUCE)
+        self.assertEqual(
+            loaded.annual_growth_stages, LETTUCE.annual_growth_stages,
+        )
+        planting = date(2026, 5, 1)
+        stages = loaded.growth_stages_at(date(2026, 6, 10), planting)
+        self.assertNotIn(GS.FLOWERING, stages)
+
+    def test_full_catalog_round_trips(self):
+        # Tutte le specie del catalogo devono tornare identiche.
+        from fitosim.domain.species import ALL_SPECIES
+        for sp in ALL_SPECIES:
+            with self.subTest(species=sp.common_name):
+                self.assertEqual(self._round_trip(sp), sp)
+
+    def test_update_path_preserves_config(self):
+        # register_species e' idempotente: la seconda chiamata passa
+        # dal ramo UPDATE, che deve salvare gli stessi campi.
+        from fitosim.domain.species import ROSEMARY
+        self.persistence.register_species(ROSEMARY)
+        self.persistence.register_species(ROSEMARY)
+        loaded = self.persistence.get_species(ROSEMARY.common_name)
+        self.assertEqual(loaded, ROSEMARY)
 
 
 if __name__ == "__main__":

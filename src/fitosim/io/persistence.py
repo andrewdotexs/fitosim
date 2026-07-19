@@ -93,7 +93,11 @@ from fitosim.domain.room import (
     Room,
 )
 from fitosim.domain.scheduling import ScheduledEvent
-from fitosim.domain.species import Species
+from fitosim.domain.species import (
+    GrowthStage,
+    PhenologyAnchor,
+    Species,
+)
 from fitosim.science.substrate import (
     BaseMaterial,
     MixComponent,
@@ -116,7 +120,7 @@ from fitosim.science.substrate import (
 # scheduled_events per persistere gli eventi pianificati del Garden.
 # Database alla versione 2 vengono migrati automaticamente creando
 # la nuova tabella vuota.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 # =======================================================================
@@ -152,7 +156,25 @@ SCHEMA_STATEMENTS: List[str] = [
         ec_optimal_min_mscm      REAL,
         ec_optimal_max_mscm      REAL,
         ph_optimal_min           REAL,
-        ph_optimal_max           REAL
+        ph_optimal_max           REAL,
+        -- Parametri che fino allo schema v4 non venivano salvati: una
+        -- specie ricaricata dal database perdeva la sua tolleranza allo
+        -- stress e i parametri fisiologici, tornando ai default.
+        depletion_fraction       REAL,
+        stomatal_resistance_s_m  REAL,
+        crop_height_m            REAL,
+        notes                    TEXT,
+        -- Configurazione fenologica (v0_22 e v0_24). Senza queste, una
+        -- perenne ricaricata tornava ANNUAL e restava bloccata a fine
+        -- ciclo, e una specie con soglie GDD perdeva la fenologia
+        -- guidata dalla temperatura.
+        phenology_anchor         TEXT,
+        phenology_calendar_json  TEXT,
+        annual_growth_stages_json TEXT,
+        t_base_c                 REAL,
+        gdd_to_mid               REAL,
+        gdd_to_late              REAL,
+        t_cap_c                  REAL
     )
     """,
 
@@ -275,6 +297,12 @@ SCHEMA_STATEMENTS: List[str] = [
         ph_substrate      REAL NOT NULL,
         saucer_state_mm   REAL NOT NULL,
         de_mm             REAL NOT NULL,
+        -- Gradi-giorno accumulati dall'impianto. NULLABLE per design:
+        -- NULL significa "questo vaso non traccia i GDD" e lo stadio
+        -- fenologico si determina dai giorni di calendario. Un default
+        -- 0.0 NOT NULL sarebbe sbagliato, perché farebbe credere a un
+        -- vaso maturo di essere appena seminato.
+        gdd_accumulated   REAL,
         UNIQUE (pot_id, timestamp),
         FOREIGN KEY (pot_id) REFERENCES pots(id) ON DELETE CASCADE
     )
@@ -331,6 +359,92 @@ SCHEMA_STATEMENTS: List[str] = [
 #  Dataclass di supporto
 # =======================================================================
 
+def _species_phenology_params(species: Species) -> tuple:
+    """
+    I parametri della specie introdotti dallo schema v5, nell'ordine in
+    cui compaiono nelle query di INSERT e UPDATE.
+
+    I due campi strutturati (calendario stagionale e mappatura degli
+    stadi botanici per le annuali) sono tuple di enum: li serializziamo
+    in JSON come liste di stringhe, usando i valori degli enum — che
+    coincidono con il vocabolario controllato di The Pot, quindi il
+    JSON è leggibile e stabile.
+    """
+    calendar_json = None
+    if species.phenology_calendar is not None:
+        calendar_json = json.dumps(
+            [[s.value for s in month] for month in species.phenology_calendar]
+        )
+    annual_json = None
+    if species.annual_growth_stages is not None:
+        annual_json = json.dumps(
+            [[s.value for s in stage] for stage in species.annual_growth_stages]
+        )
+    return (
+        species.depletion_fraction,
+        species.stomatal_resistance_s_m,
+        species.crop_height_m,
+        species.notes,
+        species.phenology_anchor.value,
+        calendar_json,
+        annual_json,
+        species.t_base_c,
+        species.gdd_to_mid,
+        species.gdd_to_late,
+        species.t_cap_c,
+    )
+
+
+def _species_extra_kwargs(row: sqlite3.Row) -> dict:
+    """
+    Ricostruisce i parametri di specie dello schema v5 da una riga.
+
+    Ogni campo assente o NULL viene semplicemente omesso, così la
+    dataclass applica il proprio default: è ciò che rende leggibili
+    anche le righe scritte prima della migrazione, senza doverle
+    riscrivere.
+    """
+    kwargs: dict = {}
+    keys = row.keys()
+
+    for field_name in (
+        "depletion_fraction", "stomatal_resistance_s_m", "crop_height_m",
+        "notes", "t_base_c", "gdd_to_mid", "gdd_to_late", "t_cap_c",
+    ):
+        if field_name in keys and row[field_name] is not None:
+            kwargs[field_name] = row[field_name]
+
+    if "phenology_anchor" in keys and row["phenology_anchor"] is not None:
+        kwargs["phenology_anchor"] = PhenologyAnchor(row["phenology_anchor"])
+
+    if "phenology_calendar_json" in keys:
+        calendar = _parse_growth_stage_groups(row["phenology_calendar_json"])
+        if calendar is not None:
+            kwargs["phenology_calendar"] = calendar
+
+    if "annual_growth_stages_json" in keys:
+        annual = _parse_growth_stage_groups(row["annual_growth_stages_json"])
+        if annual is not None:
+            kwargs["annual_growth_stages"] = annual
+
+    return kwargs
+
+
+def _parse_growth_stage_groups(raw_json) -> Optional[tuple]:
+    """
+    Deserializza un JSON di gruppi di stadi botanici in tuple di enum.
+
+    Ritorna None se il campo è assente (specie salvata prima dello
+    schema v5, o specie che non usa quel campo).
+    """
+    if not raw_json:
+        return None
+    return tuple(
+        tuple(GrowthStage(value) for value in group)
+        for group in json.loads(raw_json)
+    )
+
+
 @dataclass(frozen=True)
 class PotStateSnapshot:
     """
@@ -348,6 +462,10 @@ class PotStateSnapshot:
     ph_substrate: float
     saucer_state_mm: float
     de_mm: float
+    # Gradi-giorno accumulati. `None` significa "il vaso non traccia i
+    # GDD": è lo stato di tutti gli snapshot scritti prima dello schema
+    # v5, e di ogni vaso che usa la fenologia a calendario.
+    gdd_accumulated: Optional[float] = None
 
 
 # =======================================================================
@@ -543,6 +661,9 @@ class GardenPersistence:
             if current < 4:
                 self._migrate_v3_to_v4()
                 current = 4
+            if current < 5:
+                self._migrate_v4_to_v5()
+                current = 5
             # Aggiorna la versione registrata.
             self._conn.execute(
                 "INSERT INTO schema_metadata (version) VALUES (?)",
@@ -643,6 +764,78 @@ class GardenPersistence:
             "ALTER TABLE pots ADD COLUMN light_exposure TEXT"
         )
 
+    def _migrate_v4_to_v5(self) -> None:
+        """
+        Migrazione dalla versione 4 alla versione 5.
+
+        Cambiamento: aggiunta colonna `gdd_accumulated` alla tabella
+        pot_states, per persistere i gradi-giorno accumulati che
+        guidano la fenologia delle specie annuali.
+
+        La colonna è **nullable senza default**, e la scelta è
+        deliberata. Gli snapshot scritti prima di questa migrazione
+        avranno `gdd_accumulated = NULL`, che il dominio interpreta
+        come "questo vaso non traccia i GDD" e fa ricadere sulla
+        fenologia a calendario — cioè esattamente il comportamento che
+        quei vasi avevano quando lo snapshot è stato scritto.
+
+        Un default `0.0 NOT NULL` sarebbe stato attivamente dannoso:
+        avrebbe fatto credere a ogni vaso storico di avere zero calore
+        accumulato, riportandolo allo stadio iniziale anche a fine
+        stagione, con il Kc sbagliato di conseguenza.
+
+        La migrazione è **idempotente e difensiva**: salta se la
+        tabella non esiste o se la colonna è già presente. Serve a due
+        cose concrete: una migrazione interrotta a metà può essere
+        ri-eseguita senza errori, e database costruiti a mano o
+        parziali non fanno esplodere l'apertura.
+        """
+        if self._table_exists("pot_states") and not self._column_exists(
+            "pot_states", "gdd_accumulated"
+        ):
+            self._conn.execute(
+                "ALTER TABLE pot_states ADD COLUMN gdd_accumulated REAL"
+            )
+
+        # Colonne della specie mancanti. Le prime tre sono lacune
+        # pre-esistenti scoperte scrivendo i test di questa slice: una
+        # specie ricaricata perdeva depletion_fraction (che governa la
+        # soglia di allerta e Ks) e i parametri fisiologici di
+        # Penman-Monteith. Le altre sono la configurazione fenologica
+        # introdotta da v0_22 e v0_24.
+        if self._table_exists("species"):
+            for column, sql_type in (
+                ("depletion_fraction", "REAL"),
+                ("stomatal_resistance_s_m", "REAL"),
+                ("crop_height_m", "REAL"),
+                ("notes", "TEXT"),
+                ("phenology_anchor", "TEXT"),
+                ("phenology_calendar_json", "TEXT"),
+                ("annual_growth_stages_json", "TEXT"),
+                ("t_base_c", "REAL"),
+                ("gdd_to_mid", "REAL"),
+                ("gdd_to_late", "REAL"),
+                ("t_cap_c", "REAL"),
+            ):
+                if not self._column_exists("species", column):
+                    self._conn.execute(
+                        f"ALTER TABLE species ADD COLUMN {column} {sql_type}"
+                    )
+
+    def _table_exists(self, table_name: str) -> bool:
+        """True se la tabella esiste nel database."""
+        cursor = self._conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = ?",
+            (table_name,),
+        )
+        return cursor.fetchone() is not None
+
+    def _column_exists(self, table_name: str, column_name: str) -> bool:
+        """True se la colonna esiste nella tabella indicata."""
+        cursor = self._conn.execute(f"PRAGMA table_info({table_name})")
+        return any(row["name"] == column_name for row in cursor.fetchall())
+
     # ====================================================================
     #  Catalogo: specie
     # ====================================================================
@@ -683,7 +876,15 @@ class GardenPersistence:
                         kcb_initial = ?, kcb_mid = ?, kcb_late = ?,
                         initial_stage_days = ?, mid_stage_days = ?,
                         ec_optimal_min_mscm = ?, ec_optimal_max_mscm = ?,
-                        ph_optimal_min = ?, ph_optimal_max = ?
+                        ph_optimal_min = ?, ph_optimal_max = ?,
+                        depletion_fraction = ?,
+                        stomatal_resistance_s_m = ?, crop_height_m = ?,
+                        notes = ?,
+                        phenology_anchor = ?,
+                        phenology_calendar_json = ?,
+                        annual_growth_stages_json = ?,
+                        t_base_c = ?, gdd_to_mid = ?, gdd_to_late = ?,
+                        t_cap_c = ?
                     WHERE id = ?
                     """,
                     (
@@ -694,6 +895,7 @@ class GardenPersistence:
                         species.ec_optimal_min_mscm,
                         species.ec_optimal_max_mscm,
                         species.ph_optimal_min, species.ph_optimal_max,
+                        *_species_phenology_params(species),
                         existing["id"],
                     ),
                 )
@@ -707,8 +909,14 @@ class GardenPersistence:
                     kcb_initial, kcb_mid, kcb_late,
                     initial_stage_days, mid_stage_days,
                     ec_optimal_min_mscm, ec_optimal_max_mscm,
-                    ph_optimal_min, ph_optimal_max
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ph_optimal_min, ph_optimal_max,
+                    depletion_fraction,
+                    stomatal_resistance_s_m, crop_height_m, notes,
+                    phenology_anchor,
+                    phenology_calendar_json, annual_growth_stages_json,
+                    t_base_c, gdd_to_mid, gdd_to_late, t_cap_c
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     species.common_name, species.scientific_name,
@@ -717,6 +925,7 @@ class GardenPersistence:
                     species.initial_stage_days, species.mid_stage_days,
                     species.ec_optimal_min_mscm, species.ec_optimal_max_mscm,
                     species.ph_optimal_min, species.ph_optimal_max,
+                    *_species_phenology_params(species),
                 ),
             )
             return cursor.lastrowid
@@ -765,6 +974,7 @@ class GardenPersistence:
             ec_optimal_max_mscm=row["ec_optimal_max_mscm"],
             ph_optimal_min=row["ph_optimal_min"],
             ph_optimal_max=row["ph_optimal_max"],
+            **_species_extra_kwargs(row),
         )
 
     # ====================================================================
@@ -1390,13 +1600,16 @@ class GardenPersistence:
             INSERT OR REPLACE INTO pot_states (
                 pot_id, timestamp,
                 state_mm, salt_mass_meq, ph_substrate,
-                saucer_state_mm, de_mm
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                saucer_state_mm, de_mm, gdd_accumulated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 pot_id, timestamp.isoformat(),
                 pot.state_mm, pot.salt_mass_meq, pot.ph_substrate,
                 pot.saucer_state_mm, pot.de_mm,
+                # None resta NULL: preserva la distinzione tra "non
+                # traccio i GDD" e "traccio, accumulo a zero".
+                pot.gdd_accumulated,
             ),
         )
 
@@ -1617,6 +1830,11 @@ class GardenPersistence:
             kwargs["ph_substrate"] = state_row["ph_substrate"]
             kwargs["saucer_state_mm"] = state_row["saucer_state_mm"]
             kwargs["de_mm"] = state_row["de_mm"]
+            # NULL in colonna → None nel dominio → fenologia a
+            # calendario. È il comportamento corretto sia per i vasi
+            # che non tracciano i GDD, sia per gli snapshot scritti
+            # prima dello schema v5.
+            kwargs["gdd_accumulated"] = state_row["gdd_accumulated"]
 
         return Pot(**kwargs)
 
@@ -1711,6 +1929,7 @@ class GardenPersistence:
                 ph_substrate=row["ph_substrate"],
                 saucer_state_mm=row["saucer_state_mm"],
                 de_mm=row["de_mm"],
+                gdd_accumulated=row["gdd_accumulated"],
             ))
         return snapshots
 
