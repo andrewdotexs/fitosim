@@ -101,6 +101,22 @@ class GrowthStage(Enum):
     FRUITING = "fruttificazione"      # allegagione e maturazione
 
 
+class PhenologyMethod(Enum):
+    """
+    Come è stato determinato lo stadio fenologico.
+
+    Serve alla tracciabilità, con lo stesso spirito di `EtMethod` per
+    l'evapotraspirazione: il chiamante sa se sta guardando una stima
+    trasferibile tra climi o il fallback tarato su un clima solo. Per
+    il layer di feedback la distinzione conta, perché si calibrano
+    grandezze diverse (soglie in gradi-giorno o durate in giorni).
+    """
+
+    GROWING_DEGREE_DAYS = "gdd"        # calore accumulato (annuali)
+    CALENDAR_DAYS = "calendar_days"    # giorni dall'impianto (fallback)
+    SEASONAL = "seasonal"              # calendario stagionale (perenni)
+
+
 class PhenologyAnchor(Enum):
     """
     A cosa è ancorato il ciclo fenologico della specie.
@@ -294,6 +310,23 @@ class Species:
         tuple[tuple[GrowthStage, ...], tuple[GrowthStage, ...],
               tuple[GrowthStage, ...]] | None
     ) = None
+    # ----- Soglie in gradi-giorno (solo specie ANNUALI) -----
+    # Quando valorizzate, lo stadio può essere determinato dal calore
+    # accumulato invece che dai giorni di calendario, rendendo la
+    # fenologia trasferibile tra climi (vedi science/phenology.py).
+    # Servono tutte e tre insieme: la soglia base e le due transizioni.
+    #
+    # Le PERENNI non le usano: la loro uscita dalla dormienza dipende
+    # dall'accumulo di freddo invernale, un modello diverso.
+    t_base_c: float | None = None
+    gdd_to_mid: float | None = None
+    gdd_to_late: float | None = None
+    # Tetto superiore opzionale per il calcolo dei GDD: oltre questa
+    # temperatura lo sviluppo non accelera più. Lasciato None nel
+    # catalogo perché il valore giusto è specie-specifico e meno
+    # consolidato in letteratura della T_base; è un punto di
+    # calibrazione della fascia 3.
+    t_cap_c: float | None = None
 
     def __post_init__(self) -> None:
         # Validazione dei Kc: scorriamo la terna con zip per un
@@ -414,6 +447,41 @@ class Species:
                         f"dichiarare almeno uno stadio botanico."
                     )
 
+        # Coerenza dei parametri GDD: o tutti e tre o nessuno, con le
+        # soglie ordinate. Una soglia senza T_base (o viceversa) non
+        # produce un modello utilizzabile.
+        gdd_params = (self.t_base_c, self.gdd_to_mid, self.gdd_to_late)
+        n_gdd = sum(1 for p in gdd_params if p is not None)
+        if 0 < n_gdd < 3:
+            raise ValueError(
+                f"Specie '{self.common_name}': i parametri GDD vanno "
+                f"specificati tutti e tre o nessuno. Ricevuti "
+                f"t_base_c={self.t_base_c}, gdd_to_mid={self.gdd_to_mid}, "
+                f"gdd_to_late={self.gdd_to_late}."
+            )
+        if n_gdd == 3:
+            if not 0.0 < self.gdd_to_mid < self.gdd_to_late:
+                raise ValueError(
+                    f"Specie '{self.common_name}': le soglie GDD devono "
+                    f"soddisfare 0 < gdd_to_mid ({self.gdd_to_mid}) "
+                    f"< gdd_to_late ({self.gdd_to_late})."
+                )
+            if self.phenology_anchor is PhenologyAnchor.PERENNIAL:
+                raise ValueError(
+                    f"Specie '{self.common_name}': le soglie GDD non si "
+                    f"applicano alle specie PERENNIAL. La loro uscita "
+                    f"dalla dormienza dipende dall'accumulo di freddo "
+                    f"invernale (chill units), non dal calore: usa il "
+                    f"phenology_calendar."
+                )
+        if self.t_cap_c is not None and self.t_base_c is not None:
+            if self.t_cap_c <= self.t_base_c:
+                raise ValueError(
+                    f"Specie '{self.common_name}': t_cap_c "
+                    f"({self.t_cap_c}) deve essere maggiore di t_base_c "
+                    f"({self.t_base_c})."
+                )
+
     @property
     def supports_dual_kc(self) -> bool:
         """
@@ -446,6 +514,42 @@ class Species:
             and self.ph_optimal_max is not None
         )
 
+    @property
+    def supports_gdd(self) -> bool:
+        """
+        True se la specie ha le soglie in gradi-giorno valorizzate e
+        può quindi usare la fenologia guidata dalla temperatura invece
+        che dai giorni di calendario.
+        """
+        return (
+            self.t_base_c is not None
+            and self.gdd_to_mid is not None
+            and self.gdd_to_late is not None
+        )
+
+    def stage_at_gdd(self, gdd_accumulated: float) -> "PhenologicalStage":
+        """
+        Stadio FAO-56 in base ai gradi-giorno accumulati dall'impianto.
+
+        È l'equivalente di `stage_at_day` ma su una scala di sviluppo
+        invece che di calendario: due piante della stessa specie in
+        climi diversi cambiano stadio allo stesso accumulo termico,
+        anche se in giorni diversi.
+
+        Solleva ValueError se la specie non ha le soglie GDD.
+        """
+        if not self.supports_gdd:
+            raise ValueError(
+                f"Specie '{self.common_name}': soglie GDD non definite. "
+                f"Usa stage_at_day, oppure valorizza t_base_c, "
+                f"gdd_to_mid e gdd_to_late."
+            )
+        if gdd_accumulated < self.gdd_to_mid:
+            return PhenologicalStage.INITIAL
+        if gdd_accumulated < self.gdd_to_late:
+            return PhenologicalStage.MID_SEASON
+        return PhenologicalStage.LATE_SEASON
+
     def stage_at_day(self, days_since_planting: int) -> "PhenologicalStage":
         """
         Calcola lo stadio fenologico in base al numero di giorni
@@ -467,7 +571,10 @@ class Species:
         return PhenologicalStage.LATE_SEASON
 
     def growth_stages_at(
-        self, current_date: "date", planting_date: "date",
+        self,
+        current_date: "date",
+        planting_date: "date",
+        gdd_accumulated: float | None = None,
     ) -> tuple[GrowthStage, ...]:
         """
         Vista botanica: gli stadi osservabili attivi alla data indicata.
@@ -477,14 +584,18 @@ class Species:
         in vegetazione *e* in fioritura).
 
         Per le PERENNI legge il calendario stagionale; per le ANNUALI
-        deriva dallo stadio FAO-56, usando la mappatura della specie se
+        deriva dallo stadio FAO-56 — determinato con lo stesso
+        selettore "best available" di `stage_at`, quindi via GDD
+        quando disponibili — usando la mappatura della specie se
         dichiarata o quella di default.
         """
         if self.phenology_anchor is PhenologyAnchor.PERENNIAL:
             # Il calendario è garantito presente e completo da __post_init__.
             return self.phenology_calendar[current_date.month - 1]
 
-        fao_stage = self.stage_at_day((current_date - planting_date).days)
+        fao_stage = self.stage_at(
+            current_date, planting_date, gdd_accumulated,
+        )
         if self.annual_growth_stages is not None:
             index = {
                 PhenologicalStage.INITIAL: 0,
@@ -495,26 +606,56 @@ class Species:
         return DEFAULT_ANNUAL_GROWTH_STAGES[fao_stage]
 
     def stage_at(
-        self, current_date: "date", planting_date: "date",
+        self,
+        current_date: "date",
+        planting_date: "date",
+        gdd_accumulated: float | None = None,
     ) -> PhenologicalStage:
         """
-        Stadio FAO-56 in vigore, consapevole dell'ancoraggio della specie.
+        Stadio FAO-56 in vigore, con selezione "best available" del
+        metodo — stesso spirito del selettore di evapotraspirazione.
 
-        È il metodo che il motore deve usare per il Kc, al posto del
-        più vecchio `stage_at_day`: quest'ultimo assume implicitamente
-        l'ancoraggio annuale ed è corretto solo per le annuali.
+        Ordine di preferenza:
 
-        Per le ANNUALI il comportamento è identico a `stage_at_day`.
-        Per le PERENNI lo stadio viene dedotto dalla stagione: senza
-        questo, una pianta perenne dopo qualche anno resterebbe
-        inchiodata per sempre in LATE_SEASON, perché i giorni
-        dall'impianto crescono senza limite.
+          1. **Perenni** → calendario stagionale. I giorni dall'impianto
+             non dicono nulla di utile e i GDD non modellano l'uscita
+             dalla dormienza (serve l'accumulo di freddo).
+          2. **Annuali con GDD disponibili** → gradi-giorno. È il metodo
+             migliore quando c'è: trasferibile tra climi e stagioni di
+             semina.
+          3. **Annuali senza GDD** → giorni dall'impianto. Il fallback
+             storico, corretto per il clima in cui le durate del
+             catalogo sono state misurate.
+
+        Il caso 2 richiede sia che la specie abbia le soglie
+        (`supports_gdd`) sia che il chiamante fornisca l'accumulo:
+        `gdd_accumulated=None` significa "non lo sto tracciando", e
+        si ricade sul conteggio dei giorni. È una degradazione sicura,
+        non un errore.
         """
-        if self.phenology_anchor is PhenologyAnchor.ANNUAL:
-            return self.stage_at_day((current_date - planting_date).days)
+        if self.phenology_anchor is PhenologyAnchor.PERENNIAL:
+            stages = self.growth_stages_at(current_date, planting_date)
+            return fao56_stage_from_growth_stages(stages)
 
-        stages = self.growth_stages_at(current_date, planting_date)
-        return fao56_stage_from_growth_stages(stages)
+        if gdd_accumulated is not None and self.supports_gdd:
+            return self.stage_at_gdd(gdd_accumulated)
+
+        return self.stage_at_day((current_date - planting_date).days)
+
+    def phenology_method(
+        self, gdd_accumulated: float | None = None,
+    ) -> PhenologyMethod:
+        """
+        Quale metodo userebbe `stage_at` con questi input.
+
+        Utile per la diagnostica e per il layer di feedback, che
+        calibra grandezze diverse a seconda del metodo in uso.
+        """
+        if self.phenology_anchor is PhenologyAnchor.PERENNIAL:
+            return PhenologyMethod.SEASONAL
+        if gdd_accumulated is not None and self.supports_gdd:
+            return PhenologyMethod.GROWING_DEGREE_DAYS
+        return PhenologyMethod.CALENDAR_DAYS
 
 
 # =======================================================================
@@ -781,6 +922,28 @@ def actual_et_c(
 # Questi sono punti di partenza ragionevoli per l'avvio delle
 # simulazioni; in uso prolungato vanno calibrati confrontando le
 # previsioni con le letture reali dei sensori WH51 sul singolo vaso.
+#
+# Soglie in gradi-giorno (solo annuali)
+# -------------------------------------
+# Le T_base vengono dalla letteratura agronomica consolidata: 10 °C
+# per solanacee e aromatiche estive, 4 °C per le colture da foglia di
+# stagione fresca.
+#
+# Le soglie GDD delle transizioni sono invece **derivate** dalle durate
+# in giorni di FAO-56, assumendo il clima di riferimento in cui quelle
+# durate sono state misurate:
+#
+#     GDD_soglia ≈ durata_giorni × (T_media_riferimento − T_base)
+#
+# Per le estive assumiamo T_media 22 °C (≈12 GDD/giorno), per la
+# lattuga 15 °C (≈11 GDD/giorno). I valori risultanti sono coerenti
+# con gli ordini di grandezza riportati in letteratura (pomodoro
+# ~1000-1400 GDD dal trapianto alla raccolta, lattuga ~400-500).
+#
+# Sono quindi **stime di partenza**, non misure: sono esattamente il
+# tipo di parametro che il feedback fenologico del diario utente
+# (date di fioritura reali + storico meteo) andrà a tarare per zona
+# climatica nella fascia 3.
 
 BASIL = Species(
     common_name="Basilico",
@@ -800,6 +963,11 @@ BASIL = Species(
     ),
     stomatal_resistance_s_m=100.0,
     crop_height_m=0.30,
+    # GDD: T_base 10 °C (aromatica estiva). Derivate da 20+50 giorni
+    # a ~12 GDD/giorno.
+    t_base_c=10.0,
+    gdd_to_mid=240.0,
+    gdd_to_late=840.0,
 )
 
 TOMATO = Species(
@@ -819,6 +987,11 @@ TOMATO = Species(
     ),
     stomatal_resistance_s_m=130.0,
     crop_height_m=0.60,
+    # GDD: T_base 10 °C (standard consolidato per il pomodoro).
+    # Derivate da 30+60 giorni a ~12 GDD/giorno.
+    t_base_c=10.0,
+    gdd_to_mid=360.0,
+    gdd_to_late=1080.0,
 )
 
 LETTUCE = Species(
@@ -839,6 +1012,11 @@ LETTUCE = Species(
     ),
     stomatal_resistance_s_m=100.0,
     crop_height_m=0.20,
+    # GDD: T_base 4 °C, tipica delle colture da foglia di stagione
+    # fresca. Derivate da 15+25 giorni a ~11 GDD/giorno.
+    t_base_c=4.0,
+    gdd_to_mid=165.0,
+    gdd_to_late=440.0,
     # Coltura da foglia: si raccoglie sempre prima della fioritura
     # (la salita a seme è un difetto, non uno stadio previsto).
     annual_growth_stages=(

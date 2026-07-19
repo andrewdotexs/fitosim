@@ -2739,6 +2739,102 @@ class TestPotPhenologyViews(unittest.TestCase):
             GrowthStage.FLOWERING, pot.growth_stages(date(2026, 6, 15)),
         )
 
+    def test_gdd_not_tracked_by_default(self):
+        # Default None = "non traccio i GDD": comportamento storico,
+        # stadio dai giorni. E' anche la degradazione sicura per un
+        # vaso ricaricato da una persistenza che non salva il campo.
+        from fitosim.domain.species import BASIL, PhenologyMethod
+        pot = self._pot(BASIL, date(2026, 5, 1))
+        self.assertIsNone(pot.gdd_accumulated)
+        self.assertEqual(pot.phenology_method(), PhenologyMethod.CALENDAR_DAYS)
+
+    def test_gdd_accumulates_on_weather_path(self):
+        # Il cammino meteo ha le temperature, quindi puo' accumulare.
+        from datetime import timedelta
+        from fitosim.domain.species import BASIL, PhenologyMethod
+        from fitosim.domain.weather import WeatherDay
+        pot = self._pot(
+            BASIL, date(2026, 5, 1),
+            latitude_deg=45.47, elevation_m=120.0,
+            gdd_accumulated=0.0,      # opt-in esplicito
+        )
+        self.assertEqual(
+            pot.phenology_method(), PhenologyMethod.GROWING_DEGREE_DAYS,
+        )
+        for i in range(5):
+            d = date(2026, 5, 1) + timedelta(days=i)
+            pot.apply_balance_step_from_weather(
+                weather=WeatherDay(date_=d, t_min=14.0, t_max=26.0),
+                water_input_mm=5.0, current_date=d,
+            )
+        # 5 giorni a (14+26)/2 - 10 = 10 GDD/giorno.
+        self.assertAlmostEqual(pot.gdd_accumulated, 50.0)
+
+    def test_warm_climate_reaches_mid_season_sooner(self):
+        # Il guadagno concreto: due vasi identici, stessa data di
+        # semina, climi diversi. Col vecchio metodo a giorni fissi
+        # entrambi cambiavano stadio lo stesso giorno.
+        from datetime import timedelta
+        from fitosim.domain.species import BASIL, PhenologicalStage as PS
+        from fitosim.domain.weather import WeatherDay
+
+        def days_to_mid(t_min, t_max):
+            pot = self._pot(
+                BASIL, date(2026, 5, 1),
+                latitude_deg=45.47, elevation_m=120.0,
+                gdd_accumulated=0.0,
+            )
+            for i in range(60):
+                d = date(2026, 5, 1) + timedelta(days=i)
+                pot.apply_balance_step_from_weather(
+                    weather=WeatherDay(date_=d, t_min=t_min, t_max=t_max),
+                    water_input_mm=6.0, current_date=d,
+                )
+                if pot.current_stage(d) is PS.MID_SEASON:
+                    return i
+            return None
+
+        cool = days_to_mid(12.0, 22.0)
+        warm = days_to_mid(20.0, 32.0)
+        self.assertIsNotNone(cool)
+        self.assertIsNotNone(warm)
+        self.assertLess(warm, cool)
+
+    def test_gdd_does_not_accumulate_when_not_tracked(self):
+        from datetime import timedelta
+        from fitosim.domain.species import BASIL
+        from fitosim.domain.weather import WeatherDay
+        pot = self._pot(
+            BASIL, date(2026, 5, 1),
+            latitude_deg=45.47, elevation_m=120.0,
+        )
+        d = date(2026, 5, 2)
+        pot.apply_balance_step_from_weather(
+            weather=WeatherDay(date_=d, t_min=14.0, t_max=26.0),
+            water_input_mm=5.0, current_date=d,
+        )
+        self.assertIsNone(pot.gdd_accumulated)
+
+    def test_perennial_does_not_accumulate_gdd(self):
+        # Le perenni non hanno soglie GDD: anche attivando il
+        # tracciamento il campo resta com'e' e lo stadio segue la
+        # stagione.
+        from datetime import timedelta
+        from fitosim.domain.species import CITRUS, PhenologyMethod
+        from fitosim.domain.weather import WeatherDay
+        pot = self._pot(
+            CITRUS, date(2020, 4, 1),
+            latitude_deg=45.47, elevation_m=120.0,
+            gdd_accumulated=0.0,
+        )
+        d = date(2026, 5, 2)
+        pot.apply_balance_step_from_weather(
+            weather=WeatherDay(date_=d, t_min=14.0, t_max=26.0),
+            water_input_mm=5.0, current_date=d,
+        )
+        self.assertEqual(pot.gdd_accumulated, 0.0)
+        self.assertEqual(pot.phenology_method(), PhenologyMethod.SEASONAL)
+
     def test_citrus_winter_consumption_drops_with_dormancy(self):
         # A parita' di ET0, un limone in riposo invernale deve
         # consumare nettamente meno che in piena attivita' estiva.

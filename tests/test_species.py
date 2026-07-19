@@ -26,6 +26,7 @@ from fitosim.domain.species import (
     GrowthStage,
     PhenologicalStage,
     PhenologyAnchor,
+    PhenologyMethod,
     Species,
     actual_et_c,
     dormancy_kc_factor,
@@ -808,6 +809,150 @@ class TestDormancyKcbReduction(unittest.TestCase):
         )
         self.assertLess(kcb, KC_BARE_SOIL_FLOOR)
         self.assertGreater(kcb, 0.0)
+
+
+class TestGddPhenology(unittest.TestCase):
+    """Stadio guidato dal calore accumulato invece che dal calendario."""
+
+    def test_annual_species_have_gdd_thresholds(self):
+        for sp in (BASIL, TOMATO, LETTUCE):
+            with self.subTest(species=sp.common_name):
+                self.assertTrue(sp.supports_gdd)
+                self.assertIsNotNone(sp.t_base_c)
+
+    def test_perennials_have_no_gdd_thresholds(self):
+        # I GDD non modellano l'uscita dalla dormienza delle perenni:
+        # servirebbe l'accumulo di freddo invernale.
+        for sp in (CITRUS, ROSEMARY):
+            with self.subTest(species=sp.common_name):
+                self.assertFalse(sp.supports_gdd)
+
+    def test_cool_season_crop_has_lower_base(self):
+        # La lattuga si sviluppa a temperature piu' basse del basilico.
+        self.assertLess(LETTUCE.t_base_c, BASIL.t_base_c)
+
+    def test_stage_at_gdd_thresholds(self):
+        self.assertEqual(
+            BASIL.stage_at_gdd(0.0), PhenologicalStage.INITIAL,
+        )
+        self.assertEqual(
+            BASIL.stage_at_gdd(BASIL.gdd_to_mid - 1),
+            PhenologicalStage.INITIAL,
+        )
+        self.assertEqual(
+            BASIL.stage_at_gdd(BASIL.gdd_to_mid),
+            PhenologicalStage.MID_SEASON,
+        )
+        self.assertEqual(
+            BASIL.stage_at_gdd(BASIL.gdd_to_late),
+            PhenologicalStage.LATE_SEASON,
+        )
+
+    def test_stage_at_gdd_requires_thresholds(self):
+        with self.assertRaises(ValueError) as ctx:
+            CITRUS.stage_at_gdd(500.0)
+        self.assertIn("GDD", str(ctx.exception))
+
+    def test_selector_prefers_gdd_when_available(self):
+        # Stesso giorno di calendario, due accumuli termici diversi:
+        # lo stadio segue il calore, non i giorni.
+        planting = date(2026, 5, 1)
+        day10 = date(2026, 5, 11)
+        slow = BASIL.stage_at(day10, planting, gdd_accumulated=50.0)
+        fast = BASIL.stage_at(day10, planting, gdd_accumulated=300.0)
+        self.assertEqual(slow, PhenologicalStage.INITIAL)
+        self.assertEqual(fast, PhenologicalStage.MID_SEASON)
+
+    def test_selector_falls_back_to_days_without_gdd(self):
+        # gdd_accumulated=None significa "non lo sto tracciando":
+        # degradazione sicura al comportamento storico.
+        planting = date(2026, 5, 1)
+        for offset in (5, 25, 90):
+            with self.subTest(offset=offset):
+                d = date.fromordinal(planting.toordinal() + offset)
+                self.assertEqual(
+                    BASIL.stage_at(d, planting),
+                    BASIL.stage_at_day(offset),
+                )
+
+    def test_perennial_ignores_gdd_even_if_passed(self):
+        # Per una perenne il calendario stagionale vince comunque.
+        planting = date(2020, 4, 1)
+        january = date(2026, 1, 15)
+        self.assertEqual(
+            CITRUS.stage_at(january, planting, gdd_accumulated=5000.0),
+            CITRUS.stage_at(january, planting),
+        )
+
+    def test_phenology_method_is_traceable(self):
+        planting = date(2026, 5, 1)
+        self.assertEqual(
+            BASIL.phenology_method(gdd_accumulated=100.0),
+            PhenologyMethod.GROWING_DEGREE_DAYS,
+        )
+        self.assertEqual(
+            BASIL.phenology_method(), PhenologyMethod.CALENDAR_DAYS,
+        )
+        self.assertEqual(
+            CITRUS.phenology_method(gdd_accumulated=100.0),
+            PhenologyMethod.SEASONAL,
+        )
+
+    def test_growth_stages_follow_gdd_too(self):
+        # La vista botanica usa lo stesso selettore dello stadio FAO-56.
+        planting = date(2026, 5, 1)
+        day10 = date(2026, 5, 11)
+        early = BASIL.growth_stages_at(day10, planting, gdd_accumulated=50.0)
+        late = BASIL.growth_stages_at(day10, planting, gdd_accumulated=300.0)
+        self.assertNotIn(GrowthStage.FLOWERING, early)
+        self.assertIn(GrowthStage.FLOWERING, late)
+
+
+class TestGddValidation(unittest.TestCase):
+    """Coerenza dei parametri GDD sulla specie."""
+
+    def _kwargs(self, **overrides):
+        kwargs = dict(
+            common_name="Test", scientific_name="Testus testus",
+            kc_initial=0.5, kc_mid=1.0, kc_late=0.8,
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_partial_gdd_params_raise(self):
+        with self.assertRaises(ValueError) as ctx:
+            Species(**self._kwargs(t_base_c=10.0))
+        self.assertIn("tutti e tre", str(ctx.exception))
+
+    def test_unordered_thresholds_raise(self):
+        with self.assertRaises(ValueError) as ctx:
+            Species(**self._kwargs(
+                t_base_c=10.0, gdd_to_mid=800.0, gdd_to_late=400.0,
+            ))
+        self.assertIn("gdd_to_mid", str(ctx.exception))
+
+    def test_gdd_on_perennial_raises(self):
+        # I GDD non si applicano alle perenni: l'errore lo dice e
+        # spiega perche'.
+        with self.assertRaises(ValueError) as ctx:
+            Species(**self._kwargs(
+                phenology_anchor=PhenologyAnchor.PERENNIAL,
+                phenology_calendar=((GrowthStage.VEGETATIVE,),) * 12,
+                t_base_c=10.0, gdd_to_mid=200.0, gdd_to_late=600.0,
+            ))
+        self.assertIn("PERENNIAL", str(ctx.exception))
+
+    def test_cap_below_base_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            Species(**self._kwargs(
+                t_base_c=10.0, gdd_to_mid=200.0, gdd_to_late=600.0,
+                t_cap_c=5.0,
+            ))
+        self.assertIn("t_cap_c", str(ctx.exception))
+
+    def test_no_gdd_params_is_valid(self):
+        s = Species(**self._kwargs())
+        self.assertFalse(s.supports_gdd)
 
 
 class TestPerennialValidation(unittest.TestCase):

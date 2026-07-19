@@ -41,6 +41,7 @@ from typing import Optional
 from fitosim.domain.species import (
     GrowthStage,
     PhenologicalStage,
+    PhenologyMethod,
     effective_kcb,
     Species,
     actual_et_c,
@@ -69,6 +70,7 @@ from fitosim.science.et0 import (
     compute_et,
 )
 from fitosim.science.indoor import estimate_indoor_radiation
+from fitosim.science.phenology import growing_degree_days
 from fitosim.science.pot_physics import (
     PotColor,
     PotMaterial,
@@ -546,6 +548,25 @@ class Pot:
     # campo è presente ma inerte. Default 0.0 = "substrato appena
     # bagnato", coerente con l'inizializzazione di state_mm a FC.
     de_mm: float = 0.0
+    # ----- Stato fenologico: gradi-giorno accumulati -----
+    # Calore accumulato dall'impianto, in °C·giorno. Quando è
+    # valorizzato E la specie ha le soglie GDD, lo stadio fenologico
+    # viene determinato dal calore invece che dai giorni di
+    # calendario, rendendo lo sviluppo trasferibile tra climi e
+    # stagioni di semina.
+    #
+    # Il default è None, non 0.0, e la distinzione è deliberata:
+    #   None → "non sto tracciando i GDD", si usa il conteggio dei
+    #          giorni (comportamento storico). È anche la degradazione
+    #          sicura quando un vaso viene ricaricato da una
+    #          persistenza che ancora non salva questo campo.
+    #   0.0  → "sto tracciando, e l'accumulo è appena iniziato".
+    #
+    # Si popola da solo, giorno per giorno, quando si usa il cammino
+    # meteo (`apply_balance_step_from_weather`), che è l'unico ad
+    # avere le temperature. Il cammino legacy che riceve solo ET₀ non
+    # può accumulare nulla e lascia il campo invariato.
+    gdd_accumulated: Optional[float] = None
     # ----- Stato chimico del substrato (tappa 3 fascia 2) -----
     # Massa salina totale presente nel vaso, in milli-equivalenti. È
     # lo stato canonico della "salinità" del substrato: cresce con le
@@ -915,12 +936,26 @@ class Pot:
         """
         Stadio FAO-56 in vigore alla data corrente, usato per il Kc.
 
-        Delega a `Species.stage_at`, che sa se la specie è ancorata
-        all'impianto (annuali) o alla stagione (perenni). È l'unico
-        punto da cui il resto del motore ricava lo stadio: cambiando
-        qui, il Kc, il dual-Kc e il pianificatore seguono.
+        Delega a `Species.stage_at`, che seleziona il metodo migliore
+        disponibile: calendario stagionale per le perenni, gradi-giorno
+        per le annuali che li tracciano, giorni dall'impianto come
+        fallback. È l'unico punto da cui il resto del motore ricava lo
+        stadio: cambiando qui, il Kc, il dual-Kc e il pianificatore
+        seguono.
         """
-        return self.species.stage_at(current_date, self.planting_date)
+        return self.species.stage_at(
+            current_date, self.planting_date, self.gdd_accumulated,
+        )
+
+    def phenology_method(self) -> PhenologyMethod:
+        """
+        Con quale metodo viene determinato lo stadio di questo vaso.
+
+        Tracciabilità nello stesso spirito di `EtMethod`: dice se lo
+        sviluppo è guidato dal calore accumulato (trasferibile tra
+        climi), dal calendario stagionale, o dal conteggio dei giorni.
+        """
+        return self.species.phenology_method(self.gdd_accumulated)
 
     def growth_stages(self, current_date: date) -> tuple[GrowthStage, ...]:
         """
@@ -932,7 +967,7 @@ class Pot:
         fenologico, non al calcolo del bilancio idrico.
         """
         return self.species.growth_stages_at(
-            current_date, self.planting_date,
+            current_date, self.planting_date, self.gdd_accumulated,
         )
 
     @property
@@ -1653,6 +1688,18 @@ class Pot:
             # esattamente il valore ET fisico.
             #
             # Recupero del Kc corrente per la divisione inversa.
+            #
+            # Qui si usa deliberatamente il Kc NON ridotto dalla
+            # dormienza: la divisione inversa avviene con `kc_for_stage`
+            # mentre il metodo legacy moltiplicherà per `effective_kc`.
+            # La differenza tra i due è esattamente il fattore di
+            # dormienza, che quindi sopravvive e corregge il risultato
+            # fisico. È voluto: Penman-Monteith fisico usa una
+            # resistenza stomatica costante, non sa nulla di dormienza,
+            # e senza questa correzione sovrastimerebbe il consumo di
+            # una pianta quiescente. Usando `effective_kc` anche qui il
+            # fattore si semplificherebbe e la dormienza sparirebbe da
+            # questo cammino.
             stage = self.current_stage(current_date)
             kc_current = kc_for_stage(self.species, stage)
             # Difesa contro Kc=0 (improbabile ma possibile): in quel
@@ -1674,6 +1721,22 @@ class Pot:
             water_input_mm=water_input_mm,
             current_date=current_date,
         )
+
+        # Accumulo dei gradi-giorno della giornata appena simulata.
+        # Avviene DOPO il bilancio, così l'ET del giorno usa lo stadio
+        # di inizio giornata — stessa convenzione con cui Ks si calcola
+        # sul θ di inizio giornata.
+        #
+        # Si accumula solo se il tracciamento è attivo (campo non None)
+        # e la specie ha le soglie: un vaso che non traccia resta sul
+        # conteggio dei giorni, senza sorprese.
+        if self.gdd_accumulated is not None and self.species.supports_gdd:
+            self.gdd_accumulated += growing_degree_days(
+                t_min=weather.t_min,
+                t_max=weather.t_max,
+                t_base=self.species.t_base_c,
+                t_cap=self.species.t_cap_c,
+            )
 
         # Arricchisco il risultato col campo et_method. Visto che
         # BalanceStepResult è frozen, costruisco un nuovo BalanceStepResult
