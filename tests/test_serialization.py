@@ -533,5 +533,146 @@ class TestErrorHandling(unittest.TestCase):
         self.assertIn("specie-fantasma", str(ctx.exception))
 
 
+# =======================================================================
+#  Fedeltà del round-trip (formato v3)
+# =======================================================================
+#
+# Fino al formato v2 l'export JSON perdeva silenziosamente parecchi
+# campi: tutta la configurazione fenologica e alcuni parametri della
+# specie, e sul vaso le coordinate geografiche, l'associazione alla
+# Room, l'esposizione luminosa, il riparo dal vento e i gradi-giorno.
+# Un backup fatto con l'export non era quindi un backup fedele.
+
+class TestRoundTripFidelity(unittest.TestCase):
+
+    def _round_trip(self, garden: Garden) -> Garden:
+        return import_garden_json(export_garden_json(garden))
+
+    def _garden_with(self, species, **pot_kwargs) -> Garden:
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+        garden = Garden(name="balcone")
+        kwargs = dict(
+            label="vaso-1", species=species,
+            substrate=UNIVERSAL_POTTING_SOIL,
+            pot_volume_l=5.0, pot_diameter_cm=22.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 5, 1),
+        )
+        kwargs.update(pot_kwargs)
+        garden.add_pot(Pot(**kwargs))
+        return garden
+
+    def test_all_catalog_species_survive(self):
+        from fitosim.domain.species import ALL_SPECIES
+        for sp in ALL_SPECIES:
+            with self.subTest(species=sp.common_name):
+                garden = self._garden_with(sp)
+                loaded = self._round_trip(garden)
+                self.assertEqual(loaded.get_pot("vaso-1").species, sp)
+
+    def test_perennial_keeps_its_anchor(self):
+        # Senza questo, una perenne reimportata tornava ANNUAL e dopo
+        # qualche anno restava inchiodata a fine ciclo.
+        from fitosim.domain.species import (
+            CITRUS, PhenologicalStage, PhenologyAnchor,
+        )
+        garden = self._garden_with(CITRUS, planting_date=date(2020, 4, 1))
+        pot = self._round_trip(garden).get_pot("vaso-1")
+        self.assertEqual(
+            pot.species.phenology_anchor, PhenologyAnchor.PERENNIAL,
+        )
+        self.assertNotEqual(
+            pot.current_stage(date(2026, 5, 15)),
+            PhenologicalStage.LATE_SEASON,
+        )
+
+    def test_gdd_thresholds_and_state_survive(self):
+        from fitosim.domain.species import BASIL, PhenologyMethod
+        garden = self._garden_with(BASIL, gdd_accumulated=500.0)
+        pot = self._round_trip(garden).get_pot("vaso-1")
+        self.assertTrue(pot.species.supports_gdd)
+        self.assertEqual(pot.gdd_accumulated, 500.0)
+        self.assertEqual(
+            pot.phenology_method(), PhenologyMethod.GROWING_DEGREE_DAYS,
+        )
+
+    def test_untracked_gdd_stays_none(self):
+        # La distinzione None / 0.0 deve sopravvivere.
+        from fitosim.domain.species import BASIL
+        pot = self._round_trip(self._garden_with(BASIL)).get_pot("vaso-1")
+        self.assertIsNone(pot.gdd_accumulated)
+
+    def test_zero_gdd_stays_zero(self):
+        from fitosim.domain.species import BASIL
+        garden = self._garden_with(BASIL, gdd_accumulated=0.0)
+        pot = self._round_trip(garden).get_pot("vaso-1")
+        self.assertIsNotNone(pot.gdd_accumulated)
+        self.assertEqual(pot.gdd_accumulated, 0.0)
+
+    def test_coordinates_survive(self):
+        # Lacuna dalla tappa 5: senza le coordinate il selettore di
+        # evapotraspirazione non puo' calcolare la radiazione.
+        from fitosim.domain.species import BASIL
+        garden = self._garden_with(
+            BASIL, latitude_deg=45.47, elevation_m=120.0,
+        )
+        pot = self._round_trip(garden).get_pot("vaso-1")
+        self.assertAlmostEqual(pot.latitude_deg, 45.47)
+        self.assertAlmostEqual(pot.elevation_m, 120.0)
+
+    def test_indoor_fields_survive(self):
+        # Lacuna dalla tappa 5: un vaso indoor reimportato perdeva
+        # l'associazione alla Room e l'esposizione luminosa.
+        from fitosim.domain.room import LightExposure
+        from fitosim.domain.species import BASIL
+        garden = self._garden_with(
+            BASIL,
+            location=Location.INDOOR,
+            room_id="salotto",
+            light_exposure=LightExposure.INDIRECT_BRIGHT,
+        )
+        pot = self._round_trip(garden).get_pot("vaso-1")
+        self.assertEqual(pot.room_id, "salotto")
+        self.assertEqual(pot.light_exposure, LightExposure.INDIRECT_BRIGHT)
+
+    def test_shelter_level_survives(self):
+        from fitosim.domain.species import BASIL
+        from fitosim.science.pot_physics import ShelterLevel
+        garden = self._garden_with(
+            BASIL, shelter_level=ShelterLevel.SHELTERED,
+        )
+        pot = self._round_trip(garden).get_pot("vaso-1")
+        self.assertEqual(pot.shelter_level, ShelterLevel.SHELTERED)
+
+    def test_older_format_still_imports(self):
+        # Retrocompatibilita': un JSON senza i campi del formato v3
+        # deve restare importabile, coi default della dataclass.
+        from fitosim.domain.species import BASIL
+        from fitosim.science.pot_physics import ShelterLevel
+        payload = json.loads(export_garden_json(self._garden_with(BASIL)))
+        payload["format_version"] = 2
+        for sp in payload["catalog"]["species"]:
+            for key in (
+                "depletion_fraction", "phenology_anchor",
+                "phenology_calendar", "annual_growth_stages",
+                "t_base_c", "gdd_to_mid", "gdd_to_late",
+            ):
+                sp.pop(key, None)
+        for pot_data in payload["pots"]:
+            for key in (
+                "latitude_deg", "elevation_m", "room_id",
+                "light_exposure", "shelter_level",
+            ):
+                pot_data["static_fields"].pop(key, None)
+            pot_data["state_fields"].pop("gdd_accumulated", None)
+
+        loaded = import_garden_json(json.dumps(payload))
+        pot = loaded.get_pot("vaso-1")
+        # I default si applicano senza sollevare.
+        self.assertEqual(pot.shelter_level, ShelterLevel.STANDARD)
+        self.assertIsNone(pot.gdd_accumulated)
+        self.assertFalse(pot.species.supports_gdd)
+
+
 if __name__ == "__main__":
     unittest.main()

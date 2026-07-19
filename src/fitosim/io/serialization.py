@@ -120,8 +120,14 @@ from fitosim.domain.pot import (
     PotShape,
     SunExposure,
 )
+from fitosim.domain.room import LightExposure
 from fitosim.domain.scheduling import ScheduledEvent
-from fitosim.domain.species import Species
+from fitosim.domain.species import (
+    GrowthStage,
+    PhenologyAnchor,
+    Species,
+)
+from fitosim.science.pot_physics import ShelterLevel
 from fitosim.science.substrate import (
     BaseMaterial,
     MixComponent,
@@ -141,7 +147,7 @@ from fitosim.science.substrate import (
 # importati senza errori (il Garden ricostruito non avrà eventi
 # pianificati pre-esistenti). I JSON v2 con scheduled_events vuota o
 # popolata vengono parsati identicamente.
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 
 
 # =======================================================================
@@ -162,6 +168,26 @@ class SerializationError(Exception):
 #  Helper di conversione: Pot, Species, Substrate, BaseMaterial → dict
 # =======================================================================
 
+def _growth_stage_groups_to_lists(groups) -> Optional[list]:
+    """Serializza gruppi di stadi botanici come liste di stringhe.
+
+    I valori degli enum coincidono con il vocabolario controllato di
+    The Pot, quindi il JSON resta leggibile e stabile nel tempo.
+    """
+    if groups is None:
+        return None
+    return [[stage.value for stage in group] for group in groups]
+
+
+def _lists_to_growth_stage_groups(raw) -> Optional[tuple]:
+    """Ricostruisce gruppi di stadi botanici da liste di stringhe."""
+    if raw is None:
+        return None
+    return tuple(
+        tuple(GrowthStage(value) for value in group) for group in raw
+    )
+
+
 def _species_to_dict(species: Species) -> Dict[str, Any]:
     """Converte una Species in dict serializzabile."""
     return {
@@ -179,12 +205,37 @@ def _species_to_dict(species: Species) -> Dict[str, Any]:
         "ec_optimal_max_mscm": species.ec_optimal_max_mscm,
         "ph_optimal_min": species.ph_optimal_min,
         "ph_optimal_max": species.ph_optimal_max,
+        # ----- Campi aggiunti nel formato v3 -----
+        # Prima non venivano esportati: una specie reimportata perdeva
+        # la tolleranza allo stress, i parametri fisiologici e tutta la
+        # configurazione fenologica, tornando ai default.
+        "depletion_fraction": species.depletion_fraction,
+        "notes": species.notes,
+        "stomatal_resistance_s_m": species.stomatal_resistance_s_m,
+        "crop_height_m": species.crop_height_m,
+        "phenology_anchor": species.phenology_anchor.value,
+        "phenology_calendar": _growth_stage_groups_to_lists(
+            species.phenology_calendar
+        ),
+        "annual_growth_stages": _growth_stage_groups_to_lists(
+            species.annual_growth_stages
+        ),
+        "t_base_c": species.t_base_c,
+        "gdd_to_mid": species.gdd_to_mid,
+        "gdd_to_late": species.gdd_to_late,
+        "t_cap_c": species.t_cap_c,
     }
 
 
 def _dict_to_species(data: Dict[str, Any]) -> Species:
-    """Ricostruisce una Species dal suo dict serializzato."""
-    return Species(
+    """
+    Ricostruisce una Species dal suo dict serializzato.
+
+    I campi del formato v3 vengono letti solo se presenti: un JSON
+    scritto con il formato v1 o v2 resta leggibile, e i campi assenti
+    prendono il default della dataclass.
+    """
+    kwargs: Dict[str, Any] = dict(
         common_name=data["common_name"],
         scientific_name=data["scientific_name"],
         kc_initial=data["kc_initial"],
@@ -200,6 +251,27 @@ def _dict_to_species(data: Dict[str, Any]) -> Species:
         ph_optimal_min=data.get("ph_optimal_min"),
         ph_optimal_max=data.get("ph_optimal_max"),
     )
+
+    for field_name in (
+        "depletion_fraction", "notes",
+        "stomatal_resistance_s_m", "crop_height_m",
+        "t_base_c", "gdd_to_mid", "gdd_to_late", "t_cap_c",
+    ):
+        if data.get(field_name) is not None:
+            kwargs[field_name] = data[field_name]
+
+    if data.get("phenology_anchor") is not None:
+        kwargs["phenology_anchor"] = PhenologyAnchor(data["phenology_anchor"])
+
+    calendar = _lists_to_growth_stage_groups(data.get("phenology_calendar"))
+    if calendar is not None:
+        kwargs["phenology_calendar"] = calendar
+
+    annual = _lists_to_growth_stage_groups(data.get("annual_growth_stages"))
+    if annual is not None:
+        kwargs["annual_growth_stages"] = annual
+
+    return Species(**kwargs)
 
 
 def _base_material_to_dict(material: BaseMaterial) -> Dict[str, Any]:
@@ -356,6 +428,21 @@ def _pot_to_dict(
         "planting_date": pot.planting_date.isoformat(),
         "notes": pot.notes,
         "channel_id": channel_id,
+        # ----- Campi aggiunti nel formato v3 -----
+        # Le coordinate e i campi indoor esistono dalla tappa 5 ma non
+        # venivano esportati: un vaso reimportato perdeva la posizione
+        # geografica (e quindi il selettore di evapotraspirazione
+        # ricadeva su Hargreaves o falliva), l'associazione alla Room e
+        # l'esposizione luminosa. Lo shelter_level e i gradi-giorno
+        # sono invece aggiunte recenti.
+        "latitude_deg": pot.latitude_deg,
+        "elevation_m": pot.elevation_m,
+        "room_id": pot.room_id,
+        "light_exposure": (
+            pot.light_exposure.value
+            if pot.light_exposure is not None else None
+        ),
+        "shelter_level": pot.shelter_level.value,
     }
     state_fields = {
         "state_mm": pot.state_mm,
@@ -363,6 +450,10 @@ def _pot_to_dict(
         "ph_substrate": pot.ph_substrate,
         "saucer_state_mm": pot.saucer_state_mm,
         "de_mm": pot.de_mm,
+        # None significa "il vaso non traccia i gradi-giorno": la
+        # distinzione da 0.0 va preservata, altrimenti un vaso maturo
+        # reimportato si crederebbe appena seminato.
+        "gdd_accumulated": pot.gdd_accumulated,
     }
     return {
         "label": pot.label,
@@ -419,12 +510,27 @@ def _dict_to_pot(
         kwargs["saucer_capillary_rate"] = static["saucer_capillary_rate"]
     if static.get("saucer_evap_coef") is not None:
         kwargs["saucer_evap_coef"] = static["saucer_evap_coef"]
+    # Campi del formato v3: lette solo se presenti, così i JSON
+    # scritti con i formati precedenti restano importabili.
+    for field_name in ("latitude_deg", "elevation_m", "room_id"):
+        if static.get(field_name) is not None:
+            kwargs[field_name] = static[field_name]
+    if static.get("light_exposure") is not None:
+        kwargs["light_exposure"] = LightExposure(static["light_exposure"])
+    if static.get("shelter_level") is not None:
+        kwargs["shelter_level"] = ShelterLevel(static["shelter_level"])
+
     # Stati mutabili (sempre presenti).
     kwargs["state_mm"] = state["state_mm"]
     kwargs["salt_mass_meq"] = state["salt_mass_meq"]
     kwargs["ph_substrate"] = state["ph_substrate"]
     kwargs["saucer_state_mm"] = state["saucer_state_mm"]
     kwargs["de_mm"] = state["de_mm"]
+    # gdd_accumulated: assente nei formati precedenti → resta None,
+    # cioè "non traccio i GDD", che è il comportamento che quei vasi
+    # avevano quando il JSON è stato scritto.
+    if state.get("gdd_accumulated") is not None:
+        kwargs["gdd_accumulated"] = state["gdd_accumulated"]
 
     return Pot(**kwargs)
 
