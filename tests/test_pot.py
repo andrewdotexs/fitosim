@@ -2739,6 +2739,32 @@ class TestPotPhenologyViews(unittest.TestCase):
             GrowthStage.FLOWERING, pot.growth_stages(date(2026, 6, 15)),
         )
 
+    def test_citrus_winter_consumption_drops_with_dormancy(self):
+        # A parita' di ET0, un limone in riposo invernale deve
+        # consumare nettamente meno che in piena attivita' estiva.
+        # Prima della riduzione di dormienza i due valori erano
+        # identici, perche' entrambi i mesi mappavano su MID_SEASON.
+        from fitosim.domain.species import CITRUS
+        winter_pot = self._pot(CITRUS, date(2020, 4, 1), label="inverno")
+        summer_pot = self._pot(CITRUS, date(2020, 4, 1), label="estate")
+        et_winter = winter_pot.current_et_c(
+            et_0_mm=2.0, current_date=date(2026, 1, 15),
+        )
+        et_summer = summer_pot.current_et_c(
+            et_0_mm=2.0, current_date=date(2026, 7, 15),
+        )
+        self.assertLess(et_winter, et_summer * 0.75)
+
+    def test_dormant_pot_still_loses_water(self):
+        # Il pavimento evaporativo: anche in dormienza il substrato
+        # evapora, quindi il consumo non e' mai nullo. Un modello che
+        # dicesse il contrario non suggerirebbe mai di irrigare
+        # d'inverno.
+        from fitosim.domain.species import CITRUS
+        pot = self._pot(CITRUS, date(2020, 4, 1))
+        et = pot.current_et_c(et_0_mm=2.0, current_date=date(2026, 1, 15))
+        self.assertGreater(et, 0.0)
+
     def test_perennial_consumes_less_water_in_winter(self):
         # Verifica end-to-end: a parità di ET0, lo stesso vaso perenne
         # consuma meno d'inverno perché lo stadio (e quindi il Kc) segue

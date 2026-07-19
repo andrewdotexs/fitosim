@@ -17,7 +17,10 @@ from fitosim.domain.species import (
     BASIL,
     CITRUS,
     DEFAULT_ANNUAL_GROWTH_STAGES,
+    DORMANCY_KC_FACTOR,
+    KC_BARE_SOIL_FLOOR,
     LETTUCE,
+    REST_KC_FACTOR,
     ROSEMARY,
     TOMATO,
     GrowthStage,
@@ -25,6 +28,9 @@ from fitosim.domain.species import (
     PhenologyAnchor,
     Species,
     actual_et_c,
+    dormancy_kc_factor,
+    effective_kc,
+    effective_kcb,
     fao56_stage_from_growth_stages,
     kc_for_stage,
     potential_et_c,
@@ -639,6 +645,169 @@ class TestPerennialAnchoring(unittest.TestCase):
         stages = CITRUS.growth_stages_at(date(2026, 1, 15), planting)
         self.assertIn(GrowthStage.REST, stages)
         self.assertIn(GrowthStage.FRUITING, stages)
+
+
+class TestDormancyKcReduction(unittest.TestCase):
+    """Riduzione del Kc in dormienza e riposo, col pavimento evaporativo."""
+
+    def test_factor_by_stage(self):
+        self.assertEqual(
+            dormancy_kc_factor((GrowthStage.DORMANCY,)), DORMANCY_KC_FACTOR,
+        )
+        self.assertEqual(
+            dormancy_kc_factor((GrowthStage.REST,)), REST_KC_FACTOR,
+        )
+
+    def test_no_factor_for_active_stages(self):
+        for stages in (
+            (GrowthStage.VEGETATIVE,),
+            (GrowthStage.FLOWERING,),
+            (GrowthStage.FRUITING,),
+            (GrowthStage.VEGETATIVE, GrowthStage.FLOWERING),
+        ):
+            with self.subTest(stages=stages):
+                self.assertIsNone(dormancy_kc_factor(stages))
+
+    def test_bud_break_is_not_reduced(self):
+        # La ripresa e' attivita', non riposo: la chioma ancora piccola
+        # e' gia' rappresentata dal Kc dello stadio iniziale, quindi
+        # applicare una riduzione sarebbe doppio conteggio.
+        self.assertIsNone(dormancy_kc_factor((GrowthStage.BUD_BREAK,)))
+
+    def test_rest_applies_even_with_fruit(self):
+        # Il limone a gennaio e' in riposo E porta frutti: il suo
+        # metabolismo e' quello di una pianta in riposo.
+        self.assertEqual(
+            dormancy_kc_factor((GrowthStage.REST, GrowthStage.FRUITING)),
+            REST_KC_FACTOR,
+        )
+
+    def test_deep_dormancy_wins_over_rest(self):
+        self.assertEqual(
+            dormancy_kc_factor((GrowthStage.DORMANCY, GrowthStage.REST)),
+            DORMANCY_KC_FACTOR,
+        )
+
+    def test_effective_kc_without_growth_stages_is_unchanged(self):
+        # Retrocompatibilita': senza vista botanica nessuna riduzione.
+        for stage in PhenologicalStage:
+            with self.subTest(stage=stage):
+                self.assertEqual(
+                    effective_kc(ROSEMARY, stage),
+                    kc_for_stage(ROSEMARY, stage),
+                )
+
+    def test_effective_kc_active_stages_unchanged(self):
+        self.assertEqual(
+            effective_kc(
+                ROSEMARY, PhenologicalStage.MID_SEASON,
+                (GrowthStage.VEGETATIVE,),
+            ),
+            kc_for_stage(ROSEMARY, PhenologicalStage.MID_SEASON),
+        )
+
+    def test_effective_kc_is_fraction_of_kc_mid(self):
+        kc = effective_kc(
+            ROSEMARY, PhenologicalStage.INITIAL, (GrowthStage.REST,),
+        )
+        self.assertAlmostEqual(kc, ROSEMARY.kc_mid * REST_KC_FACTOR)
+
+    def test_evaporation_floor_binds_for_low_kc_species(self):
+        # Una specie a Kc molto basso: la riduzione moltiplicativa
+        # scenderebbe sotto il pavimento, ma il substrato continua a
+        # evaporare anche se la pianta e' ferma.
+        low = Species(
+            common_name="Test", scientific_name="Testus testus",
+            kc_initial=0.20, kc_mid=0.30, kc_late=0.25,
+        )
+        raw = low.kc_mid * DORMANCY_KC_FACTOR      # 0.075
+        self.assertLess(raw, KC_BARE_SOIL_FLOOR)
+        kc = effective_kc(
+            low, PhenologicalStage.INITIAL, (GrowthStage.DORMANCY,),
+        )
+        self.assertEqual(kc, KC_BARE_SOIL_FLOOR)
+
+    def test_dormant_pot_still_consumes_water(self):
+        # Il pavimento non e' un dettaglio: un modello che dicesse
+        # "la pianta dormiente non consuma nulla" non suggerirebbe mai
+        # di irrigare, e le perenni in vaso muoiono anche di sete
+        # invernale, non solo di marciume.
+        for sp in (CITRUS, ROSEMARY):
+            with self.subTest(species=sp.common_name):
+                kc = effective_kc(
+                    sp, PhenologicalStage.INITIAL, (GrowthStage.DORMANCY,),
+                )
+                self.assertGreaterEqual(kc, KC_BARE_SOIL_FLOOR)
+                self.assertGreater(kc, 0.0)
+
+    def test_citrus_winter_much_lower_than_summer(self):
+        # Il bug che questa slice risolve: al limone in riposo
+        # invernale veniva attribuito il Kc di piena attivita' estiva.
+        planting = date(2020, 4, 1)
+        winter = date(2026, 1, 15)
+        summer = date(2026, 7, 15)
+        kc_winter = effective_kc(
+            CITRUS, CITRUS.stage_at(winter, planting),
+            CITRUS.growth_stages_at(winter, planting),
+        )
+        kc_summer = effective_kc(
+            CITRUS, CITRUS.stage_at(summer, planting),
+            CITRUS.growth_stages_at(summer, planting),
+        )
+        self.assertLess(kc_winter, kc_summer)
+        # Prima della correzione erano identici (entrambi kc_mid).
+        self.assertLess(kc_winter, kc_summer * 0.75)
+
+    def test_annual_species_never_reduced(self):
+        planting = date(2026, 5, 1)
+        for offset in (5, 30, 80):
+            with self.subTest(offset=offset):
+                d = date.fromordinal(planting.toordinal() + offset)
+                stage = BASIL.stage_at(d, planting)
+                self.assertEqual(
+                    effective_kc(
+                        BASIL, stage, BASIL.growth_stages_at(d, planting),
+                    ),
+                    kc_for_stage(BASIL, stage),
+                )
+
+
+class TestDormancyKcbReduction(unittest.TestCase):
+    """Nel dual-Kc la riduzione non ha pavimento: Ke copre l'evaporazione."""
+
+    def _dual_kc_species(self):
+        return Species(
+            common_name="Test dual", scientific_name="Testus dualis",
+            kc_initial=0.50, kc_mid=1.00, kc_late=0.80,
+            kcb_initial=0.35, kcb_mid=0.90, kcb_late=0.70,
+        )
+
+    def test_kcb_unchanged_without_growth_stages(self):
+        sp = self._dual_kc_species()
+        self.assertEqual(
+            effective_kcb(sp, PhenologicalStage.MID_SEASON), sp.kcb_mid,
+        )
+
+    def test_kcb_reduced_in_dormancy(self):
+        sp = self._dual_kc_species()
+        kcb = effective_kcb(
+            sp, PhenologicalStage.MID_SEASON, (GrowthStage.DORMANCY,),
+        )
+        self.assertAlmostEqual(kcb, sp.kcb_mid * DORMANCY_KC_FACTOR)
+
+    def test_kcb_has_no_evaporation_floor(self):
+        # Kcb e' traspirazione pura: puo' scendere sotto il pavimento
+        # evaporativo, perche' nel dual-Kc l'evaporazione la conta Ke.
+        sp = Species(
+            common_name="Test", scientific_name="Testus testus",
+            kc_initial=0.30, kc_mid=0.40, kc_late=0.35,
+            kcb_initial=0.20, kcb_mid=0.30, kcb_late=0.25,
+        )
+        kcb = effective_kcb(
+            sp, PhenologicalStage.MID_SEASON, (GrowthStage.DORMANCY,),
+        )
+        self.assertLess(kcb, KC_BARE_SOIL_FLOOR)
+        self.assertGreater(kcb, 0.0)
 
 
 class TestPerennialValidation(unittest.TestCase):

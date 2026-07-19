@@ -41,6 +41,7 @@ from typing import Optional
 from fitosim.domain.species import (
     GrowthStage,
     PhenologicalStage,
+    effective_kcb,
     Species,
     actual_et_c,
     kc_for_stage,
@@ -973,13 +974,13 @@ class Pot:
         """
         from fitosim.science.balance import stress_coefficient_ks
         stage = self.current_stage(current_date)
-        # Recupero Kcb per lo stadio corrente.
-        kcb_map = {
-            PhenologicalStage.INITIAL: self.species.kcb_initial,
-            PhenologicalStage.MID_SEASON: self.species.kcb_mid,
-            PhenologicalStage.LATE_SEASON: self.species.kcb_late,
-        }
-        kcb = kcb_map[stage]
+        # Kcb per lo stadio corrente, ridotto se la pianta è in
+        # dormienza o riposo. Qui NON si applica il pavimento
+        # evaporativo: nel dual-Kc l'evaporazione è già contabilizzata
+        # separatamente da Ke, quindi Kcb è traspirazione pura.
+        kcb = effective_kcb(
+            self.species, stage, self.growth_stages(current_date),
+        )
         # Stress coefficient per la traspirazione (modula solo Kcb).
         ks = stress_coefficient_ks(
             current_theta=self.state_theta,
@@ -993,8 +994,18 @@ class Pot:
             rew_mm=self.substrate.rew_mm,
             tew_mm=self.substrate.tew_mm,
         )
-        # Coefficiente di evaporazione superficiale.
-        ke = soil_evaporation_coefficient(kcb=kcb, kr=kr)
+        # Coefficiente di evaporazione superficiale. Il limite
+        # energetico usa il Kcb della CHIOMA (non ridotto dalla
+        # dormienza): l'ombreggiatura della superficie dipende dalle
+        # foglie, e un sempreverde in riposo le ha ancora tutte. Usare
+        # qui il Kcb ridotto gonfierebbe artificiosamente
+        # l'evaporazione, come se l'energia non traspirata arrivasse
+        # al substrato — vero per una decidua spoglia, falso per un
+        # sempreverde quiescente. Le due perenni del catalogo sono
+        # entrambe sempreverdi; una specie decidua richiederebbe un
+        # trattamento dedicato.
+        kcb_canopy = effective_kcb(self.species, stage)
+        ke = soil_evaporation_coefficient(kcb=kcb_canopy, kr=kr)
         # ET totale e sua decomposizione.
         et_c_total = self.kp * (ks * kcb + ke) * et_0_mm
         soil_evap = self.kp * ke * et_0_mm
@@ -1055,6 +1066,10 @@ class Pot:
             et_0=et_0_mm,
             current_theta=self.state_theta,
             substrate=self.substrate,
+            # Vista botanica: abilita la riduzione del Kc quando la
+            # pianta è in dormienza o riposo. Per le annuali non
+            # produce mai riduzione, quindi è inerte.
+            growth_stages=self.growth_stages(current_date),
         )
         return self.kp * et_c_base * kn
 
