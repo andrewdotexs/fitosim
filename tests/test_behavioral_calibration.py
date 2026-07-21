@@ -20,11 +20,17 @@ from fitosim.domain.species import BASIL, Species
 from fitosim.science.behavioral_calibration import (
     CORRECTION_MAX,
     CORRECTION_MIN,
+    DEPLETION_MAX,
+    DEPLETION_MIN,
+    AlertJudgment,
     BehavioralCalibrationResult,
     IrrigationDeviation,
     MIN_OBS_FOR_LOW_CONFIDENCE,
+    apply_depletion_correction,
     apply_kc_correction,
+    calibrate_depletion_from_judgments,
     calibrate_kc_from_behavior,
+    depletion_fraction,
 )
 
 
@@ -308,6 +314,251 @@ class TestApplyCorrection(unittest.TestCase):
             )
 
         self.assertLess(consumption(calibrated), consumption(BASIL))
+
+
+# =======================================================================
+#  5. Giudizio sulle allerte → soglia di deplezione p
+# =======================================================================
+#
+# Qui la matematica non e' un rapporto ma una delimitazione: ogni
+# giudizio dice da che parte sta la soglia, e la stima e' il punto di
+# mezzo tra "sana fin qui" e "gia' sofferente da qui".
+
+def _judgments(pairs, start: date = date(2026, 6, 1)) -> list:
+    """Costruisce giudizi da coppie (deplezione, sofferente)."""
+    return [
+        AlertJudgment(
+            observed_at=start + timedelta(days=i),
+            depletion=depletion,
+            plant_stressed=stressed,
+        )
+        for i, (depletion, stressed) in enumerate(pairs)
+    ]
+
+
+class TestDepletionFractionHelper(unittest.TestCase):
+
+    def test_at_field_capacity_is_zero(self):
+        self.assertAlmostEqual(
+            depletion_fraction(state_mm=52.6, fc_mm=52.6, taw_mm=32.9), 0.0,
+        )
+
+    def test_half_depleted(self):
+        # FC 52.6, TAW 32.9: a meta' TAW lo stato e' 52.6 - 16.45.
+        self.assertAlmostEqual(
+            depletion_fraction(state_mm=36.15, fc_mm=52.6, taw_mm=32.9),
+            0.5, places=3,
+        )
+
+    def test_clamped_to_unit_range(self):
+        # Sopra la capacita' di campo (vaso appena irrigato) e sotto il
+        # punto di appassimento: valori limitati a [0, 1].
+        self.assertEqual(
+            depletion_fraction(state_mm=60.0, fc_mm=52.6, taw_mm=32.9), 0.0,
+        )
+        self.assertEqual(
+            depletion_fraction(state_mm=0.0, fc_mm=52.6, taw_mm=32.9), 1.0,
+        )
+
+    def test_zero_taw_raises(self):
+        with self.assertRaises(ValueError):
+            depletion_fraction(state_mm=10.0, fc_mm=20.0, taw_mm=0.0)
+
+
+class TestAlertJudgment(unittest.TestCase):
+
+    def test_out_of_range_depletion_raises(self):
+        for bad in (-0.1, 1.5):
+            with self.subTest(depletion=bad):
+                with self.assertRaises(ValueError):
+                    AlertJudgment(date(2026, 6, 1), bad, False)
+
+    def test_boundary_values_are_valid(self):
+        AlertJudgment(date(2026, 6, 1), 0.0, False)
+        AlertJudgment(date(2026, 6, 1), 1.0, True)
+
+
+class TestDepletionCalibration(unittest.TestCase):
+
+    def test_healthy_judgments_raise_the_threshold(self):
+        # Allerte premature: la pianta sta bene a deplezioni che il
+        # modello considera critiche.
+        result = calibrate_depletion_from_judgments(
+            _judgments([(0.45, False), (0.50, False), (0.48, False),
+                        (0.52, False), (0.47, False), (0.55, False)]),
+            current_depletion_fraction=0.40,
+        )
+        self.assertIsNotNone(result.depletion_fraction)
+        self.assertGreater(result.depletion_fraction, 0.40)
+        self.assertIn("prima del necessario", result.notes)
+
+    def test_stress_judgments_lower_the_threshold(self):
+        # Allerte tardive: la pianta soffre prima che il modello se ne
+        # accorga. E' il caso agronomicamente piu' importante.
+        result = calibrate_depletion_from_judgments(
+            _judgments([(0.35, True), (0.32, True), (0.38, True),
+                        (0.30, True)]),
+            current_depletion_fraction=0.50,
+        )
+        self.assertIsNotNone(result.depletion_fraction)
+        self.assertLess(result.depletion_fraction, 0.50)
+        self.assertIn("arrivano tardi", result.notes)
+
+    def test_two_sided_brackets_the_threshold(self):
+        # Con giudizi in entrambi i versi la soglia e' delimitata: la
+        # stima cade tra "sana fin qui" e "sofferente da qui".
+        result = calibrate_depletion_from_judgments(
+            _judgments([(0.35, False), (0.40, False), (0.38, False),
+                        (0.60, True), (0.62, True), (0.65, True)]),
+            current_depletion_fraction=0.30,
+        )
+        self.assertIsNotNone(result.healthy_up_to)
+        self.assertIsNotNone(result.stressed_from)
+        self.assertGreater(
+            result.depletion_fraction, result.healthy_up_to,
+        )
+        self.assertLess(
+            result.depletion_fraction, result.stressed_from,
+        )
+        self.assertFalse(result.contradictory)
+
+    def test_contradictory_judgments_are_flagged(self):
+        # Sana a deplezione alta ma sofferente a deplezione bassa: puo'
+        # dipendere dalla stagione, non e' per forza un errore. Si
+        # propone comunque, ma dichiarandolo e abbassando la fiducia.
+        result = calibrate_depletion_from_judgments(
+            _judgments([(0.65, False), (0.70, False), (0.68, False),
+                        (0.40, True), (0.45, True), (0.42, True)]),
+            current_depletion_fraction=0.40,
+        )
+        self.assertTrue(result.contradictory)
+        self.assertEqual(result.confidence, "low")
+        self.assertIn("contraddittori", result.notes)
+
+    def test_too_few_judgments_propose_nothing(self):
+        result = calibrate_depletion_from_judgments(
+            _judgments([(0.50, False), (0.52, False)]),
+            current_depletion_fraction=0.40,
+        )
+        self.assertIsNone(result.depletion_fraction)
+        self.assertFalse(result.suggests_correction)
+        self.assertEqual(result.confidence, "insufficient")
+
+    def test_no_judgments(self):
+        result = calibrate_depletion_from_judgments(
+            [], current_depletion_fraction=0.40,
+        )
+        self.assertIsNone(result.depletion_fraction)
+        self.assertIn("Nessun giudizio", result.notes)
+
+    def test_threshold_already_coherent(self):
+        # Se la soglia attuale e' gia' dentro la banda, non si disturba
+        # l'utente.
+        result = calibrate_depletion_from_judgments(
+            _judgments([(0.30, False), (0.32, False), (0.31, False),
+                        (0.45, True), (0.47, True), (0.46, True)]),
+            current_depletion_fraction=0.38,
+        )
+        self.assertIsNone(result.depletion_fraction)
+        self.assertIn("già coerente", result.notes)
+
+    def test_proposal_stays_within_agronomic_bounds(self):
+        # Giudizi estremi non devono produrre una soglia assurda.
+        low = calibrate_depletion_from_judgments(
+            _judgments([(0.05, True), (0.04, True), (0.06, True),
+                        (0.03, True)]),
+            current_depletion_fraction=0.40,
+        )
+        high = calibrate_depletion_from_judgments(
+            _judgments([(0.98, False), (0.97, False), (0.99, False),
+                        (0.96, False)]),
+            current_depletion_fraction=0.40,
+        )
+        self.assertGreaterEqual(low.depletion_fraction, DEPLETION_MIN)
+        self.assertLessEqual(high.depletion_fraction, DEPLETION_MAX)
+
+    def test_confidence_grows_with_judgments(self):
+        pairs = [(0.50, False)] * 12
+        self.assertEqual(
+            calibrate_depletion_from_judgments(
+                _judgments(pairs[:4]), 0.40,
+            ).confidence,
+            "low",
+        )
+        self.assertEqual(
+            calibrate_depletion_from_judgments(
+                _judgments(pairs[:7]), 0.40,
+            ).confidence,
+            "medium",
+        )
+        self.assertEqual(
+            calibrate_depletion_from_judgments(
+                _judgments(pairs), 0.40,
+            ).confidence,
+            "high",
+        )
+
+    def test_percentiles_resist_a_single_odd_judgment(self):
+        # Un giudizio distratto non deve spostare la soglia quanto la
+        # spostrebbe usando il massimo.
+        regular = [(0.50, False)] * 8
+        with_outlier = regular + [(0.95, False)]
+        base = calibrate_depletion_from_judgments(
+            _judgments(regular), 0.40,
+        )
+        perturbed = calibrate_depletion_from_judgments(
+            _judgments(with_outlier), 0.40,
+        )
+        self.assertLess(
+            abs(perturbed.depletion_fraction - base.depletion_fraction),
+            0.10,
+        )
+
+
+class TestApplyDepletionCorrection(unittest.TestCase):
+
+    def test_replaces_the_threshold(self):
+        corrected = apply_depletion_correction(BASIL, 0.55)
+        self.assertEqual(corrected.depletion_fraction, 0.55)
+        self.assertNotEqual(
+            corrected.depletion_fraction, BASIL.depletion_fraction,
+        )
+
+    def test_original_species_is_untouched(self):
+        original = BASIL.depletion_fraction
+        apply_depletion_correction(BASIL, 0.55)
+        self.assertEqual(BASIL.depletion_fraction, original)
+
+    def test_kc_values_are_not_touched(self):
+        # La soglia e il consumo sono parametri indipendenti: correggere
+        # l'una non deve toccare l'altro.
+        corrected = apply_depletion_correction(BASIL, 0.55)
+        self.assertEqual(corrected.kc_mid, BASIL.kc_mid)
+
+    def test_invalid_threshold_raises(self):
+        for bad in (0.0, -0.1, 1.5):
+            with self.subTest(value=bad):
+                with self.assertRaises(ValueError):
+                    apply_depletion_correction(BASIL, bad)
+
+    def test_end_to_end_moves_the_alert_threshold(self):
+        # Il ciclo completo: alzare p sposta piu' in basso la soglia di
+        # allerta del vaso, quindi le allerte scattano piu' tardi.
+        from fitosim.domain.pot import Location, Pot
+        from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
+
+        def alert_threshold(species):
+            pot = Pot(
+                label="vaso", species=species,
+                substrate=UNIVERSAL_POTTING_SOIL,
+                pot_volume_l=2.0, pot_diameter_cm=18.0,
+                location=Location.OUTDOOR,
+                planting_date=date(2026, 5, 1),
+            )
+            return pot.alert_mm
+
+        tolerant = apply_depletion_correction(BASIL, 0.60)
+        self.assertLess(alert_threshold(tolerant), alert_threshold(BASIL))
 
 
 if __name__ == "__main__":
