@@ -382,6 +382,10 @@
             <li><a href="#science-radiation"><code>radiation</code></a></li>
             <li><a href="#science-indoor"><code>indoor</code></a></li>
             <li><a href="#science-calibration"><code>calibration</code></a></li>
+            <li><a href="#science-phenology"><code>phenology</code></a></li>
+            <li><a href="#science-behavioral"><code>behavioral_calibration</code></a></li>
+            <li><a href="#science-lysimeter"><code>lysimeter</code></a></li>
+            <li><a href="#science-resolution"><code>calibration_resolution</code></a></li>
           </ul>
         </li>
         <li><a href="#domain">5. Layer <code>domain</code></a>
@@ -420,7 +424,8 @@
       <span class="badge">v0.1.0</span>
       <span class="badge neutral">Python ≥ 3.10</span>
       <span class="badge info">stdlib only (core)</span>
-      <span class="badge">1137 test verdi</span>
+      <span class="badge">1366 test verdi</span>
+      <span class="badge info">layer feedback fase A</span>
       <span class="badge neutral">MIT License</span>
     </div>
 
@@ -485,7 +490,7 @@
       <div class="layer-card">
         <div class="role">Layer 1 — base</div>
         <h4>science/</h4>
-        <p>Funzioni pure FAO-56 esteso: bilancio idrico, ET, dual-Kc, fisica del vaso, chimica del substrato, radiazione, calibrazione.</p>
+        <p>Funzioni pure FAO-56 esteso: bilancio idrico, ET, dual-Kc, fisica del vaso, chimica del substrato, radiazione, e il layer di feedback/calibrazione (fase A).</p>
         <p><em>Dipendenze: stdlib + radiation interno.</em></p>
       </div>
       <div class="layer-card">
@@ -505,14 +510,15 @@
     <h3 id="dipendenze">2.2 Mappa delle dipendenze interne</h3>
 
     <p>
-      All'interno di <code>science/</code> i moduli sono <em>quasi tutti
-      standalone</em>: solo <code>balance</code> e <code>et0</code> consumano
-      altri moduli. Tutto il resto sono funzioni pure indipendenti.
+      All'interno di <code>science/</code> la maggior parte dei moduli è
+      <em>standalone</em> (funzioni pure indipendenti); fanno eccezione
+      <code>balance</code>, <code>et0</code>, <code>calibration</code>,
+      <code>nutrition</code>, <code>indoor</code> e
+      <code>behavioral_calibration</code>, che consumano altri moduli.
     </p>
 
-    <div class="dep-graph">science/
+    <div class="dep-graph">science/  (base FAO-56)
 ├── balance       ← et0 (EtMethod), substrate (Substrate, RAW)
-├── calibration   (standalone)
 ├── dual_kc       (standalone)
 ├── et0           ← radiation (per Ra astronomica)
 ├── fertigation   (standalone)
@@ -522,6 +528,13 @@
 ├── radiation     (standalone)
 ├── saucer        (standalone)
 └── substrate     (standalone)
+
+science/  (layer feedback, fase A)
+├── calibration            ← balance (Ks), substrate
+├── phenology              (standalone)
+├── behavioral_calibration ← domain.species (Species)
+├── lysimeter              (standalone)
+└── calibration_resolution (standalone; adapter duck-typed)
 
 domain/
 ├── species       (standalone)
@@ -569,7 +582,7 @@ cd fitosim
 <span class="com"># Install in editable mode con dev-deps</span>
 pip install -e <span class="str">'.[dev]'</span>
 
-<span class="com"># Esegui la suite (attesi ~1137 verdi)</span>
+<span class="com"># Esegui la suite (attesi ~1366 verdi)</span>
 python -m pytest tests/
 
 <span class="com"># Subset rapido per iterazione</span>
@@ -818,16 +831,262 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
 
     <p>Funzioni: <code>categorical_indoor_radiation</code> (DARK=1.5, INDIRECT_BRIGHT=4.0, DIRECT_SUN=8.0 MJ/m²/d), <code>continuous_indoor_radiation</code> (frazioni 5%, 15%, 40%), <code>estimate_indoor_radiation</code> (selettore).</p>
 
+    <!-- ============ LAYER FEEDBACK (FASE A) ============ -->
+    <div class="callout note">
+      <strong>Il layer di feedback — fase A</strong>
+      I cinque moduli che seguono formano il <em>layer di calibrazione</em>:
+      trasformano evidenze eterogenee (letture sensore, date fenologiche,
+      abitudini di irrigazione, pesate) in correzioni di parametro
+      tracciabili. Sono <strong>funzioni pure</strong>, stdlib, senza effetti
+      collaterali: ognuna <em>propone</em> un delta con confidenza e
+      spiegazione in italiano; l'applicazione è un passo separato che lavora
+      su una <strong>copia</strong> della <code>Species</code>, mai sul
+      catalogo globale. Il quinto modulo è a valle — non misura nulla, compone
+      le proposte degli altri quando più fonti toccano lo stesso parametro.
+      Progetto completo: <code>docs/fitosim_feedback_layer_design.md</code>.
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Modulo</th><th>Segnale</th><th>Calibra</th><th>Ambiguità</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>calibration</code></td><td>θ ai picchi/valli · pendenza di asciugamento</td><td>θ<sub>FC</sub>, θ<sub>PWP</sub> · K<sub>c</sub></td><td>Bassa</td></tr>
+        <tr><td><code>phenology</code></td><td>temperatura accumulata (gradi-giorno)</td><td>soglie di stadio (annuali)</td><td>Bassa</td></tr>
+        <tr><td><code>behavioral_calibration</code></td><td>scostamento irrigazioni · giudizi sulle allerte</td><td>K<sub>c</sub> (fattore) · soglia p</td><td>Bassa</td></tr>
+        <tr><td><code>lysimeter</code></td><td>pesata del vaso</td><td>K<sub>c</sub> di catalogo (ground truth)</td><td>Nessuna</td></tr>
+        <tr><td><code>calibration_resolution</code></td><td>le proposte degli altri</td><td>— (precedenza tra fonti)</td><td>—</td></tr>
+      </tbody>
+    </table>
+
     <!-- CALIBRATION -->
     <h3 id="science-calibration"><code>science/calibration.py</code> — Calibrazione da sensore</h3>
 
+    <p>Due segnali distinti dallo stesso sensore, che non vanno confusi.</p>
+
     <p>
-      Stima θ<sub>FC</sub> e θ<sub>PWP</sub> effettivi (non quelli di
-      letteratura) dai dati storici del sensore WH51. Cattura compattazione
-      e peculiarità del singolo vaso.
+      <strong>L'ancora.</strong> θ<sub>FC</sub> e θ<sub>PWP</sub> effettivi
+      (non di letteratura) dai picchi e dalle valli della serie storica: dopo
+      un'irrigazione con drenaggio il vaso <em>è</em> a capacità di campo, e
+      qualunque cosa legga il sensore in quel momento è la lettura di FC per
+      quel vaso. Cattura compattazione e peculiarità del singolo vaso.
+      Funzioni: <code>find_peaks</code>, <code>find_valleys</code>,
+      <code>estimate_theta_fc</code> (75° percentile),
+      <code>estimate_theta_pwp</code> (10° percentile),
+      <code>calibrate_substrate</code> (pipeline). Restituisce
+      <code>CalibrationResult</code>.
     </p>
 
-    <p>Funzioni: <code>find_peaks</code>, <code>find_valleys</code> (rilevamento robusto con filtro distanza/prominenza), <code>estimate_theta_fc</code> (percentile 75°), <code>estimate_theta_pwp</code> (percentile 10°), <code>calibrate_substrate</code> (pipeline completa).</p>
+    <p>
+      <strong>La pendenza.</strong> Tra due irrigazioni la velocità di discesa
+      della curva è il consumo reale; invertendo il bilancio dà il
+      K<sub>c</sub> effettivo del vaso:
+    </p>
+    <pre><code>Kc = Σ(deplezione_mm) / (Kp · Σ(Ks_i · ET₀_i))</code></pre>
+    <p>
+      Il punto che decide la forma della stima: <strong>K<sub>s</sub> si legge
+      dalla θ osservata, non si stima</strong>. Il sensore dice a che livello
+      idrico era il vaso ogni giorno, quindi lo stress è un dato, non
+      un'incognita — senza questo una finestra che finisce in stress darebbe un
+      Kc sistematicamente sottostimato. Funzioni:
+      <code>find_drying_windows</code> (isola le finestre tollerando le
+      micro-risalite da rumore ma spezzando su quelle vere),
+      <code>estimate_kc_from_window</code>, <code>calibrate_kc</code> (mediana
+      tra finestre). Restituisce <code>KcCalibrationResult</code>
+      (<code>kc_estimate</code>, <code>n_windows</code>, <code>confidence</code>,
+      <code>window_estimates</code>).
+    </p>
+
+    <!-- PHENOLOGY -->
+    <h3 id="science-phenology"><code>science/phenology.py</code> — Gradi-giorno (GDD)</h3>
+
+    <p>
+      Lo sviluppo delle annuali è guidato dalla <strong>temperatura
+      accumulata</strong> sopra una soglia base, non dal calendario: sostituire
+      "20 giorni allo stadio MID" con "X gradi-giorno, T<sub>base</sub> per
+      specie" rende la fenologia trasferibile tra climi.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind fn">function</span>
+        <span class="api-name">growing_degree_days(t_min, t_max, t_base, t_cap=None) → float</span>
+      </div>
+      <div class="api-body">
+        <p>Media semplice modificata: T<sub>min</sub> viene portata a
+        T<sub>base</sub> prima della media — <em>una notte a 2 °C non manda la
+        pianta all'indietro</em>. <code>t_cap</code> opzionale tronca il
+        contributo delle giornate torride.</p>
+      </div>
+    </div>
+
+    <p>Funzione di accumulo: <code>accumulate_gdd(series, t_base, t_cap=None)</code> somma i giorni della serie.</p>
+
+    <div class="callout warn">
+      <strong>Perché solo le annuali</strong>
+      Lo sviluppo delle <em>perenni</em> è governato anche dal fabbisogno di
+      freddo (chill units, modello Utah): sommare gradi-giorno a una pianta che
+      deve prima <em>accumulare freddo</em> per uscire dalla dormienza dà la
+      risposta sbagliata. Le perenni si ancorano al calendario stagionale
+      (<code>PhenologyAnchor.PERENNIAL</code>), non ai GDD.
+    </div>
+
+    <!-- BEHAVIORAL -->
+    <h3 id="science-behavioral"><code>science/behavioral_calibration.py</code> — Calibrazione comportamentale</h3>
+
+    <p>
+      Il segnale non è una misura ma un <strong>comportamento</strong>: due
+      signali nello stesso modulo, che insieme separano due cause che ciascuno
+      da solo confonde.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass · function</span>
+        <span class="api-name">IrrigationDeviation → calibrate_kc_from_behavior → K<sub>c</sub></span>
+      </div>
+      <div class="api-body">
+        <p>Lo scostamento sistematico tra quando il modello suggerisce di
+        irrigare e quando il giardiniere irriga davvero. Restituisce un
+        <strong>fattore</strong> (<code>1 / median(ratio)</code>, limitato a
+        [0.5, 2.0]) da applicare al Kc, con una misura di
+        <code>consistency</code> che scarta il giardiniere bimodale. Applicato
+        da <code>apply_kc_correction(species, factor)</code> su una copia.
+        Soglie 5/10/15.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass · function</span>
+        <span class="api-name">AlertJudgment → calibrate_depletion_from_judgments → soglia p</span>
+      </div>
+      <div class="api-body">
+        <p>Il giudizio del giardiniere sullo <em>stato della pianta</em> quando
+        scatta un'allerta. Due versi opposti (allerta rifiutata / sofferenza
+        segnalata) che <strong>delimitano</strong> un intervallo invece di
+        essere mediati: la stima è il punto di mezzo tra il 75° percentile
+        delle "sane" e il 25° delle "sofferenti". Un flag
+        <code>contradictory</code> abbassa la confidenza quando i due gruppi si
+        sovrappongono. Helper <code>depletion_fraction(state_mm, fc_mm,
+        taw_mm)</code>; applicato da <code>apply_depletion_correction</code>.
+        Soglie 3/6/10.</p>
+      </div>
+    </div>
+
+    <div class="callout note">
+      <strong>Perché servono entrambi</strong>
+      Lo scostamento delle irrigazioni, da solo, non distingue un Kc sbagliato
+      da una soglia p sbagliata: entrambi producono <em>"irriga più tardi del
+      previsto"</em>. Il giudizio sulle allerte interroga direttamente la
+      soglia. Insieme separano le due cause.
+    </div>
+
+    <!-- LYSIMETER -->
+    <h3 id="science-lysimeter"><code>science/lysimeter.py</code> — Lisimetro (ground truth)</h3>
+
+    <p>
+      La misura più diretta che esista: <strong>pesare il vaso</strong>.
+      Nessuna inferenza, nessun parametro del modello nel calcolo — un vaso che
+      perde 100 g ha perso 100 ml. È il riferimento contro cui si validano le
+      altre fonti. Bilancio di massa:
+    </p>
+    <pre><code>ET = (massa_iniziale − massa_finale) + acqua_aggiunta − drenaggio</code></pre>
+    <p>
+      convertito in mm dividendo per la superficie del vaso (i mm di FAO-56
+      sono un'altezza d'acqua). L'inversione dà
+      <code>Kc = ET / (Ks · Kp · Kn · ET₀)</code>.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">LysimeterInterval</span>
+      </div>
+      <div class="api-body">
+        <p>Due pesate + acqua aggiunta + drenaggio + ET₀ cumulata dello stesso
+        periodo: autocontenuto, così il confronto misura/modello non dipende da
+        allineamenti fatti altrove. <code>mean_ks</code> default 1.0 — vedi il
+        vincolo di protocollo sotto.</p>
+      </div>
+    </div>
+
+    <p>Funzioni: <code>mass_to_mm</code>, <code>measured_et_mm</code> (il dato grezzo, utile anche fuori dalla stima di Kc), <code>estimate_kc_from_interval</code>, <code>calibrate_kc_from_lysimeter</code> (mediana, scarti contati non nascosti). Soglie 3/5/10.</p>
+
+    <div class="callout warn">
+      <strong>Il vincolo di protocollo</strong>
+      K<sub>c</sub> è <em>definito</em> in condizioni idriche non limitanti. Chi
+      pesa un vaso in stress non misura Kc, misura il prodotto Ks·Kc — non
+      separabili da una sola pesata. Il protocollo tiene il vaso nella zona di
+      comfort (Ks = 1). E la massa cambia anche per ragioni che non sono acqua:
+      potature, raccolta, pioggia non contabilizzata, biomassa — quegli
+      intervalli vanno <strong>esclusi, non corretti</strong>.
+    </div>
+
+    <!-- RESOLUTION -->
+    <h3 id="science-resolution"><code>science/calibration_resolution.py</code> — Precedenza tra fonti</h3>
+
+    <p>
+      Alla fine della fase A lo stesso parametro può essere toccato da più
+      fonti: il K<sub>c</sub> ne ha tre. Quando il lisimetro dice 0.95 e la
+      pendenza del sensore di quel vaso dice 1.20 <strong>non è per forza un
+      conflitto</strong> — il primo descrive il vaso medio del gruppo, il
+      secondo quel vaso lì. La regola distingue due assi che è facile
+      schiacciare in uno:
+    </p>
+    <ul>
+      <li><strong>scope</strong> — quanto è specifica al vaso: catalogo ⊂ cluster ⊂ vaso;</li>
+      <li><strong>reliability</strong> — quanto la fonte è affidabile in sé.</li>
+    </ul>
+    <p>
+      Il lisimetro è ground truth sull'asse reliability, ma vive sullo scope
+      più largo. Perciò: <strong>lo scope più specifico con una proposta
+      usabile decide il valore del vaso</strong> (lo scope batte la reliability
+      <em>tra</em> scope diversi); <strong>dentro uno stesso scope</strong>
+      vince prima la confidenza, poi il tipo (un assoluto misurato batte un
+      fattore inferito, evitando il doppio conteggio). I valori a ogni livello
+      vengono restituiti entrambi: <code>resolved_value</code> per il vaso,
+      <code>catalog_value</code> per i fratelli.
+    </p>
+
+    <div class="callout warn">
+      <strong>I fattori si ancorano al prior</strong>
+      Un fattore (comportamentale) è definito rispetto a ciò che il modello
+      prevedeva <em>quando è stato misurato</em>. Se il lisimetro abbassa il
+      catalogo a 0.90 e il comportamentale dice ×1.10, applicare il fattore al
+      catalogo darebbe 0.99 — trascinando il vaso verso la media. Ancorandolo
+      al prior (1.00) il vaso resta a <strong>1.10</strong>, la sua evidenza, e
+      0.90 torna al catalogo a parte. È il punto dove un'implementazione ingenua
+      sbaglia in silenzio.
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind fn">function</span>
+        <span class="api-name">resolve(parameter, prior, proposals) → Resolution</span>
+      </div>
+      <div class="api-body">
+        <p>Il cuore. Le fonti eterogenee vengono ridotte alla valuta comune
+        <code>CalibrationProposal</code> (scope, tipo assoluto/fattore,
+        confidenza) dagli adapter <code>proposal_from_lysimeter</code> /
+        <code>_sensor_slope</code> / <code>_behavioral_kc</code> /
+        <code>_dismissal</code>. La <code>Resolution</code> porta
+        <code>resolved_value</code>, <code>catalog_value</code>,
+        <code>applied</code>/<code>ignored</code> con i motivi, il flag
+        <code>catalog_divergence</code> (segnala un vaso outlier oltre il 15%
+        di scostamento da un catalogo ad alta confidenza — visibile, non
+        inghiottito) e una spiegazione in italiano.</p>
+      </div>
+    </div>
+
+    <div class="callout note">
+      <strong>Confine con The Pot</strong>
+      Questo modulo fa solo la <em>matematica</em> della precedenza: non
+      raccoglie evidenze, non conosce utenti né fingerprint, non aggrega tra
+      persone diverse. Quella è la gerarchia di aggregazione, e vive in The
+      Pot. The Pot decide <em>quali</em> proposte esistono; fitosim decide
+      <em>come si compongono</em>.
+    </div>
 
     <!-- =================== 5. DOMAIN =================== -->
     <h2 id="domain">5. Layer <code>domain</code></h2>
@@ -846,10 +1105,29 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     <div class="api">
       <div class="api-head">
         <span class="api-kind enum">enum</span>
-        <span class="api-name">PhenologicalStage</span>
+        <span class="api-name">PhenologicalStage · GrowthStage</span>
       </div>
       <div class="api-body">
-        <p>FAO-56 stages discreti: <code>INITIAL</code>, <code>MID_SEASON</code>, <code>LATE_SEASON</code>.</p>
+        <p><strong>Due vocabolari, non uno</strong> (fase A). I <code>PhenologicalStage</code> guidano il K<sub>c</sub>; i <code>GrowthStage</code> sono osservabili e condivisi con The Pot.</p>
+        <ul class="api-fields">
+          <li><code>PhenologicalStage</code> — 3 stadi FAO-56 che pilotano il Kc: <code>INITIAL</code>, <code>MID_SEASON</code>, <code>LATE_SEASON</code>.</li>
+          <li><code>GrowthStage</code> — 6 stadi botanici (valori identici al catalogo The Pot): <code>DORMIENZA</code>, <code>RIPOSO</code>, <code>GERMOGLIAMENTO</code>, <code>VEGETATIVO</code>, <code>FIORITURA</code>, <code>FRUTTIFICAZIONE</code>. Possono essere simultanei.</li>
+        </ul>
+        <p>La traduzione tra i due vive in un punto solo: <code>fao56_stage_from_growth_stages(...)</code> — non una corrispondenza uno-a-uno ma una funzione.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind enum">enum</span>
+        <span class="api-name">PhenologyAnchor · PhenologyMethod</span>
+      </div>
+      <div class="api-body">
+        <ul class="api-fields">
+          <li><code>PhenologyAnchor</code>: <code>ANNUAL</code> (ancorata all'impianto, può usare i GDD) · <code>PERENNIAL</code> (ancorata al calendario stagionale, che si ripete ogni anno).</li>
+          <li><code>PhenologyMethod</code>: <code>GROWING_DEGREE_DAYS</code> · <code>CALENDAR_DAYS</code> · <code>SEASONAL</code> — quale metodo il selettore <em>best available</em> ha effettivamente usato.</li>
+        </ul>
+        <p class="note"><em>Le perenni con ancoraggio all'impianto restavano bloccate in <code>LATE_SEASON</code> per sempre: da qui i due ancoraggi.</em></p>
       </div>
     </div>
 
@@ -863,18 +1141,22 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
         <ul class="api-fields">
           <li><strong>Kc</strong>: <code>kc_initial</code>, <code>kc_mid</code>, <code>kc_late</code></li>
           <li><strong>Stress</strong>: <code>depletion_fraction</code> (soglia p)</li>
-          <li><strong>Fenologia</strong>: <code>initial_stage_days</code>, <code>mid_stage_days</code></li>
+          <li><strong>Fenologia base</strong>: <code>initial_stage_days</code>, <code>mid_stage_days</code></li>
+          <li><strong>Fenologia (fase A)</strong>: <code>phenology_anchor</code>, <code>phenology_calendar</code> (12 mesi, perenni), <code>annual_growth_stages</code></li>
+          <li><strong>GDD</strong> (opz., annuali): <code>t_base_c</code>, <code>gdd_to_mid</code>, <code>gdd_to_late</code>, <code>t_cap_c</code></li>
           <li><strong>Dual-Kc</strong> (opz., tutti e tre): <code>kcb_initial</code>, <code>kcb_mid</code>, <code>kcb_late</code></li>
           <li><strong>Chimica</strong> (opz., tutti e quattro): <code>ec_optimal_min/max_mscm</code>, <code>ph_optimal_min/max</code></li>
           <li><strong>Fisiologia</strong> (per PM fisico): <code>stomatal_resistance_s_m</code>, <code>crop_height_m</code></li>
         </ul>
-        <p>Property: <code>supports_dual_kc</code>, <code>supports_chemistry_model</code>. Metodo: <code>stage_at_day(days_since_planting)</code>.</p>
+        <p>Property: <code>supports_dual_kc</code>, <code>supports_chemistry_model</code>, <code>supports_gdd</code>. Metodi: <code>stage_at(current_date, planting_date, gdd_accumulated=None)</code> (selettore best-available), <code>stage_at_gdd</code>, <code>growth_stages_at</code>, <code>phenology_method</code>, <code>stage_at_day</code>.</p>
       </div>
     </div>
 
     <p>Funzioni pubbliche: <code>kc_for_stage</code>, <code>potential_et_c</code> (Kc × ET₀), <code>actual_et_c</code> (Ks × Kc × ET₀).</p>
 
-    <p>Catalogo: <code>BASIL</code>, <code>TOMATO</code>, <code>LETTUCE</code>, <code>CITRUS</code>, <code>ROSEMARY</code>, <code>ALL_SPECIES</code>.</p>
+    <p><strong>Dormienza (fase A).</strong> <code>effective_kc(...)</code> riduce il Kc in dormienza/riposo (<code>DORMANCY_KC_FACTOR</code>, <code>REST_KC_FACTOR</code>) ma con un <strong>pavimento di evaporazione</strong> (<code>KC_BARE_SOIL_FLOOR</code> = 0.20): il substrato nudo evapora comunque, e un modello che desse consumo nullo non suggerirebbe mai di annaffiare. Il pavimento vale per <code>effective_kc</code> ma <strong>non</strong> per <code>effective_kcb</code> — nel dual-Kc l'evaporazione la copre già K<sub>e</sub>.</p>
+
+    <p>Catalogo: <code>BASIL</code>, <code>TOMATO</code>, <code>LETTUCE</code> (annuali, con soglie GDD; la lattuga non fiorisce mai), <code>CITRUS</code>, <code>ROSEMARY</code> (perenni, calendario a 12 mesi), <code>ALL_SPECIES</code>.</p>
 
     <!-- POT -->
     <h3 id="domain-pot"><code>domain/pot.py</code> — Entità centrale</h3>
@@ -905,9 +1187,10 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
       </div>
       <div class="api-body">
         <p>Identificato univocamente da <code>label</code>.</p>
-        <p><strong>Immutabili dopo la creazione</strong>: <code>label</code>, <code>species</code>, <code>substrate</code>, geometry (<code>pot_volume_l</code>, <code>pot_diameter_cm</code>, <code>pot_shape</code>), <code>location</code>, <code>room_id</code>, <code>pot_material</code>, <code>pot_color</code>, <code>sun_exposure</code>, <code>rainfall_exposure</code>, <code>planting_date</code>.</p>
-        <p><strong>Stato mutabile</strong>: <code>state_mm</code>, <code>salt_mass_meq</code>, <code>ph_substrate</code>, <code>saucer_state_mm</code>.</p>
+        <p><strong>Immutabili dopo la creazione</strong>: <code>label</code>, <code>species</code>, <code>substrate</code>, geometry (<code>pot_volume_l</code>, <code>pot_diameter_cm</code>, <code>pot_shape</code>), <code>location</code>, <code>room_id</code>, <code>pot_material</code>, <code>pot_color</code>, <code>sun_exposure</code>, <code>rainfall_exposure</code>, <code>shelter_level</code>, <code>planting_date</code>.</p>
+        <p><strong>Stato mutabile</strong>: <code>state_mm</code>, <code>salt_mass_meq</code>, <code>ph_substrate</code>, <code>saucer_state_mm</code>, <code>gdd_accumulated</code>.</p>
         <p><strong>Property calcolate</strong> (derivate): <code>state_theta</code>, <code>fc_mm</code>, <code>pwp_mm</code>, <code>taw_mm</code>, <code>raw_mm</code>, <code>alert_mm</code>, <code>ec_substrate_mscm</code>, <code>kp</code>, <code>surface_area_m2</code>, <code>current_stage(date)</code>.</p>
+        <p><code>shelter_level</code> (<code>ShelterLevel</code>: <code>EXPOSED</code>/<code>STANDARD</code>/<code>SHELTERED</code>) modula il vento prima del selettore PM. <code>gdd_accumulated</code> accumula i gradi-giorno dopo ogni passo di bilancio: <strong><code>None</code> significa "non sto tracciando"</strong> (degrado sicuro), distinto da <code>0.0</code> che significa "traccio da adesso" — <code>current_stage</code> lo passa a <code>species.stage_at</code> per il selettore best-available.</p>
       </div>
     </div>
 
@@ -1136,7 +1419,8 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
 
     <p>
       Database operativo con storia completa degli stati. Schema versionato
-      (attualmente v3/v4 con migrazioni automatiche).
+      (attualmente <strong>v5</strong>) con migrazioni automatiche, idempotenti
+      e difensive sull'inizializzazione.
     </p>
 
     <div class="api">
@@ -1146,8 +1430,23 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
       </div>
       <div class="api-body">
         <p>API CRUD per giardini, vasi, room, snapshot di stato, catalogo (specie/substrati). Costruttore: <code>GardenPersistence(db_path)</code>. Migrazioni auto sull'inizializzazione.</p>
-        <p>Metodi principali: <code>register_species</code>, <code>register_substrate</code>, <code>save_garden(garden, snapshot_timestamp)</code>, <code>load_garden(name) → Garden</code>, <code>list_gardens()</code>, <code>load_pot_history(pot_label) → List[PotStateSnapshot]</code>.</p>
+        <p>Metodi principali: <code>register_species</code>, <code>register_substrate</code>, <code>save_garden(garden, snapshot_timestamp)</code>, <code>load_garden(name) → Garden</code>, <code>list_gardens()</code>, <code>query_states(pot_label, ...) → List[PotStateSnapshot]</code>, <code>query_events</code>, <code>query_scheduled_events</code>.</p>
       </div>
+    </div>
+
+    <div class="callout note">
+      <strong>Schema v5 — persistenza della calibrazione (fase A)</strong>
+      Perché una calibrazione che non sopravvive a un reload non esiste, la
+      migrazione v4→v5 ha aggiunto <code>pot_states.gdd_accumulated</code>
+      (nullable per design: <code>NULL</code> = non tracciato) e <strong>11
+      colonne alla tabella specie</strong> — la configurazione fenologica
+      (<code>phenology_anchor</code>, <code>phenology_calendar_json</code>,
+      <code>annual_growth_stages_json</code>, soglie GDD) più quattro campi che
+      <em>predatavano</em> la fase A e non venivano salvati
+      (<code>depletion_fraction</code>, <code>stomatal_resistance_s_m</code>,
+      <code>crop_height_m</code>, <code>notes</code>). La migrazione usa
+      <code>_table_exists</code>/<code>_column_exists</code>, quindi è sicura
+      anche su DB parziali.
     </div>
 
     <div class="api">
@@ -1169,9 +1468,13 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     <h3 id="io-serialization"><code>io/serialization.py</code> — JSON</h3>
 
     <p>
-      Formato di trasporto autocontenuto per backup, migrazione, condivisione.
-      <strong>Non</strong> è persistenza: funzioni pure, niente file I/O,
-      niente DB. Il chiamante gestisce file e storage.
+      Formato di trasporto autocontenuto per backup, migrazione, condivisione
+      (<code>FORMAT_VERSION = 3</code>). <strong>Non</strong> è persistenza:
+      funzioni pure, niente file I/O, niente DB. Il chiamante gestisce file e
+      storage. La v3 ha aggiunto i 16 campi della fase A (fenologia, GDD, e
+      quattro che erano persi anche prima); la lettura è
+      <strong>retrocompatibile</strong>: i campi assenti in un JSON vecchio
+      ricadono sui default della dataclass.
     </p>
 
     <pre><code><span class="kw">from</span> fitosim.io.serialization <span class="kw">import</span> export_garden_json, import_garden_json
@@ -1424,10 +1727,20 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
     <h2 id="testing">7. Testing</h2>
 
     <p>
-      <code>fitosim</code> ha <strong>1137 test verdi</strong> (357 sub-test)
-      che girano in ~8 secondi su laptop standard. La suite è la rete di
+      <code>fitosim</code> ha <strong>1366 test verdi</strong> (428 sub-test)
+      che girano in pochi secondi su laptop standard. La suite è la rete di
       sicurezza primaria del refactoring.
     </p>
+
+    <div class="callout note">
+      <strong>Il test che conta, per ogni fonte di calibrazione</strong>
+      Ogni modulo della fase A ha un test di <em>giro chiuso</em> con verità
+      nota: si costruisce una serie con un parametro noto e si verifica di
+      recuperarlo. Per il lisimetro è il round-trip contro la geometria reale
+      di un <code>Pot</code> (un errore di fattore 10 nella conversione
+      grammi→mm non lo vede nessuno finché non si chiude quel giro); per la
+      precedenza è l'ancoraggio del fattore al prior (1.10, non 0.99).
+    </div>
 
     <h3>Struttura</h3>
 
@@ -1445,6 +1758,7 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
       </thead>
       <tbody>
         <tr><td>Unit scientifici</td><td><code>test_balance</code>, <code>test_et0</code>, <code>test_substrate</code>, ...</td><td>Funzioni pure FAO-56 e helper.</td></tr>
+        <tr><td>Layer feedback (fase A)</td><td><code>test_calibration</code>, <code>test_phenology</code>, <code>test_behavioral_calibration</code>, <code>test_lysimeter</code>, <code>test_calibration_resolution</code></td><td>Recupero di parametri noti, robustezza della mediana, guardrail di confidenza e precedenza tra fonti.</td></tr>
         <tr><td>Unit dominio</td><td><code>test_pot</code>, <code>test_garden</code>, <code>test_alerts</code>, ...</td><td>Entità di dominio e invarianti.</td></tr>
         <tr><td>Integrazione I/O</td><td><code>test_persistence</code>, <code>test_serialization</code></td><td>Round-trip SQLite/JSON.</td></tr>
         <tr><td>Spec sensori v1</td><td><code>test_measurement</code></td><td>Validazione della dataclass canonica <code>Measurement</code>: sensor_id, timestamp tz-aware, vocabolario, range fisici (109 test).</td></tr>
@@ -1559,6 +1873,10 @@ python -m pytest --cov=fitosim --cov-report=term-missing</code></pre>
         <tr><td>CEC</td><td>Cation Exchange Capacity. Capacità del substrato di tamponare il pH.</td></tr>
         <tr><td>Penman-Monteith</td><td>Equazione di riferimento per ET. "Standard FAO-56" usa coltura riferimento; "fisica" usa parametri reali della specie.</td></tr>
         <tr><td>Hargreaves-Samani</td><td>Formula semplificata di ET₀ che richiede solo Tmin/Tmax (fallback robusto).</td></tr>
+        <tr><td>GDD</td><td>Growing Degree Days (gradi-giorno). Temperatura accumulata sopra una soglia base T<sub>base</sub>; guida lo sviluppo fenologico delle annuali indipendentemente dal calendario.</td></tr>
+        <tr><td>Chill units</td><td>Fabbisogno di freddo (modello Utah). Governa l'uscita dalla dormienza delle perenni: è la ragione per cui i GDD non si applicano ad esse.</td></tr>
+        <tr><td>Lisimetro</td><td>Misura diretta dell'ET pesando il vaso: la variazione di massa è l'acqua evapotraspirata. Ground truth del layer di feedback.</td></tr>
+        <tr><td>Ground truth</td><td>Misura di riferimento, priva di inferenza, contro cui si validano le altre fonti di calibrazione.</td></tr>
       </tbody>
     </table>
 
