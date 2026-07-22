@@ -6,7 +6,7 @@ Una guida pratica per usare fitosim nel tuo giardino domestico
 
 *Dall’installazione al primo “hello basilico”, dai concetti fondamentali al dashboard operativo del balcone. Diciassette capitoli più tre appendici per orientarti tra vasi, substrati, sensori, persistenza, eventi e allerte.*
 
-*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2)*
+*Maggio 2026 — Contenuti a fine fascia 2 (tappa 5). Numeri e riferimenti (test, schema DB, calibrazione) riallineati a luglio 2026, con la fascia 3 in corso.*
 
 # 1 — Benvenuto in fitosim
 
@@ -54,11 +54,11 @@ Per ora fitosim è distribuito come repository sorgente. Una volta scaricato il 
 
 $ cd fitosim/
 
-$ python -m pytest tests/
+$ python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
 
-==================== 1007 passed, 1 skipped in 11.43s =====================
+================= 1366 passed, 428 subtests passed =================
 
-Se vedi un risultato simile (al momento della scrittura di questo manuale la suite conta 1007 test verdi più 1 skipped intenzionale e 357 sub-test, organizzati in fascia 1 e fascia 2), tutto è a posto e puoi proseguire. Se vedi errori di import, è possibile che la directory src/ non sia nel tuo path: ricorda di lanciare gli script con PYTHONPATH=src impostato, oppure di installare la libreria in modalità sviluppo con pip install -e .
+Se vedi un risultato simile (al momento di questo aggiornamento la suite del core conta 1366 test verdi più 428 sub-test), tutto è a posto e puoi proseguire. Il core gira con la sola standard library: la sola demo end-to-end tappa5\_E usa matplotlib, per questo qui la escludiamo; se vuoi eseguirla installa gli extra con pip install -e '.[dev]'. I test coprono la fascia 1 e la fascia 2, più la fascia 3 (il layer di feedback, vedi il manuale di calibrazione). Se vedi errori di import, è possibile che la directory src/ non sia nel tuo path: ricorda di lanciare gli script con PYTHONPATH=src impostato, oppure di installare la libreria in modalità sviluppo con pip install -e .
 
 __*Nota: *__*Se preferisci non manipolare PYTHONPATH ogni volta, l’installazione in modalità sviluppo (pip install -e .) crea un link simbolico nel tuo virtual environment che rende fitosim importabile da qualsiasi script senza configurazione aggiuntiva.*
 
@@ -327,6 +327,8 @@ Il dual-Kc è particolarmente utile quando vuoi modellare con accuratezza i gior
 # 8 — Imparare dal sensore
 
 Il modello fitosim, fino al capitolo precedente, ha funzionato a “ciclo aperto”: prendi parametri, fornisci forzanti meteo, produci previsioni. Funziona bene se i parametri sono accurati. Nella realtà i parametri di letteratura possono differire del 10-30% dai parametri reali del tuo vaso specifico. Quando hai un sensore di umidità del suolo come il WH51, puoi chiudere il cerchio in due modi complementari: calibrare i parametri dalle letture storiche, e iniettare letture giornaliere per tenere il modello allineato.
+
+Questo capitolo copre la calibrazione dal sensore, che è dove il ciclo chiuso è nato. La fascia 3 l’ha poi generalizzata in un **layer di feedback multi-fonte**: oltre alla pendenza del sensore per il Kc, ci sono il lisimetro (pesata del vaso come misura diretta e di riferimento), i gradi-giorno per la fenologia, e la calibrazione comportamentale per i vasi senza sensore, più una regola che le compone quando più fonti toccano lo stesso parametro. Se il sensore non c’è, insomma, non sei tagliato fuori dalla calibrazione. Il percorso operativo completo è nel *Manuale di calibrazione* (`docs/fitosim_calibration_manual.md`); il progetto del layer in `docs/fitosim_feedback_layer_design.md`.
 
 ## Calibrazione dei parametri dalle letture storiche
 
@@ -608,7 +610,7 @@ Il Garden in-memory del capitolo 10 è perfetto per la simulazione interattiva m
 
 ## Il database e il catalogo
 
-La persistenza vive in fitosim.io.persistence. La classe principale è GardenPersistence, che apre o crea un database SQLite in un file specificato. Lo schema attuale è alla versione 3 e gestisce otto tabelle (specie, materiali base, substrati, ricette delle misture, gardens, vasi, snapshot di stato, eventi). Le migrazioni v1→v2 e v2→v3 si applicano automaticamente ai database esistenti, senza intervento da parte tua.
+La persistenza vive in fitosim.io.persistence. La classe principale è GardenPersistence, che apre o crea un database SQLite in un file specificato. Lo schema attuale è alla versione 5 e gestisce, oltre alle otto tabelle di base (specie, materiali base, substrati, ricette delle misture, gardens, vasi, snapshot di stato, eventi), anche le stanze indoor (Room) e gli eventi pianificati. Le migrazioni si applicano automaticamente e in sequenza ai database esistenti (v1→v2 channel\_id dei vasi, v2→v3 eventi pianificati, v3→v4 stanze indoor, v4→v5 gradi-giorno accumulati dei vasi e configurazione fenologica delle specie della fascia 3), senza intervento da parte tua.
 
 from fitosim.io.persistence import GardenPersistence
 
@@ -1352,7 +1354,7 @@ Sì. Il modello previsionale di base — caratterizzazione del vaso, geometria, 
 
 ## Quando dovrei aggiornare lo schema del database?
 
-Mai manualmente: lo fa fitosim per te. Ogni volta che apri un GardenPersistence su un database esistente, fitosim verifica la versione dello schema (registrata nella tabella schema\_metadata) e applica automaticamente le migrazioni necessarie verso la versione corrente. Le migrazioni v1→v2 (aggiunta di channel\_id ai pot) e v2→v3 (aggiunta della tabella eventi) sono già state applicate ai database creati con le prime versioni della libreria. Le future migrazioni manterranno la stessa policy: automatiche e senza perdita di dati.
+Mai manualmente: lo fa fitosim per te. Ogni volta che apri un GardenPersistence su un database esistente, fitosim verifica la versione dello schema (registrata nella tabella schema\_metadata) e applica automaticamente le migrazioni necessarie verso la versione corrente. Le migrazioni v1→v2 (channel\_id ai pot), v2→v3 (tabella eventi pianificati), v3→v4 (tabella stanze indoor) e v4→v5 (gradi-giorno accumulati e configurazione fenologica delle specie) sono già state applicate ai database creati con le versioni precedenti della libreria. Le future migrazioni manterranno la stessa policy: automatiche e senza perdita di dati.
 
 ## Le mie piante sono indoor, devo cambiare qualcosa?
 

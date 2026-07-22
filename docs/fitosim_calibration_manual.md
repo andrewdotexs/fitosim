@@ -2,7 +2,7 @@ __fitosim — Manuale di calibrazione__
 
 *Procedure operative per la calibrazione del modello sui vasi reali del balcone*
 
-*Maggio 2026 — Fase iniziale della fascia 3*
+*Maggio 2026 — Fase iniziale della fascia 3. Aggiornato luglio 2026: la parte matematica della fascia 3 (fase A del layer di feedback) è ora implementata in fitosim; le note "Aggiornamento fascia 3" nei capitoli collegano le procedure manuali qui descritte ai moduli che le eseguono.*
 
 # 1 — Premessa: cosa significa "calibrare" fitosim
 
@@ -21,6 +21,21 @@ Il secondo livello è la calibrazione dei substrati. Una volta che ti fidi del s
 Il terzo livello è la calibrazione delle specie. Una volta che ti fidi del sensore E del substrato, puoi usare le serie temporali di theta calibrato per stimare quanto consuma la pianta giorno per giorno, e confrontare il consumo osservato con quello previsto dal modello. Le differenze sistematiche che emergono ti dicono come correggere i parametri della specie: i Kc per fase fenologica, le date di transizione tra fasi, la resistenza stomatica per il Penman-Monteith fisico, l'altezza colturale. Questa è la parte agronomicamente più ricca e quella che giustifica davvero un anno di osservazioni.
 
 Il quarto livello è la calibrazione del modello chimico, possibile solo sui vasi strumentati con WH52 perché lì hai l'EC del substrato misurata. Sui vasi che fertirrighi attivamente puoi calibrare il coefficiente nutrizionale Kn (quanto la pianta riduce il consumo idrico in funzione dello stress chimico) e il coefficiente di accumulo dei sali nelle fertirrigazioni. Per il pH del substrato fitosim ha un modello separato, ma i sensori WH51 e WH52 non misurano il pH, quindi questa calibrazione si fa con misure manuali periodiche con pH-metro a stick.
+
+## Aggiornamento (fascia 3, fase A): i moduli che automatizzano questi livelli
+
+Da quando questo manuale è stato scritto, fitosim ha implementato la matematica di questi livelli come **funzioni pure** in `science/`, senza dipendenze esterne. Il livello 1 (la funzione di trasferimento della sonda, S\_sonda → theta\_vero) resta un'analisi tua, ma tutto il resto ha ora un'API:
+
+| Livello / parametro | Modulo | Segnale |
+|---|---|---|
+| Livello 2 — theta\_fc, theta\_pwp | `science/calibration.py` (`calibrate_substrate`) | ancora ai picchi/valli di theta |
+| Livello 3 — Kc | `science/calibration.py` (pendenza di asciugamento) | velocità di discesa della curva |
+| Livello 3 — Kc (ground truth) | `science/lysimeter.py` | pesata del vaso |
+| Livello 3 — Kc senza sensore | `science/behavioral_calibration.py` | scostamento delle irrigazioni |
+| Livello 3 — date di transizione | `science/phenology.py` | gradi-giorno (GDD) |
+| Più fonti sullo stesso Kc | `science/calibration_resolution.py` | precedenza tra le proposte |
+
+Due principi che questi moduli condividono e che vale la pena tenere a mente leggendo le procedure manuali qui sotto. Primo: **propongono, non applicano**. Ogni funzione restituisce una *proposta* di correzione con confidenza e spiegazione; l'applicazione è un passo separato che lavora su una **copia** della specie, mai sul catalogo globale — così un errore di calibrazione non contamina gli altri vasi. Secondo: le procedure manuali descritte in questo manuale non sono state rese obsolete dai moduli — le spiegano. Capire come si pesa un vaso e come si estrae il consumo dalle serie di theta è il modo per interpretare (e non fidarsi ciecamente di) ciò che i moduli restituiscono. Il progetto completo del layer è in `docs/fitosim_feedback_layer_design.md`.
 
 ## Strumentazione che ti serve, oltre ai sensori
 
@@ -182,9 +197,13 @@ Il modello fitosim, per ognuno di quei giorni puliti, ha calcolato un ET previst
 
 Esempio: se per il rosmarino in fase di piena vegetazione il rapporto medio ET\_osservato diviso ET\_previsto è 0.85, significa che il modello sovrastima il consumo del quindici per cento, e il Kc da letteratura (tipicamente 0.7 per rosmarino in piena vegetazione) andrebbe corretto a 0.7 moltiplicato per 0.85 uguale 0.60 circa. Aggiorna la Species nel catalogo, ricalcola le previsioni con il nuovo Kc, verifica che il rapporto medio scenda a circa uno. Ripeti per ogni fase fenologica e per ogni specie.
 
+**Aggiornamento (fascia 3, fase A).** Questo confronto è esattamente ciò che fanno tre moduli, ciascuno per una situazione diversa. Se hai il sensore, `science/calibration.py` (parte "pendenza") inverte il bilancio dalla velocità di asciugamento; nota che legge il coefficiente di stress Ks dalla theta osservata invece di stimarlo, così una finestra che finisce in stress non ti restituisce un Kc falsato al ribasso. Se hai una bilancia, `science/lysimeter.py` misura l'ET direttamente per pesata (nessuna inferenza: è il ground truth) — ma richiede il vaso nella zona di comfort, perché quello che vuoi misurare è Kc, non Ks·Kc. Se non hai né sensore né bilancia, `science/behavioral_calibration.py` deduce la correzione dallo scostamento tra quando il modello suggerisce di irrigare e quando lo fai davvero. Tutti restituiscono una stima con livello di confidenza e la mediana su più finestre, così un giorno anomalo non sposta il risultato — la stessa robustezza che il capitolo raccomanda di ottenere a mano.
+
 ## Calibrazione delle date di transizione tra fasi
 
 Le date di transizione tra le fasi fenologiche (da iniziale a sviluppo, da sviluppo a piena vegetazione, eccetera) sono in fitosim parametri costanti per specie. Nella realtà variano leggermente di anno in anno con il clima, ma per una calibrazione di prima fase puoi accettare la semplificazione e fissare le date sui valori medi osservati nel tuo balcone. Il segnale per identificare una transizione è il cambiamento sistematico del rapporto ET\_osservato diviso ET\_previsto: se per una specie il rapporto è 0.95 in maggio-giugno e diventa 1.20 in luglio-agosto, hai identificato una transizione di fase che non è correttamente posizionata nel modello (oppure un Kc sbagliato per la fase di luglio-agosto, e devi disambiguare guardando la dinamica nel dettaglio).
+
+**Aggiornamento (fascia 3, fase A).** La semplificazione "date costanti" non è più l'unica strada: fitosim ora modella lo sviluppo delle **annuali** con i gradi-giorno (`science/phenology.py`), cioè la temperatura accumulata sopra una soglia base, che è ciò che governa davvero lo sviluppo. È il modo di rendere una transizione **trasferibile tra climi** invece che fissata al calendario del tuo balcone: le date di fioritura che annoti nel diario, incrociate con lo storico meteo, tarano le soglie GDD. Le **perenni** restano invece ancorate al calendario stagionale (non ai GDD, perché il loro sviluppo dipende anche dal fabbisogno di freddo — chill units — che i gradi-giorno non catturano). Fitosim usa i 6 stadi botanici osservabili (gli stessi del diario e di The Pot) e li traduce internamente nei 3 stadi FAO-56 che pilotano il Kc.
 
 ## La resistenza stomatica per il Penman-Monteith fisico
 
