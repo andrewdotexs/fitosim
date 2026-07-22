@@ -23,18 +23,23 @@ il giardiniere.
 
 ## Stato del progetto
 
-- **1007 test verdi** (più 1 skipped intenzionale, 357 sub-test)
-- **Tempo esecuzione suite**: ~11 secondi su laptop standard
+- **1366 test verdi** (428 sub-test) nel core; la demo end-to-end usa matplotlib
+- **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
 - **Linguaggio**: Python ≥ 3.10
 - **Dipendenze esterne nel core**: zero (solo standard library)
-- **Schema database**: SQLite v3 con migrazioni automatiche v1→v2→v3
+- **Schema database**: SQLite v5 con migrazioni automatiche v1→…→v5
+- **Formato JSON di trasporto**: v3
 - **Fascia 1**: completa (modello idrico FAO-56 esteso)
-- **Fascia 2**: **completa** (5 tappe su 5, 100% del percorso)
-- **Prossimo passo**: apertura fascia 3 di calibrazione contro dati reali del balcone
+- **Fascia 2**: completa (5 tappe: sensori, chimica, architettura, Penman-Monteith, indoor)
+- **Fascia 3**: **in corso** — la fase A del *layer di feedback* (calibrazione multi-fonte) è implementata in fitosim
+- **Prossimo passo**: gerarchia di aggregazione (in The Pot) e calibrazione contro i dati reali del balcone
 
 ```
-$ python -m pytest tests/
-======================== 1007 passed, 1 skipped in 11.43s ========================
+# Core (zero dipendenze esterne):
+$ python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
+================= 1366 passed, 428 subtests passed =================
+
+# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1372 test.
 ```
 
 ## Cosa fa
@@ -59,6 +64,12 @@ parametri noti. In questo dominio specifico la libreria copre:
   del sensore WH51
 - Feedback loop sensore-modello in tempo reale con diagnostica strutturata
   della discrepanza
+- **Layer di feedback (fascia 3, fase A)**: cinque fonti di calibrazione che
+  propongono correzioni tracciabili senza mai toccare il catalogo globale —
+  pendenza del sensore e lisimetro per il Kc, gradi-giorno per la fenologia,
+  scostamento delle irrigazioni e giudizi sulle allerte per il comportamento
+  — più una regola di precedenza che le compone quando più fonti toccano lo
+  stesso parametro
 - **Garden**: orchestrazione di più vasi come unità coerente
 - **Persistenza SQLite**: database operativo con storia completa degli stati
 - **Serializzazione JSON**: formato di trasporto autocontenuto
@@ -214,7 +225,8 @@ pubblicato su PyPI:
 ```bash
 git clone https://github.com/<tuo-username>/fitosim.git
 cd fitosim
-python -m pytest tests/  # verifica che la suite gira (1007 verdi attesi)
+# Il core gira senza dipendenze esterne (1366 verdi attesi):
+python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
 ```
 
 Per usare la libreria nei tuoi script puoi scegliere tra due opzioni. La
@@ -249,10 +261,11 @@ Il layer `science/` contiene il modello matematico FAO-56 esteso: bilancio
 idrico, calcolo ET (Penman-Monteith fisico, Penman-Monteith standard FAO-56,
 Hargreaves-Samani, e selettore "best available" che sceglie automaticamente
 la formula migliore disponibile), dual-Kc, fisica del vaso (Kp), modello
-chimico (coefficiente Kn), sottovaso, fertirrigazione, calibrazione empirica,
-e radiazione indoor categoriale e continua per i vasi in casa. Sono
-prevalentemente funzioni pure più qualche dataclass (`Substrate`,
-`BaseMaterial`, `EtResult`).
+chimico (coefficiente Kn), sottovaso, fertirrigazione, radiazione indoor
+categoriale e continua per i vasi in casa, e il **layer di feedback della
+fascia 3** (calibrazione da sensore, gradi-giorno, lisimetro, calibrazione
+comportamentale, e precedenza tra fonti). Sono prevalentemente funzioni pure
+più qualche dataclass (`Substrate`, `BaseMaterial`, `EtResult`).
 
 Il layer `domain/` contiene gli oggetti di dominio e l'orchestrazione: `Pot`
 è la classe centrale che monta insieme tutte le componenti scientifiche in
@@ -313,20 +326,25 @@ fitosim/
 │   │   ├── saucer.py       # modello sottovaso
 │   │   ├── nutrition.py    # coefficiente Kn (tappa 3)
 │   │   ├── fertigation.py  # applicazione fertirrigazione
-│   │   ├── calibration.py  # calibrazione da sensore
-│   │   └── radiation.py    # radiazione solare astronomica
+│   │   ├── radiation.py    # radiazione solare astronomica
+│   │   ├── calibration.py             # sensore: ancora + pendenza  [fascia 3, fase A]
+│   │   ├── phenology.py               # gradi-giorno (GDD)
+│   │   ├── behavioral_calibration.py  # irrigazioni -> Kc, giudizi -> p
+│   │   ├── lysimeter.py               # pesata -> Kc (ground truth)
+│   │   └── calibration_resolution.py  # precedenza tra fonti
 │   └── io/                 # adapter di acquisizione e persistenza
-│       ├── persistence.py  # SQLite, schema v3 (tappa 4)
-│       ├── serialization.py # JSON formato v2 (tappa 4)
+│       ├── persistence.py  # SQLite, schema v5
+│       ├── serialization.py # JSON formato v3
 │       └── sensors/
 │           ├── protocols.py    # SoilSensor, EnvironmentSensor (Protocol)
-│           ├── types.py        # SoilReading, EnvironmentReading
+│           ├── measurement.py  # Measurement canonico (spec sensori v1)
+│           ├── types.py        # SoilReading, EnvironmentReading (legacy)
 │           ├── errors.py       # gerarchia eccezioni a 3 livelli
 │           ├── ecowitt.py      # adapter Ecowitt: WH51/WH52, WN31, Env
 │           ├── openmeteo.py    # adapter Open-Meteo (meteo)
 │           ├── http_json.py    # adapter generico per gateway ESP32
 │           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 1007 test verdi
+├── tests/                  # 1366 test verdi (core)
 ├── examples/               # esempi e demo end-to-end
 │   ├── tappa4_complete_demo.py        # demo Garden + persistenza + allerte
 │   ├── tappa5_A_penman_monteith_demo.py
@@ -334,8 +352,10 @@ fitosim/
 │   ├── tappa5_C_garden_demo.py
 │   └── tappa5_E_appartamento_demo.py  # demo end-to-end appartamento indoor
 ├── docs/
-│   ├── fitosim_user_manual.docx     # manuale utente
-│   ├── fitosim_status_report.docx   # report di status del progetto
+│   ├── developer_documentation.html # doc tecnica per sviluppatori
+│   ├── fitosim_user_manual.docx     # manuale utente (anche .md/.pdf)
+│   ├── fitosim_status_report.docx   # report di status (anche .md/.pdf)
+│   ├── fitosim_feedback_layer_design.md  # design layer di feedback (fascia 3)
 │   └── uml/
 │       ├── fitosim_packages.dot     # sorgente diagramma package
 │       ├── fitosim_packages.png
@@ -346,11 +366,12 @@ fitosim/
 
 ## Storia delle tappe
 
-Il progetto è strutturato in due fasce di lavoro, ognuna composta da più
-tappe. La fascia 1 ha costruito il modello idrico completo del singolo vaso;
-la fascia 2 ha esteso la libreria con sensoristica reale, modello
-chimico, architettura applicativa, e raffinamento scientifico (Penman-Monteith
-e modello indoor).
+Il progetto è strutturato in fasce di lavoro, ognuna composta da più tappe.
+La fascia 1 ha costruito il modello idrico completo del singolo vaso; la
+fascia 2 ha esteso la libreria con sensoristica reale, modello chimico,
+architettura applicativa, e raffinamento scientifico (Penman-Monteith e
+modello indoor); la fascia 3, in corso, calibra il modello contro la realtà
+e ne ha già consegnato la parte matematica — il layer di feedback (fase A).
 
 ### Fascia 1 — Modello idrico completo (chiusa)
 
@@ -422,17 +443,32 @@ salotto e camera da letto, ognuno con il suo microclima e le sue regole.
 Per i dettagli architetturali e le decisioni di design di ciascuna
 sotto-tappa, vedi lo status report del progetto.
 
-### Prossimo passo: fascia 3 di calibrazione
+### Fascia 3 — Calibrazione e layer di feedback (in corso)
 
-Con la fascia 2 chiusa, il prossimo passo è la **fascia 3 di calibrazione**:
-una fase concettualmente diversa dalle precedenti, meno "costruzione di
-nuove API" e più "messa a punto e validazione contro realtà". I dati reali
-del balcone milanese (la stazione Ecowitt è già installata e raccoglie dati
-da mesi) saranno usati per raffinare i numeri specifici del modello: le
-frazioni della radiazione indoor, i parametri Kc del catalogo specie, le
-soglie del selettore "best available", la resistenza stomatica delle specie
-con dati reali. Lo scopo è trasformare fitosim da "libreria genericamente
-plausibile" a "libreria calibrata per il TUO balcone milanese".
+La fascia 3 è concettualmente diversa dalle precedenti: meno "costruzione di
+nuove API" e più "messa a punto e validazione contro realtà". La sua parte
+matematica — la **fase A del layer di feedback** — è già in fitosim, come
+funzioni pure senza effetti collaterali. Ogni fonte *propone* una correzione
+con confidenza e spiegazione; l'applicazione è un passo separato che lavora
+su una copia della specie, mai sul catalogo globale.
+
+Cinque fonti, più la regola che le compone:
+
+| Fonte | Segnale | Calibra |
+|---|---|---|
+| Sensore — ancora | θ ai picchi/valli | θ_FC, θ_PWP |
+| Sensore — pendenza | velocità di asciugamento | Kc |
+| Gradi-giorno | temperatura accumulata | soglie di stadio (annuali) |
+| Comportamentale | scostamento irrigazioni · giudizi sulle allerte | Kc (fattore) · soglia p |
+| Lisimetro | pesata del vaso | Kc di catalogo (ground truth) |
+| **Precedenza** | le proposte delle altre | risolve i conflitti (scope prima della reliability) |
+
+Restano da fare la **gerarchia di aggregazione** vaso → cluster → globale
+(che vive in The Pot, non in fitosim) e la calibrazione vera e propria contro
+i dati reali del balcone milanese, dove la stazione Ecowitt raccoglie da mesi.
+Lo scopo resta trasformare fitosim da "libreria genericamente plausibile" a
+"libreria calibrata per il TUO balcone milanese". Progetto completo del layer
+in [`docs/fitosim_feedback_layer_design.md`](docs/fitosim_feedback_layer_design.md).
 
 ## Documentazione
 
@@ -450,6 +486,12 @@ disponibili, e un glossario dei termini agronomici.
 **Status report** (`docs/fitosim_status_report.docx`): il riassunto
 quantitativo dello stato di sviluppo, con metriche, roadmap e storico delle
 consegne. Aggiornato ad ogni chiusura di tappa.
+
+**Documentazione per sviluppatori** (`docs/developer_documentation.html`):
+la guida ai contratti pubblici dei tre layer, ai moduli e alle convenzioni
+di codice, allineata alla fascia 3. È il riferimento per chi sviluppa la
+libreria (l'equivalente tecnico del manuale utente). Il design del layer di
+feedback della fascia 3 è in `docs/fitosim_feedback_layer_design.md`.
 
 **Demo end-to-end della tappa 4** (`examples/tappa4_complete_demo.py`):
 script Python eseguibile che mostra in azione tutte le capacità della tappa
@@ -495,7 +537,8 @@ copyright notice originale. Il software è fornito "as is" senza garanzie.
 Andrea Ceriani — fitosim nasce come progetto personale per modellare con
 precisione il bilancio idrico e chimico dei vasi del mio balcone milanese,
 con l'obiettivo di costruirci sopra il dashboard "Il Mio Giardino"
-self-hosted su Raspberry Pi 5 o Android in Termux. Quando il sistema avrà
-raccolto qualche mese di dati reali dai sensori del balcone, comincerà la
-fascia 3 di calibrazione che trasformerà fitosim da "libreria genericamente
-plausibile" a "libreria calibrata per il TUO balcone milanese".
+self-hosted su Raspberry Pi 5 o Android in Termux. La stazione del balcone
+raccoglie dati da mesi ed è iniziata la fascia 3 di calibrazione — la sua
+parte matematica (il layer di feedback) è già consegnata — che trasformerà
+fitosim da "libreria genericamente plausibile" a "libreria calibrata per il
+TUO balcone milanese".
