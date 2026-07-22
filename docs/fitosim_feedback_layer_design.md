@@ -208,9 +208,27 @@ Due feedback sono confrontabili se i loro fingerprint coincidono.
 | Curva `root_fraction` | (fascia 3, vedi design doc dedicato) | fenologia, post-rinvaso, sensore | B | ⬜ |
 | `ec_optimal_*`, `ph_optimal_*` | `domain/species.py` | fertirrigazione | **C** | ⬜ |
 
-**Tre fonti per `kc_*`, e non è ridondanza.** Le tre hanno costi e affidabilità molto diversi, e coprono popolazioni disgiunte di vasi: il lisimetro dà il valore di catalogo per il sim_group (pochi vasi strumentati, condizioni controllate); la pendenza del sensore corregge il singolo vaso di chi ha un sensore; il comportamentale corregge il vaso di chi **non** ha nulla, leggendo solo quando il giardiniere annaffia. Chi ha più fonti le usa in quest'ordine di precedenza.
+**Tre fonti per `kc_*`, e non è ridondanza.** Le tre hanno costi e affidabilità molto diversi, e coprono popolazioni disgiunte di vasi: il lisimetro dà il valore di catalogo per il sim_group (pochi vasi strumentati, condizioni controllate); la pendenza del sensore corregge il singolo vaso di chi ha un sensore; il comportamentale corregge il vaso di chi **non** ha nulla, leggendo solo quando il giardiniere annaffia. Quando più d'una è presente, la loro composizione è governata dalla regola di precedenza descritta più sotto (`science/calibration_resolution.py`), che tiene separati lo *scope* di una proposta dalla sua *reliability*.
 
 **Perché `p` ha due fonti in fase A.** Lo scostamento delle irrigazioni, da solo, non distingue un Kc sbagliato da una soglia `p` sbagliata: entrambi producono *"irriga più tardi del previsto"*. Il dismissal interroga direttamente la soglia, perché chiede all'utente di giudicare **lo stato della pianta**, non il momento dell'irrigazione. Insieme separano le due cause che ciascuno da solo confonde.
+
+### La precedenza tra fonti
+
+Con più fonti sullo stesso parametro serve una regola esplicita di chi vince — altrimenti la precedenza resta implicita nell'ordine in cui il chiamante applica le correzioni, che è il modo peggiore di deciderla. La regola (`science/calibration_resolution.py`) parte dal distinguere **due assi che è facile schiacciare in uno**:
+
+- lo **scope** — quanto una proposta è specifica al vaso: catalogo (tutto il sim_group) ⊂ cluster (clima × gruppo) ⊂ vaso (questo);
+- la **reliability** — quanto la fonte è affidabile in sé.
+
+Il lisimetro è *ground truth* sull'asse della reliability, ma vive sullo scope più largo: parla del vaso **medio**, non di quello che sto simulando. Da qui la regola:
+
+1. **Lo scope più specifico con una proposta usabile decide il valore del vaso.** Lo scope batte la reliability *tra* scope diversi: per simulare questo vaso, una misura diretta del vaso — anche meno raffinata — batte il valore di catalogo, perché parla dell'oggetto giusto. Per il default che un vaso nuovo eredita, invece, vince il lisimetro. Non c'è contraddizione: le due risposte vivono a scope diversi, e la risoluzione le restituisce **entrambe** (`resolved_value` per il vaso, `catalog_value` per i fratelli).
+2. **Dentro uno stesso scope** vince prima la confidenza (numerosità), poi il tipo di fonte: un assoluto misurato batte un fattore inferito. Così una fonte solida non viene scavalcata da pochi dati rumorosi, e un fattore non viene sommato sopra una misura assoluta (sarebbe doppio conteggio).
+
+**Assoluti e fattori.** Lisimetro e sensore danno un Kc assoluto; il comportamentale dà un fattore. Un fattore è definito rispetto a ciò che il modello prevedeva *quando è stato misurato* — il prior — quindi ogni proposta viene convertita in un assoluto implicito **ancorato al prior** prima di risolvere. La conseguenza è il punto dove un'implementazione ingenua sbaglia in silenzio: se il lisimetro abbassa il catalogo a 0.90 e il comportamentale dice ×1.10, applicare il fattore al catalogo darebbe 0.99, trascinando il vaso verso la media del gruppo; ancorandolo al prior (1.00) il vaso resta a 1.10 — la sua evidenza, del suo vaso — e 0.90 torna al catalogo a parte.
+
+**La divergenza non si inghiotte.** Quando il valore del vaso si discosta oltre il 15% da un valore di catalogo ad alta confidenza, la risoluzione lo **segnala** (`catalog_divergence`) invece di nasconderlo. Non è un errore — un vaso può legittimamente essere un outlier — ma va reso visibile, coerentemente col principio di trasparenza.
+
+Come le altre, questa è **matematica**, quindi vive in fitosim: date proposte già formate, le compone. *Quali* proposte esistano, e come si aggreghino tra utenti diversi, resta compito di The Pot.
 
 ## I rischi (perché il layer va progettato, non improvvisato)
 
@@ -233,8 +251,9 @@ Simmetrica al sensor layer.
 | `science/phenology.py` | temperatura accumulata | GDD, stadio |
 | `science/behavioral_calibration.py` | scostamento irrigazioni, giudizi sulle allerte | fattore su Kc, soglia `p` |
 | `science/lysimeter.py` | pesata | ET misurata, Kc di catalogo |
+| `science/calibration_resolution.py` | le proposte delle altre | il valore risolto quando più fonti toccano lo stesso parametro |
 
-Input: serie di osservazioni + contesto. Output: delta di parametro con confidenza. Zero dipendenze, testabile in isolamento.
+Input: serie di osservazioni + contesto. Output: delta di parametro con confidenza. Zero dipendenze, testabile in isolamento. L'ultimo modulo è a valle degli altri: non misura nulla, compone le loro proposte secondo la regola di precedenza.
 
 **Un invariante rispettato ovunque: proporre, non applicare.** Nessuna di queste funzioni muta nulla. Restituiscono una *proposta* — valore, confidenza, spiegazione in italiano — e l'applicazione è un passo separato ed esplicito (`apply_kc_correction`, `apply_depletion_correction`) che lavora su una **copia** della specie. Il catalogo globale non si tocca mai, coerentemente col principio "override locali al workspace, mai globali".
 
@@ -311,13 +330,13 @@ In entrambi i casi l'errore è per **difetto**, mai per eccesso: il segnale conv
 
 ## Punti aperti
 
-Chiusi rispetto alla stesura originale: la **forma della stima di Kc dalla pendenza** (finestre di asciugamento con Ks letto dalla θ osservata e mediana tra finestre, vedi sopra) e la **mappatura tra i due vocabolari fenologici** (`fao56_stage_from_growth_stages()`: non una corrispondenza uno-a-uno ma una traduzione in un punto solo).
+Chiusi rispetto alla stesura originale: la **forma della stima di Kc dalla pendenza** (finestre di asciugamento con Ks letto dalla θ osservata e mediana tra finestre, vedi sopra); la **mappatura tra i due vocabolari fenologici** (`fao56_stage_from_growth_stages()`: non una corrispondenza uno-a-uno ma una traduzione in un punto solo); e la **precedenza tra fonti che toccano lo stesso parametro** (`science/calibration_resolution.py`: scope prima della reliability, fattori ancorati al prior — vedi *La precedenza tra fonti*).
 
 1. **T_base e soglie GDD oltre le orticole** — i valori attuali per basilico, pomodoro e lattuga sono derivati dalle durate di stadio FAO-56 moltiplicate per il GDD/giorno di un clima di riferimento. È un punto di partenza difendibile, non una taratura: servono osservazioni reali. Per ornamentali e bonsai la letteratura è scarsa, ed è lì che il feedback fenologico degli utenti vale di più.
 2. **Definizione delle zone climatiche** — Köppen, o bucket italiani semplificati? Impatta la granularità dei cluster.
 3. **Soglie di consenso a livello cluster e globale** — quelle per-vaso sono fissate (3/5/10 per il sensore e il lisimetro, 5/10/15 per lo scostamento delle irrigazioni, 3/6/10 per i giudizi sulle allerte), ma sono soglie di **numerosità delle osservazioni di un utente**, non di **concordanza tra utenti diversi**. Il livello superiore è ancora tutto da definire.
-4. **Chi vince quando due fonti si contraddicono** — se il lisimetro dice Kc 0.95 e la pendenza del sensore di quel vaso dice 1.20, non è per forza un conflitto: il primo è il valore di catalogo, il secondo è il *suo* vaso, che può legittimamente consumare di più. Serve una regola di precedenza esplicita, oggi implicita nell'ordine in cui il chiamante applica le correzioni.
-5. **Distinzione osservazionale/interventionale** — come marcare tecnicamente i feedback influenzati da un suggerimento del modello (vedi lezione 3).
+4. **Distinzione osservazionale/interventionale** — come marcare tecnicamente i feedback influenzati da un suggerimento del modello (vedi lezione 3).
+5. **Tarare la soglia di divergenza** — la precedenza segnala un vaso come outlier oltre il 15% di scostamento dal catalogo ad alta confidenza. La soglia è un default plausibile, non misurato: con dati reali si vedrà quanto un vaso "normale" oscilla davvero attorno al valore di gruppo.
 
 ## Riferimenti
 
@@ -327,6 +346,7 @@ Moduli di calibrazione (fase A, tutti stdlib e senza effetti collaterali):
 - Gradi-giorno: `src/fitosim/science/phenology.py`
 - Comportamentale (scostamento irrigazioni, giudizi sulle allerte): `src/fitosim/science/behavioral_calibration.py`
 - Lisimetro: `src/fitosim/science/lysimeter.py`
+- Precedenza tra fonti: `src/fitosim/science/calibration_resolution.py`
 
 Altro:
 
