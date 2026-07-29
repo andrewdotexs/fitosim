@@ -219,8 +219,12 @@ secrets/
 
 output/
 
-# PDF generati dai .docx via docs/scripts/05_convert_docx_to_md_pdf.py
-# (riproducibili dai .docx versionati, occupano repo space inutilmente).
+# PDF generati dalla documentazione versionata:
+#   - da .docx via docs/scripts/05_convert_docx_to_md_pdf.py
+#   - da .md   via docs/scripts/06_convert_md_to_pdf.py  (-> docs/pdf/)
+# Riproducibili in qualsiasi momento dai sorgenti versionati, quindi non
+# li teniamo in repo (occupano spazio e cambiano a ogni rigenerazione).
 # Esclusi mirati: NON impattano FAO-56.pdf né manuale_consultazione_specie.pdf
 # che sono asset esterni, già tracked.
 docs/fitosim_*.pdf
+docs/pdf/fitosim_*.pdf
