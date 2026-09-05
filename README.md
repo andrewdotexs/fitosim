@@ -23,7 +23,7 @@ il giardiniere.
 
 ## Stato del progetto
 
-- **1366 test verdi** (428 sub-test) nel core; la demo end-to-end usa matplotlib
+- **1394 test verdi** (428 sub-test) nel core; la demo end-to-end usa matplotlib
 - **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
 - **Linguaggio**: Python ≥ 3.10
 - **Dipendenze esterne nel core**: zero (solo standard library)
@@ -37,9 +37,9 @@ il giardiniere.
 ```
 # Core (zero dipendenze esterne):
 $ python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
-================= 1366 passed, 428 subtests passed =================
+================= 1394 passed, 428 subtests passed =================
 
-# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1372 test.
+# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1400 test.
 ```
 
 ## Cosa fa
@@ -53,6 +53,10 @@ parametri noti. In questo dominio specifico la libreria copre:
   pubblicazione FAO-56)
 - Caratterizzazione fisica del vaso: materiale, colore, forma geometrica,
   esposizione solare (coefficiente di vaso Kp)
+- La pianta dentro il vaso: la copertura della chioma scala il coefficiente
+  colturale (FAO-56 cap. 9, anche oltre la copertura piena) e l'altezza
+  misurata entra in Penman-Monteith al posto di quella della specie
+  (`docs/fitosim_canopy_design.md`)
 - Modello del sottovaso opzionale come componente di stato distinto, con
   riassorbimento capillare verso il substrato
 - Sostrati personalizzati: catalogo di nove materiali base (akadama, pomice,
@@ -225,7 +229,7 @@ pubblicato su PyPI:
 ```bash
 git clone https://github.com/<tuo-username>/fitosim.git
 cd fitosim
-# Il core gira senza dipendenze esterne (1366 verdi attesi):
+# Il core gira senza dipendenze esterne (1394 verdi attesi):
 python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
 ```
 
@@ -344,7 +348,7 @@ fitosim/
 │           ├── openmeteo.py    # adapter Open-Meteo (meteo)
 │           ├── http_json.py    # adapter generico per gateway ESP32
 │           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 1366 test verdi (core)
+├── tests/                  # 1394 test verdi (core)
 ├── examples/               # esempi e demo end-to-end
 │   ├── tappa4_complete_demo.py        # demo Garden + persistenza + allerte
 │   ├── tappa5_A_penman_monteith_demo.py

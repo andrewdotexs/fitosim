@@ -120,7 +120,11 @@ from fitosim.science.substrate import (
 # scheduled_events per persistere gli eventi pianificati del Garden.
 # Database alla versione 2 vengono migrati automaticamente creando
 # la nuova tabella vuota.
-SCHEMA_VERSION = 5
+#
+# Versione 6 (H.1-c di The Pot): tre colonne facoltative sulla tabella
+# pots per le misure della pianta (altezza, larghezza e altezza della
+# chioma), che entrano nel coefficiente colturale e in Penman-Monteith.
+SCHEMA_VERSION = 6
 
 
 # =======================================================================
@@ -278,6 +282,9 @@ SCHEMA_STATEMENTS: List[str] = [
         elevation_m              REAL,
         room_id                  TEXT,
         light_exposure           TEXT,
+        plant_height_m           REAL,
+        canopy_width_m           REAL,
+        canopy_height_m          REAL,
         UNIQUE (garden_id, label),
         FOREIGN KEY (garden_id) REFERENCES gardens(id) ON DELETE CASCADE,
         FOREIGN KEY (species_id) REFERENCES species(id) ON DELETE RESTRICT,
@@ -664,6 +671,9 @@ class GardenPersistence:
             if current < 5:
                 self._migrate_v4_to_v5()
                 current = 5
+            if current < 6:
+                self._migrate_v5_to_v6()
+                current = 6
             # Aggiorna la versione registrata.
             self._conn.execute(
                 "INSERT INTO schema_metadata (version) VALUES (?)",
@@ -763,6 +773,26 @@ class GardenPersistence:
         self._conn.execute(
             "ALTER TABLE pots ADD COLUMN light_exposure TEXT"
         )
+
+    def _migrate_v5_to_v6(self) -> None:
+        """
+        Migrazione dalla versione 5 alla versione 6.
+
+        Cambiamento (H.1-c di The Pot): tre colonne facoltative sulla
+        tabella pots per le misure della pianta — `plant_height_m`,
+        `canopy_width_m`, `canopy_height_m`. NULL vuol dire «non
+        misurata», e il dominio si comporta come prima: altezza
+        colturale della specie e copertura come da tabella.
+
+        Idempotente e difensiva come la v4→v5: salta le colonne che ci
+        sono già.
+        """
+        if self._table_exists("pots"):
+            for column in ("plant_height_m", "canopy_width_m", "canopy_height_m"):
+                if not self._column_exists("pots", column):
+                    self._conn.execute(
+                        f"ALTER TABLE pots ADD COLUMN {column} REAL"
+                    )
 
     def _migrate_v4_to_v5(self) -> None:
         """
@@ -1543,6 +1573,10 @@ class GardenPersistence:
             pot.elevation_m,
             pot.room_id,
             pot.light_exposure.value if pot.light_exposure is not None else None,
+            # Le misure della pianta (v6, H.1-c): NULL = non misurata.
+            pot.plant_height_m,
+            pot.canopy_width_m,
+            pot.canopy_height_m,
         )
 
         if existing:
@@ -1559,7 +1593,8 @@ class GardenPersistence:
                     saucer_capillary_rate = ?, saucer_evap_coef = ?,
                     planting_date = ?, notes = ?, channel_id = ?,
                     latitude_deg = ?, elevation_m = ?,
-                    room_id = ?, light_exposure = ?
+                    room_id = ?, light_exposure = ?,
+                    plant_height_m = ?, canopy_width_m = ?, canopy_height_m = ?
                 WHERE id = ?
                 """,
                 params + (existing["id"],),
@@ -1578,10 +1613,11 @@ class GardenPersistence:
                 active_depth_fraction, rainfall_exposure,
                 saucer_capacity_mm, saucer_capillary_rate, saucer_evap_coef,
                 planting_date, notes, channel_id,
-                latitude_deg, elevation_m, room_id, light_exposure
+                latitude_deg, elevation_m, room_id, light_exposure,
+                plant_height_m, canopy_width_m, canopy_height_m
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?
             )
             """,
             (garden_id, pot.label) + params,
@@ -1824,6 +1860,11 @@ class GardenPersistence:
             kwargs["room_id"] = pot_row["room_id"]
         if pot_row["light_exposure"] is not None:
             kwargs["light_exposure"] = LightExposure(pot_row["light_exposure"])
+        # Le misure della pianta (v6, H.1-c). `keys()` perché un database
+        # aperto in sola lettura a metà migrazione potrebbe non averle.
+        for column in ("plant_height_m", "canopy_width_m", "canopy_height_m"):
+            if column in pot_row.keys() and pot_row[column] is not None:
+                kwargs[column] = pot_row[column]
         if state_row is not None:
             kwargs["state_mm"] = state_row["state_mm"]
             kwargs["salt_mass_meq"] = state_row["salt_mass_meq"]

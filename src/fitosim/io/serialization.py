@@ -443,6 +443,11 @@ def _pot_to_dict(
             if pot.light_exposure is not None else None
         ),
         "shelter_level": pot.shelter_level.value,
+        # Le misure della pianta (H.1-c): facoltative, e un JSON senza
+        # non le perde perché non le aveva.
+        "plant_height_m": pot.plant_height_m,
+        "canopy_width_m": pot.canopy_width_m,
+        "canopy_height_m": pot.canopy_height_m,
     }
     state_fields = {
         "state_mm": pot.state_mm,
@@ -512,7 +517,10 @@ def _dict_to_pot(
         kwargs["saucer_evap_coef"] = static["saucer_evap_coef"]
     # Campi del formato v3: lette solo se presenti, così i JSON
     # scritti con i formati precedenti restano importabili.
-    for field_name in ("latitude_deg", "elevation_m", "room_id"):
+    for field_name in (
+        "latitude_deg", "elevation_m", "room_id",
+        "plant_height_m", "canopy_width_m", "canopy_height_m",
+    ):
         if static.get(field_name) is not None:
             kwargs[field_name] = static[field_name]
     if static.get("light_exposure") is not None:

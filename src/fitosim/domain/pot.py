@@ -39,13 +39,19 @@ from enum import Enum
 from typing import Optional
 
 from fitosim.domain.species import (
+    KC_BARE_SOIL_FLOOR,
     GrowthStage,
     PhenologicalStage,
     PhenologyMethod,
+    effective_kc,
     effective_kcb,
     Species,
-    actual_et_c,
     kc_for_stage,
+)
+from fitosim.science.canopy import (
+    cover_fraction,
+    kc_from_cover,
+    kcb_from_cover,
 )
 from fitosim.domain.room import (
     IndoorMicroclimate,
@@ -631,6 +637,23 @@ class Pot:
     # INDIRECT_BRIGHT, ma la decisione è rimandata alla fase D2).
     room_id: str | None = None
     light_exposure: Optional[LightExposure] = None
+    # ----- La pianta dentro il vaso (H.1-c di The Pot) -----
+    # Le misure della pianta, quando qualcuno le ha prese col metro.
+    # Entrano nel modello in due punti: la larghezza della chioma nel
+    # coefficiente colturale, attraverso la copertura della bocca del
+    # vaso (science.canopy, FAO-56 cap. 9); l'altezza nell'aerodinamica
+    # di Penman-Monteith fisico, al posto dell'altezza colturale della
+    # specie. Tutte facoltative: senza, il modello è quello di prima —
+    # l'altezza della specie e la copertura «come da tabella».
+    #
+    # L'altezza della chioma (la sola parte fogliosa) entra
+    # nell'esponente della copertura al posto dell'altezza della pianta:
+    # su un albero con il tronco nudo è la chioma che traspira. Non c'è
+    # un fattore «vela al vento» a parte: Penman-Monteith fisico lo ha
+    # già dentro, nella resistenza aerodinamica che dipende dall'altezza.
+    plant_height_m: float | None = None
+    canopy_width_m: float | None = None
+    canopy_height_m: float | None = None
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -661,6 +684,28 @@ class Pot:
                 f"in [0, 1] (ricevuto {self.rainfall_exposure}). "
                 f"È la frazione di pioggia che effettivamente entra "
                 f"nel vaso rispetto a quanto cade sull'area aperta."
+            )
+        # Le misure della pianta: positive se date, e la chioma non più
+        # alta della pianta che la porta.
+        for nome, valore in (
+            ("plant_height_m", self.plant_height_m),
+            ("canopy_width_m", self.canopy_width_m),
+            ("canopy_height_m", self.canopy_height_m),
+        ):
+            if valore is not None and valore <= 0:
+                raise ValueError(
+                    f"Vaso '{self.label}': {nome} deve essere positivo "
+                    f"se specificato (ricevuto {valore})."
+                )
+        if (
+            self.canopy_height_m is not None
+            and self.plant_height_m is not None
+            and self.canopy_height_m > self.plant_height_m
+        ):
+            raise ValueError(
+                f"Vaso '{self.label}': canopy_height_m "
+                f"({self.canopy_height_m}) non può superare plant_height_m "
+                f"({self.plant_height_m})."
             )
         # Forme non-rotonde richiedono pot_width_cm.
         if self.pot_shape in (PotShape.RECTANGULAR, PotShape.OVAL):
@@ -792,6 +837,40 @@ class Pot:
             self.pot_volume_l, self.surface_area_m2,
         )
         return nominal_depth * self.active_depth_fraction
+
+    @property
+    def canopy_cover_fraction(self) -> float | None:
+        """
+        La frazione della bocca del vaso coperta dalla chioma (``fc``,
+        science.canopy), o None se la larghezza non è misurata. Può
+        superare 1: in vaso succede spesso.
+        """
+        if self.canopy_width_m is None:
+            return None
+        return cover_fraction(self.canopy_width_m, self.surface_area_m2)
+
+    @property
+    def cover_height_m(self) -> float | None:
+        """
+        L'altezza che entra nell'esponente della copertura (FAO-56 eq.
+        76): la chioma se misurata, altrimenti la pianta, altrimenti
+        l'altezza colturale della specie.
+        """
+        if self.canopy_height_m is not None:
+            return self.canopy_height_m
+        if self.plant_height_m is not None:
+            return self.plant_height_m
+        return self.species.crop_height_m
+
+    @property
+    def effective_crop_height_m(self) -> float | None:
+        """
+        L'altezza colturale per Penman-Monteith fisico: quella della
+        pianta se misurata, altrimenti quella della specie.
+        """
+        if self.plant_height_m is not None:
+            return self.plant_height_m
+        return self.species.crop_height_m
 
     @property
     def fc_mm(self) -> float:
@@ -1016,6 +1095,11 @@ class Pot:
         kcb = effective_kcb(
             self.species, stage, self.growth_stages(current_date),
         )
+        # La chioma misurata (H.1-c): il Kcb scala con la copertura
+        # della bocca del vaso. Senza misura resta com'è.
+        kcb = kcb_from_cover(
+            kcb, self.canopy_cover_fraction, self.cover_height_m,
+        )
         # Stress coefficient per la traspirazione (modula solo Kcb).
         ks = stress_coefficient_ks(
             current_theta=self.state_theta,
@@ -1039,7 +1123,11 @@ class Pot:
         # sempreverde quiescente. Le due perenni del catalogo sono
         # entrambe sempreverdi; una specie decidua richiederebbe un
         # trattamento dedicato.
-        kcb_canopy = effective_kcb(self.species, stage)
+        kcb_canopy = kcb_from_cover(
+            effective_kcb(self.species, stage),
+            self.canopy_cover_fraction,
+            self.cover_height_m,
+        )
         ke = soil_evaporation_coefficient(kcb=kcb_canopy, kr=kr)
         # ET totale e sua decomposizione.
         et_c_total = self.kp * (ks * kcb + ke) * et_0_mm
@@ -1094,19 +1182,27 @@ class Pot:
                 et_0_mm=et_0_mm, current_date=current_date,
             )
             return et_c_total * kn
-        # Cammino tradizionale single Kc.
-        et_c_base = actual_et_c(
-            species=self.species,
-            stage=self.current_stage(current_date),
-            et_0=et_0_mm,
-            current_theta=self.state_theta,
-            substrate=self.substrate,
+        # Cammino tradizionale single Kc: Ks × Kc × ET₀, come
+        # `species.actual_et_c`, ma con il Kc passato dalla copertura
+        # della chioma (H.1-c) prima di moltiplicare. Con il pavimento
+        # del suolo nudo: nel single Kc l'evaporazione sta dentro il Kc.
+        from fitosim.science.balance import stress_coefficient_ks
+        stage = self.current_stage(current_date)
+        kc = kc_from_cover(
             # Vista botanica: abilita la riduzione del Kc quando la
             # pianta è in dormienza o riposo. Per le annuali non
             # produce mai riduzione, quindi è inerte.
-            growth_stages=self.growth_stages(current_date),
+            effective_kc(self.species, stage, self.growth_stages(current_date)),
+            self.canopy_cover_fraction,
+            self.cover_height_m,
+            kc_min=KC_BARE_SOIL_FLOOR,
         )
-        return self.kp * et_c_base * kn
+        ks = stress_coefficient_ks(
+            current_theta=self.state_theta,
+            substrate=self.substrate,
+            depletion_fraction=self.species.depletion_fraction,
+        )
+        return self.kp * ks * kc * et_0_mm * kn
 
     def apply_balance_step(
         self,
@@ -1668,7 +1764,7 @@ class Pot:
             wind_speed_m_s=effective_wind_m_s,
             net_radiation_mj_m2_day=rn_mj_m2_day,
             stomatal_resistance_s_m=self.species.stomatal_resistance_s_m,
-            crop_height_m=self.species.crop_height_m,
+            crop_height_m=self.effective_crop_height_m,
             elevation_m=effective_elevation,
         )
 
@@ -1908,7 +2004,7 @@ class Pot:
             wind_speed_m_s=effective_wind,
             net_radiation_mj_m2_day=radiation_mj_m2_day,
             stomatal_resistance_s_m=self.species.stomatal_resistance_s_m,
-            crop_height_m=self.species.crop_height_m,
+            crop_height_m=self.effective_crop_height_m,
             elevation_m=elevation_for_selector,
         )
 
