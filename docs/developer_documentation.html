@@ -1189,7 +1189,23 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
         <p>Identificato univocamente da <code>label</code>.</p>
         <p><strong>Immutabili dopo la creazione</strong>: <code>label</code>, <code>species</code>, <code>substrate</code>, geometry (<code>pot_volume_l</code>, <code>pot_diameter_cm</code>, <code>pot_shape</code>), <code>location</code>, <code>room_id</code>, <code>pot_material</code>, <code>pot_color</code>, <code>sun_exposure</code>, <code>rainfall_exposure</code>, <code>shelter_level</code>, <code>planting_date</code>.</p>
         <p><strong>Stato mutabile</strong>: <code>state_mm</code>, <code>salt_mass_meq</code>, <code>ph_substrate</code>, <code>saucer_state_mm</code>, <code>gdd_accumulated</code>.</p>
-        <p><strong>Property calcolate</strong> (derivate): <code>state_theta</code>, <code>fc_mm</code>, <code>pwp_mm</code>, <code>taw_mm</code>, <code>raw_mm</code>, <code>alert_mm</code>, <code>ec_substrate_mscm</code>, <code>kp</code>, <code>surface_area_m2</code>, <code>current_stage(date)</code>.</p>
+        <p><strong>Property calcolate</strong> (derivate): <code>state_theta</code>, <code>fc_mm</code>, <code>pwp_mm</code>, <code>alert_mm</code>, <code>ec_substrate_mscm</code>, <code>kp</code>, <code>surface_area_m2</code>, <code>substrate_depth_mm</code>, <code>substrate_dry_mass_kg</code>, <code>water_volume_liters</code>, <code>supports_dual_kc</code>. Metodo (non property): <code>current_stage(date)</code>.</p>
+
+        <div class="callout warn">
+          <strong>TAW e RAW non sono property del Pot</strong>
+          Vivono in <code>science/substrate.py</code> come
+          <code>total_available_water(substrate)</code> e
+          <code>readily_available_water(substrate, depletion_fraction)</code>,
+          e restituiscono <strong>frazioni θ adimensionali</strong>, non
+          millimetri: per i mm si moltiplica per
+          <code>substrate_depth_mm</code>. Il <code>Pot</code> le usa
+          internamente per derivare <code>alert_mm</code>, che è la soglia
+          già pronta in mm ed è quella che serve nella maggior parte dei
+          casi. Per la deplezione come frazione [0, 1] c'è
+          <code>behavioral_calibration.depletion_fraction(state_mm, fc_mm,
+          taw_mm)</code>, dove <code>taw_mm</code> è un argomento da
+          calcolare, non un attributo da leggere.
+        </div>
         <p><code>shelter_level</code> (<code>ShelterLevel</code>: <code>EXPOSED</code>/<code>STANDARD</code>/<code>SHELTERED</code>) modula il vento prima del selettore PM. <code>gdd_accumulated</code> accumula i gradi-giorno dopo ogni passo di bilancio: <strong><code>None</code> significa "non sto tracciando"</strong> (degrado sicuro), distinto da <code>0.0</code> che significa "traccio da adesso" — <code>current_stage</code> lo passa a <code>species.stage_at</code> per il selettore best-available.</p>
       </div>
     </div>
