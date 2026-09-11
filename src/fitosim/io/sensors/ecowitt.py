@@ -468,9 +468,12 @@ class EcowittWH51SoilSensor:
     converte automaticamente in frazione 0-1 secondo la convenzione
     canonica di SoilReading.
 
-    Per il WH52, la temperatura del substrato è in °C nel formato
-    standard Ecowitt. L'EC del substrato è esposto come "soil AD
-    value" che convertiamo in mS/cm direttamente come read.
+    Per il WH52, il parser di `fitosim.io.ecowitt` legge la sezione
+    `soil_moisture_ec_chN` del cloud (diversa da `soil_chN` del WH51,
+    verificato sul ferro il 2026-09-11): la temperatura del substrato
+    arriva con l'unità dell'account e viene convertita in °C, l'EC
+    arriva in μS/cm e viene convertita in mS/cm. Qui si leggono già
+    convertite.
 
     Costruzione
     -----------

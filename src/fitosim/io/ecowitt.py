@@ -102,9 +102,11 @@ _DEGREE_VARIANTS = ("º", "°")
 def _normalize_unit(unit: str) -> str:
     """
     Pulisce una stringa di unità: elimina spazi, normalizza il simbolo
-    di grado tra le due varianti che Ecowitt potrebbe inviare.
+    di grado tra le due varianti che Ecowitt potrebbe inviare, e scioglie
+    i caratteri unici «℃» (U+2103) e «℉» (U+2109) — quelli con cui la
+    documentazione scrive le unità di temperatura — in grado più lettera.
     """
-    s = unit.strip()
+    s = unit.strip().replace("℃", "°C").replace("℉", "°F")
     for variant in _DEGREE_VARIANTS:
         s = s.replace(variant, "°")
     return s
@@ -169,6 +171,22 @@ def _to_hpa(value: float, unit: str) -> float:
     if u == "mmHg":
         return value * 1.33322387415
     raise ValueError(f"Unità di pressione non riconosciuta: {unit!r}")
+
+
+def _to_ms_per_cm(value: float, unit: str) -> float:
+    """
+    Converte una conducibilità elettrica in mS/cm (che coincide con dS/m,
+    l'unità della letteratura agronomica). Il cloud Ecowitt manda l'EC
+    del WH52 in μS/cm, e scrive la «μ» ora come mu greca (U+03BC) ora
+    come segno di micro (U+00B5): le trattiamo uguali, insieme alla «u»
+    di chi non ha la tastiera giusta.
+    """
+    u = unit.strip().replace("µ", "μ")
+    if u in ("mS/cm", "dS/m"):
+        return value
+    if u in ("μS/cm", "uS/cm"):
+        return value / 1000.0
+    raise ValueError(f"Unità di conducibilità non riconosciuta: {unit!r}")
 
 
 # -----------------------------------------------------------------------
@@ -256,11 +274,14 @@ class EcowittObservation:
         canale (1-8). Per le piante indoor di fitosim, il canale 1 è
         tipicamente il riferimento del microclima domestico.
     soil_moisture_pct : dict[int, float]
-        Sensori di umidità substrato WH51, indicizzati per canale (1-16).
-        È il dato più prezioso: misura diretta del contenuto idrico del
-        substrato in cui sono installati i sensori. Usabile sia per
-        validazione del bilancio idrico previsto sia per calibrazione
-        dei parametri di Substrate.
+        Sensori di umidità substrato WH51 e WH52, indicizzati per canale
+        (1-16, condivisi fra i due modelli). È il dato più prezioso:
+        misura diretta del contenuto idrico del substrato in cui sono
+        installati i sensori. Usabile sia per validazione del bilancio
+        idrico previsto sia per calibrazione dei parametri di Substrate.
+    soil_temperature_c, soil_ec_mscm : dict[int, float]
+        Temperatura del substrato (°C) ed EC (mS/cm) dei WH52, per
+        canale: il WH51 non le misura, e lascia i due dict vuoti.
 
     Note
     ----
@@ -311,10 +332,26 @@ class EcowittObservation:
 # -----------------------------------------------------------------------
 
 # Ecowitt supporta fino a 8 sensori temp/umidità extra (WN31) e fino a
-# 16 sensori di umidità substrato (WH51). Iteriamo su questi range
-# fissi e includiamo solo quelli effettivamente presenti nel payload.
+# 16 sensori di umidità substrato (WH51 e WH52, che condividono i
+# canali). Iteriamo su questi range fissi e includiamo solo quelli
+# effettivamente presenti nel payload.
 _MAX_EXTRA_TH_CHANNELS = 8
 _MAX_SOIL_CHANNELS = 16
+
+# Le due sezioni del substrato nel payload del cloud (doc API v3,
+# «Getting Device Real-Time Data» e «Getting Device History Data»). I
+# due modelli condividono i sedici canali, ma il cloud li mette in due
+# sezioni diverse, e con campi diversi:
+#   - WH51 → `soil_chN`: `soilmoisture` (%) e `ad` (il grezzo);
+#   - WH52 → `soil_moisture_ec_chN`: `soilmoisture` (%), `ad`,
+#     `temperature` (con l'unità dell'account, ºF di default), `ec` in
+#     μS/cm, `ec_ad` (il grezzo dell'EC).
+# Verificato sul ferro il 2026-09-11 (GW3000A + WH52): fino ad allora il
+# parser cercava `soiltemp` e `soilad` dentro `soil_chN` — campi che non
+# esistono — e un WH52 era invisibile, perché la sua sezione non veniva
+# letta.
+_SOIL_SECTION_WH51 = "soil_ch{ch}"
+_SOIL_SECTION_WH52 = "soil_moisture_ec_ch{ch}"
 
 
 def parse_ecowitt_response(payload: dict) -> EcowittObservation:
@@ -433,31 +470,44 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
             extra_humid[ch] = h
 
     # ---------- Sensori umidità substrato (WH51 / WH52) ----------
-    # WH51 espone solo soilmoisture; WH52 espone anche soiltemp e soilad
-    # (l'EC del substrato). Leggiamo tutti i campi quando presenti, e
-    # popoliamo i dict corrispondenti solo per i canali che li espongono.
+    # Due sezioni per canale (vedi _SOIL_SECTION_*): il WH51 dà solo
+    # l'umidità; il WH52 anche temperatura ed EC, che entrano nei dict
+    # dedicati. Un canale è un sensore solo, quindi le due sezioni non
+    # si sovrappongono; se mai succedesse, vince il WH52 perché arriva
+    # dopo.
     soil = {}
     soil_temp = {}
     soil_ec = {}
     for ch in range(1, _MAX_SOIL_CHANNELS + 1):
-        section = data.get(f"soil_ch{ch}")
+        section = data.get(_SOIL_SECTION_WH51.format(ch=ch))
+        if section is not None:
+            # Il valore "soilmoisture" arriva in % adimensionale: nessuna
+            # conversione necessaria, leggiamo solo il float.
+            moisture = _parse_pure_float(section.get("soilmoisture"))
+            if moisture is not None:
+                soil[ch] = moisture
+        section = data.get(_SOIL_SECTION_WH52.format(ch=ch))
         if section is None:
             continue
-        # Il valore "soilmoisture" arriva in % adimensionale: nessuna
-        # conversione necessaria, leggiamo solo il float.
         moisture = _parse_pure_float(section.get("soilmoisture"))
         if moisture is not None:
             soil[ch] = moisture
-        # Campi WH52 (presenti solo se il sensore è un WH52).
-        # "soiltemp" è la temperatura del substrato in °C (formato
-        # standard Ecowitt). "soilad" è l'EC del substrato espresso
-        # come "soil AD value" che convertiamo in mS/cm.
-        soiltemp = _parse_pure_float(section.get("soiltemp"))
-        if soiltemp is not None:
-            soil_temp[ch] = soiltemp
-        soilad = _parse_pure_float(section.get("soilad"))
-        if soilad is not None:
-            soil_ec[ch] = soilad
+        # La temperatura arriva con l'unità dell'account (ºF di default,
+        # come tutto il resto) e l'EC in μS/cm: si convertono. Un'unità
+        # sconosciuta toglie il campo, non l'osservazione — la
+        # robustezza per sensore è la regola di questa sezione.
+        try:
+            temperature = _parse_node_to(section.get("temperature"), _to_celsius)
+        except ValueError:
+            temperature = None
+        if temperature is not None:
+            soil_temp[ch] = temperature
+        try:
+            ec = _parse_node_to(section.get("ec"), _to_ms_per_cm)
+        except ValueError:
+            ec = None
+        if ec is not None:
+            soil_ec[ch] = ec
 
     return EcowittObservation(
         timestamp=timestamp,
@@ -998,17 +1048,34 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
         if h_series:
             extra_hum_per_ch[ch] = h_series
 
-    # WH51 substrato multi-canale.
+    # Substrato multi-canale: WH51 in `soil_chN`, WH52 in
+    # `soil_moisture_ec_chN` con anche temperatura ed EC (stesse sezioni
+    # del real_time, in forma {unit, list}).
     soil_per_ch: dict[int, dict[int, float]] = {}
+    soil_temp_per_ch: dict[int, dict[int, float]] = {}
+    soil_ec_per_ch: dict[int, dict[int, float]] = {}
     for ch in range(1, _MAX_SOIL_CHANNELS + 1):
-        section = data.get(f"soil_ch{ch}")
+        section = data.get(_SOIL_SECTION_WH51.format(ch=ch))
+        if section is not None:
+            moisture_series = _build_series_pure(
+                section.get("soilmoisture")
+            )
+            if moisture_series:
+                soil_per_ch[ch] = moisture_series
+        section = data.get(_SOIL_SECTION_WH52.format(ch=ch))
         if section is None:
             continue
-        moisture_series = _build_series_pure(
-            section.get("soilmoisture")
-        )
+        moisture_series = _build_series_pure(section.get("soilmoisture"))
         if moisture_series:
             soil_per_ch[ch] = moisture_series
+        temp_series = _build_series_dict(
+            section.get("temperature"), _to_celsius
+        )
+        if temp_series:
+            soil_temp_per_ch[ch] = temp_series
+        ec_series = _build_series_dict(section.get("ec"), _to_ms_per_cm)
+        if ec_series:
+            soil_ec_per_ch[ch] = ec_series
 
     # ---------- Unione dei timestamp e composizione dei punti ----------
     # Set di tutti i timestamp osservati in qualunque sensore.
@@ -1022,8 +1089,9 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
         all_timestamps.update(d.keys())
     for d in extra_hum_per_ch.values():
         all_timestamps.update(d.keys())
-    for d in soil_per_ch.values():
-        all_timestamps.update(d.keys())
+    for per_ch in (soil_per_ch, soil_temp_per_ch, soil_ec_per_ch):
+        for d in per_ch.values():
+            all_timestamps.update(d.keys())
 
     if not all_timestamps:
         # Nessun dato: serie vuota, ma rispettiamo il contratto
@@ -1052,6 +1120,16 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
             for ch, series in soil_per_ch.items()
             if ts in series
         }
+        soil_temp_at_ts = {
+            ch: series[ts]
+            for ch, series in soil_temp_per_ch.items()
+            if ts in series
+        }
+        soil_ec_at_ts = {
+            ch: series[ts]
+            for ch, series in soil_ec_per_ch.items()
+            if ts in series
+        }
         points.append(EcowittSeriesPoint(
             timestamp=datetime.fromtimestamp(ts, tz=timezone.utc),
             outdoor_temp_c=outdoor_temp.get(ts),
@@ -1063,6 +1141,8 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
             extra_temp_c=et_at_ts,
             extra_humidity_pct=eh_at_ts,
             soil_moisture_pct=soil_at_ts,
+            soil_temperature_c=soil_temp_at_ts,
+            soil_ec_mscm=soil_ec_at_ts,
         ))
 
     return EcowittTimeSeries(
@@ -1098,13 +1178,15 @@ def _build_history_url(
     finestre lunghe: l'API ritorna ogni 5-30 minuti, e con 8 canali e
     20 grandezze il JSON cresce velocemente).
     """
+    # I canali del substrato si chiedono in tutte e due le sezioni: non si
+    # sa in anticipo se sul canale c'è un WH51 o un WH52.
     callback_sensors = ",".join([
         "outdoor", "indoor", "solar_and_uvi",
         "rainfall", "rainfall_piezo",
         "wind", "pressure",
         "temp_and_humidity_ch1",
-        "soil_ch1", "soil_ch2", "soil_ch3", "soil_ch4",
-        "soil_ch5", "soil_ch6", "soil_ch7", "soil_ch8",
+        *[_SOIL_SECTION_WH51.format(ch=ch) for ch in range(1, 9)],
+        *[_SOIL_SECTION_WH52.format(ch=ch) for ch in range(1, 9)],
     ])
     params = {
         "application_key": application_key,

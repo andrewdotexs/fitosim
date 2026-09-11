@@ -26,6 +26,7 @@ from fitosim.io.ecowitt import (
     _to_m_per_second,
     _to_mm,
     _to_mm_per_hour,
+    _to_ms_per_cm,
     credentials_from_env,
     fetch_real_time,
     parse_ecowitt_response,
@@ -103,6 +104,19 @@ class TestUnitConversions(unittest.TestCase):
         self.assertAlmostEqual(_to_hpa(29.92, "inHg"), 1013.21, places=1)
         # hPa passthrough.
         self.assertAlmostEqual(_to_hpa(1013.25, "hPa"), 1013.25, places=6)
+
+    def test_microsiemens_to_millisiemens_per_cm(self):
+        # L'EC del WH52 arriva in μS/cm: 290 μS/cm = 0.29 mS/cm. La «μ»
+        # può essere la mu greca o il segno di micro, e la «u» di chi
+        # non ha la tastiera giusta.
+        self.assertAlmostEqual(_to_ms_per_cm(290.0, "μS/cm"), 0.29, places=6)
+        self.assertAlmostEqual(_to_ms_per_cm(290.0, "µS/cm"), 0.29, places=6)
+        self.assertAlmostEqual(_to_ms_per_cm(290.0, "uS/cm"), 0.29, places=6)
+        # mS/cm e dS/m coincidono: passthrough.
+        self.assertAlmostEqual(_to_ms_per_cm(1.5, "mS/cm"), 1.5, places=6)
+        self.assertAlmostEqual(_to_ms_per_cm(1.5, "dS/m"), 1.5, places=6)
+        with self.assertRaises(ValueError):
+            _to_ms_per_cm(1.0, "S/m")
 
 
 # =======================================================================
@@ -206,6 +220,87 @@ class TestRealPayloadParsing(unittest.TestCase):
         # I canali 6-16 non sono installati: niente entry.
         for ch in range(6, 17):
             self.assertNotIn(ch, self.obs.soil_moisture_pct)
+
+    def test_wh51_has_no_temperature_nor_ec(self):
+        # Il WH51 misura solo l'umidità: i dict del WH52 restano vuoti.
+        self.assertEqual(self.obs.soil_temperature_c, {})
+        self.assertEqual(self.obs.soil_ec_mscm, {})
+
+
+class TestWH52Parsing(unittest.TestCase):
+    """
+    Il WH52 (umidità, temperatura ed EC del substrato) sta in una sezione
+    sua, `soil_moisture_ec_chN`, non in `soil_chN` del WH51: lo dice la
+    documentazione dell'API v3 e lo ha confermato un GW3000A con un WH52
+    sul canale 1 (2026-09-11). I valori sono quelli visti sul ferro: 64 %,
+    69.98 ºF, e l'EC in μS/cm.
+    """
+
+    def setUp(self):
+        self.payload = {
+            "code": 0,
+            "msg": "success",
+            "time": "1789120764",
+            "data": {
+                "indoor": {
+                    "temperature": {"time": "1789120764", "unit": "ºF", "value": "75.2"},
+                    "humidity": {"time": "1789120764", "unit": "%", "value": "48"},
+                },
+                "battery": {
+                    "soilmoisture_ec_sensor_ch1": {
+                        "time": "1789120764", "unit": "V", "value": "1.48",
+                    },
+                },
+                # Un WH51 sul canale 3, accanto: le due sezioni convivono.
+                "soil_ch3": {
+                    "soilmoisture": {"time": "1789120764", "unit": "%", "value": "41"},
+                    "ad": {"time": "1789120764", "unit": "", "value": "210"},
+                },
+                "soil_moisture_ec_ch1": {
+                    "soilmoisture": {"time": "1789120764", "unit": "%", "value": "64"},
+                    "ad": {"time": "1789120764", "unit": "", "value": "1308"},
+                    "temperature": {"time": "1789120764", "unit": "ºF", "value": "69.98"},
+                    "ec": {"time": "1789120764", "unit": "μS/cm", "value": "290"},
+                    "ec_ad": {"time": "1789120764", "unit": "", "value": "388"},
+                },
+            },
+        }
+        self.obs = parse_ecowitt_response(self.payload)
+
+    def test_wh52_channel_is_a_soil_channel(self):
+        # Prima della correzione il canale 1 non compariva affatto.
+        self.assertEqual(set(self.obs.soil_moisture_pct.keys()), {1, 3})
+        self.assertAlmostEqual(self.obs.soil_moisture_pct[1], 64.0, places=1)
+        self.assertAlmostEqual(self.obs.soil_moisture_pct[3], 41.0, places=1)
+
+    def test_wh52_temperature_converted_to_celsius(self):
+        # 69.98 ºF = 21.1 °C. Solo il canale del WH52 la ha.
+        self.assertEqual(set(self.obs.soil_temperature_c.keys()), {1})
+        self.assertAlmostEqual(self.obs.soil_temperature_c[1], 21.1, places=1)
+
+    def test_wh52_ec_converted_to_ms_per_cm(self):
+        # 290 μS/cm = 0.29 mS/cm.
+        self.assertEqual(set(self.obs.soil_ec_mscm.keys()), {1})
+        self.assertAlmostEqual(self.obs.soil_ec_mscm[1], 0.29, places=6)
+
+    def test_celsius_account_is_left_alone(self):
+        # Un account in °C manda la temperatura già in °C — scritta con
+        # «ºC», «°C» o col carattere unico «℃».
+        for unit in ("ºC", "°C", "℃"):
+            with self.subTest(unit=unit):
+                self.payload["data"]["soil_moisture_ec_ch1"]["temperature"] = {
+                    "time": "1789120764", "unit": unit, "value": "21.5",
+                }
+                obs = parse_ecowitt_response(self.payload)
+                self.assertAlmostEqual(obs.soil_temperature_c[1], 21.5, places=6)
+
+    def test_unknown_unit_drops_the_field_not_the_observation(self):
+        # Un'unità mai vista toglie il campo, non l'osservazione intera.
+        self.payload["data"]["soil_moisture_ec_ch1"]["ec"]["unit"] = "S/m"
+        obs = parse_ecowitt_response(self.payload)
+        self.assertNotIn(1, obs.soil_ec_mscm)
+        self.assertAlmostEqual(obs.soil_moisture_pct[1], 64.0, places=1)
+        self.assertIn(1, obs.soil_temperature_c)
 
 
 # =======================================================================
@@ -558,6 +653,42 @@ class TestHistoryRobustness(unittest.TestCase):
         self.assertEqual(ts_to_point[200].outdoor_temp_c, 21.0)
         self.assertEqual(ts_to_point[200].soil_moisture_pct, {})
 
+    def test_wh52_series_carry_temperature_and_ec(self):
+        # Il WH52 nella history: `soil_moisture_ec_chN` in forma
+        # {unit, list}, con umidità, temperatura (da convertire) ed EC
+        # (μS/cm → mS/cm) nei punti.
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        payload = {
+            "code": 0,
+            "data": {
+                "soil_ch3": {
+                    "soilmoisture": {"unit": "%", "list": {"100": "41"}},
+                },
+                "soil_moisture_ec_ch1": {
+                    "soilmoisture": {
+                        "unit": "%", "list": {"100": "64", "200": "63"},
+                    },
+                    "ad": {"unit": "", "list": {"100": "1308", "200": "1310"}},
+                    "temperature": {
+                        "unit": "ºF", "list": {"100": "69.98", "200": "-"},
+                    },
+                    "ec": {"unit": "μS/cm", "list": {"100": "290", "200": "300"}},
+                },
+            },
+        }
+        series = parse_ecowitt_history_response(payload)
+        ts_to_point = {
+            int(p.timestamp.timestamp()): p for p in series.points
+        }
+        self.assertEqual(set(ts_to_point), {100, 200})
+        self.assertEqual(ts_to_point[100].soil_moisture_pct, {1: 64.0, 3: 41.0})
+        self.assertAlmostEqual(ts_to_point[100].soil_temperature_c[1], 21.1, places=1)
+        self.assertAlmostEqual(ts_to_point[100].soil_ec_mscm[1], 0.29, places=6)
+        # A 200 la temperatura manca ("-"): il punto non la porta, il resto sì.
+        self.assertEqual(ts_to_point[200].soil_temperature_c, {})
+        self.assertAlmostEqual(ts_to_point[200].soil_ec_mscm[1], 0.30, places=6)
+        self.assertEqual(ts_to_point[200].soil_moisture_pct, {1: 63.0})
+
 
 class TestHistoryUrlBuilder(unittest.TestCase):
     """Verifica della costruzione URL per l'endpoint history."""
@@ -584,6 +715,9 @@ class TestHistoryUrlBuilder(unittest.TestCase):
         self.assertIn("temp_and_humidity_ch1", url)
         self.assertIn("soil_ch1", url)
         self.assertIn("soil_ch5", url)
+        # E i canali del WH52, che stanno in un'altra sezione.
+        self.assertIn("soil_moisture_ec_ch1", url)
+        self.assertIn("soil_moisture_ec_ch8", url)
 
 
 class TestFetchHistory(unittest.TestCase):
