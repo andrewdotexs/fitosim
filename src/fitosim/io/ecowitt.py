@@ -57,10 +57,13 @@ Conversioni di unità
 --------------------
 Ecowitt restituisce ogni valore nel formato {time, unit, value}, dove
 `unit` è la stringa configurata nell'account utente: alcuni hanno °F /
-inches / mph (imperiale), altri °C / mm / m/s (metrico). Il modulo
-legge l'unità dichiarata dall'API e converte sempre in **metrico** per
-coerenza con il motore scientifico FAO-56 di fitosim. L'utente non
-deve preoccuparsi di come è configurato il proprio account.
+inches / mph (imperiale), altri °C / mm / m/s (metrico). Ogni richiesta
+chiede al cloud le unità **metriche** (`UNITA_METRICHE`, i codici
+`*_unitid` dell'API v3), così le risposte vengono uguali per tutti gli
+account; e il modulo legge comunque l'unità dichiarata dall'API e
+converte in metrico, per coerenza con il motore scientifico FAO-56 di
+fitosim. L'utente non deve preoccuparsi di come è configurato il
+proprio account.
 
 Robustezza alle assenze di sensori
 ----------------------------------
@@ -88,6 +91,25 @@ from typing import Optional
 # -----------------------------------------------------------------------
 ECOWITT_REAL_TIME_URL = "https://api.ecowitt.net/api/v3/device/real_time"
 HTTP_TIMEOUT_SECONDS = 10.0
+
+# Le unità che si chiedono al cloud, in ogni richiesta: **sempre metriche**,
+# qualunque sia la configurazione dell'account (che di default è imperiale:
+# ºF, inHg, mph, in). I codici sono quelli della documentazione dell'API
+# v3 (`temp_unitid` ecc., 2026-09-11). Il parser converte comunque
+# dall'unità dichiarata — è la rete di sicurezza — ma chiedere metrico
+# alla fonte toglie di mezzo le unità che i convertitori non conoscono
+# (il vento in BFT o fpm, la radiazione in lux o fc) e rende le risposte
+# uguali per tutti gli account. Non è una scelta dell'utente: il motore
+# lavora in metrico, e le unità in cui uno *vede* i dati sono un'altra
+# cosa, che vive in chi mostra.
+UNITA_METRICHE = {
+    "temp_unitid": 1,              # ℃
+    "pressure_unitid": 3,          # hPa
+    "wind_speed_unitid": 6,        # m/s
+    "rainfall_unitid": 12,         # mm
+    "solar_irradiance_unitid": 16, # W/m²
+    "capacity_unitid": 24,         # L
+}
 
 
 # -----------------------------------------------------------------------
@@ -555,6 +577,7 @@ def _build_real_time_url(
         "api_key": api_key,
         "mac": mac,
         "call_back": "all",
+        **UNITA_METRICHE,
     }
     encoded = urllib.parse.urlencode(params)
     return f"{ECOWITT_REAL_TIME_URL}?{encoded}"
@@ -679,8 +702,12 @@ def fetch_history_aggregation(
     # /api/v3/device/history/aggregation con start_date e end_date
     # uguali alla data target, e call_back che chiede temperatura e
     # umidità del canale extra (WN31).
+    # Le unità metriche si chiedono anche qui, e qui contano di più: i
+    # min/max di temperatura sotto si leggono come numeri, senza guardare
+    # l'unità, e un account in ºF li avrebbe passati per °C.
     iso_date = target_date.isoformat()
     callback = f"temp_and_humidity_ch{channel}.daily"
+    unita = urllib.parse.urlencode(UNITA_METRICHE)
     url = (
         f"https://api.ecowitt.net/api/v3/device/history/aggregation"
         f"?application_key={application_key}"
@@ -689,6 +716,7 @@ def fetch_history_aggregation(
         f"&start_date={iso_date}%2000:00:00"
         f"&end_date={iso_date}%2023:59:59"
         f"&call_back={callback}"
+        f"&{unita}"
     )
 
     try:
@@ -1196,6 +1224,7 @@ def _build_history_url(
         "end_date": end_date.strftime("%Y-%m-%d %H:%M:%S"),
         "cycle_type": "auto",
         "call_back": callback_sensors,
+        **UNITA_METRICHE,
     }
     encoded = urllib.parse.urlencode(params)
     return f"{ECOWITT_HISTORY_URL}?{encoded}"

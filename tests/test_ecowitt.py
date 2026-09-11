@@ -421,6 +421,18 @@ class TestUrlBuilder(unittest.TestCase):
         self.assertIn("call_back=all", url)
         self.assertTrue(url.startswith("https://api.ecowitt.net/"))
 
+    def test_url_asks_for_metric_units(self):
+        # Le unità si chiedono metriche alla fonte, qualunque sia la
+        # configurazione dell'account: ℃, hPa, m/s, mm, W/m², litri.
+        url = _build_real_time_url("APP123", "API456", "88:13:BF:CB:5A:AF")
+        for parametro in (
+            "temp_unitid=1", "pressure_unitid=3", "wind_speed_unitid=6",
+            "rainfall_unitid=12", "solar_irradiance_unitid=16",
+            "capacity_unitid=24",
+        ):
+            with self.subTest(parametro=parametro):
+                self.assertIn(parametro, url)
+
 
 # =======================================================================
 #  5. Fetch end-to-end con fetcher iniettato
@@ -718,6 +730,9 @@ class TestHistoryUrlBuilder(unittest.TestCase):
         # E i canali del WH52, che stanno in un'altra sezione.
         self.assertIn("soil_moisture_ec_ch1", url)
         self.assertIn("soil_moisture_ec_ch8", url)
+        # Le unità metriche, come nel real_time.
+        self.assertIn("temp_unitid=1", url)
+        self.assertIn("rainfall_unitid=12", url)
 
 
 class TestFetchHistory(unittest.TestCase):
