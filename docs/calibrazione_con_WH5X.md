@@ -123,6 +123,45 @@ tutto il resto: potature, spostamenti del vaso, guasti.
 centimetri attorno alla punta. Subito dopo l'irrigazione l'acqua si ridistribuisce per ore e la lettura è transitoria: 
 l'attesa del drenaggio, prima di registrare l'ancora, assorbe la parte peggiore di questo effetto.
 
+## L'EC del WH52: cosa si registra subito, cosa si calibra dopo
+
+Il WH52 misura anche l'EC, e la domanda "possiamo calibrare anche quella?" ha la stessa struttura della taratura: 
+dietro la parola ci sono **due** calibrazioni, e la seconda non ha senso senza la prima.
+
+**Le due EC non sono la stessa grandezza.** Il sensore legge l'EC **apparente** del mezzo, cioè di substrato, acqua 
+e aria insieme, alla temperatura del substrato. Fitosim modella l'EC della **soluzione interstiziale** a 25 °C, quella 
+che le radici sentono, derivata da massa salina e volume d'acqua. Durante l'asciugamento le due si muovono in 
+**direzioni opposte**: meno acqua conduce meno, e l'apparente scende; i sali si concentrano nell'acqua che resta, e 
+l'interstiziale sale. In più l'EC cambia di circa il 2 % per grado, e fitosim assume letture a 25 °C.
+
+**Per questo l'EC si registra e non si riconcilia.** `update_from_sensor` con un'EC osservata sovrascrive la massa 
+salina, assumendo che il valore sia già interstiziale a 25 °C: passargli l'apparente del WH52 falserebbe lo stato 
+chimico, e sempre più man mano che il vaso si asciuga. Lo strumento quindi salva a ogni osservazione, insieme alla θ, 
+la temperatura del substrato, l'EC apparente e l'EC compensata a 25 °C, e lascia la chimica del modello intatta.
+
+**Cosa la serie dirà da sola.** L'EC apparente contro la θ lungo un ciclo di asciugamento è la curva di dipendenza 
+dall'acqua di questo substrato, la base empirica per una correzione tipo Hilhorst. E l'EC letta **all'ancora**, a 
+capacità di campo dopo ogni irrigazione a drenaggio, è l'indice più stabile della salinità della soluzione: la sua 
+deriva di ciclo in ciclo è il segnale di accumulo che il coefficiente di lavaggio del modello deve riprodurre.
+
+**Per calibrare davvero, in ordine:**
+
+1. *Livello 1 dell'EC, la funzione di trasferimento apparente → interstiziale.* Serve un riferimento: un misuratore di 
+   EC a penna costa poco, e il protocollo è lo stesso della gravimetria. All'irrigazione a drenaggio si misura l'EC 
+   dell'acqua che entra e di quella che esce dal foro; il percolato a fine drenaggio è la soluzione interstiziale a 
+   capacità di campo. Accoppiato alla lettura del WH52 nello stesso istante dà un punto della funzione di 
+   trasferimento, uno per irrigazione.
+2. *Livello 4, il coefficiente di lavaggio.* Dalla serie dell'EC all'ancora contro l'EC prevista dal modello dopo gli 
+   stessi eventi. Vuole cicli di fertirrigazione e lavaggio: è un lavoro da stagione di crescita.
+3. *Kn.* Si osserva solo quando l'EC esce dall'intervallo ottimale della specie, cosa che in substrato fresco senza 
+   fertirrigazione non succede. E il rosmarino di catalogo **non ha un intervallo ottimale di EC**: 
+   `supports_chemistry_model` è falso e Kn vale 1 per costruzione. Prima di parlare di Kn per questo vaso va definito 
+   l'intervallo della specie, con la letteratura o con il catalogo di The Pot.
+
+Con una pianta nuova in substrato fresco e senza concime, per mesi la serie dell'EC sarà piatta e bassa. È il 
+comportamento atteso, ed è una linea di base preziosa: quando la fertirrigazione comincerà, ogni scostamento da lì 
+sarà segnale.
+
 ## Risoluzione temporale: si resta al giorno
 
 Si è valutato se alzare la risoluzione a due o quattro passi al giorno, o all'ora. È fattibile: due passi giorno/notte 
