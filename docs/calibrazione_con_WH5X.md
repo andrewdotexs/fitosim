@@ -5,8 +5,10 @@
 **Scope:** un vaso outdoor con un WH52, forzante meteo locale (WN32P + WS90), previsione da Open-Meteo. Calibra i 
 livelli 2 e 3 del manuale di calibrazione: substrato (θ_FC, θ_PWP) e specie (Kc). Il livello 1, la funzione di 
 trasferimento della sonda, e il livello 4, il modello chimico, restano fuori da questa prima passata.
-**Hardware:** gateway GW3000A · WH52 (θ, temperatura ed EC del substrato) · WN32P (temperatura e umidità dell'aria) · 
-WS90 (vento, radiazione solare, pioggia, temperatura, umidità, pressione).
+**Hardware:** due gateway, perché i sensori Ecowitt si accoppiano a uno solo. GW3000A: WH52 (θ, temperatura ed EC del 
+substrato). GW2000: WS90 (vento, radiazione solare, pioggia, temperatura, umidità, pressione), WN32P (temperatura e 
+umidità dell'aria), più cinque WH51 preesistenti. Lo strumento legge la sonda dal primo e la forzante dal secondo 
+(`weather_gateway`).
 
 ## In una frase
 
