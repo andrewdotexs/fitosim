@@ -871,6 +871,16 @@ class EcowittSeriesPoint:
 
     solar_w_m2: Optional[float] = None
 
+    wind_speed_m_s: Optional[float] = None
+    """
+    Velocità del vento in m/s (sezione `wind.wind_speed`). L'endpoint
+    history la restituisce già, perché il call_back la chiede; serve
+    per ricostruire la forzante osservata di un giorno passato senza
+    ricorrere a una previsione. FAO-56 la vuole riferita a 2 m: se la
+    stazione è montata più in alto, la conversione (eq. 47) spetta al
+    chiamante.
+    """
+
     indoor_temp_c: Optional[float] = None
     indoor_humidity_pct: Optional[float] = None
 
@@ -1060,6 +1070,14 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
     solar_uvi = data.get("solar_and_uvi", {})
     solar = _build_series_pure(solar_uvi.get("solar"))
 
+    # Vento: il call_back lo chiede già, lo si legge con lo stesso
+    # convertitore della real_time, così un account che rispondesse in
+    # km/h o mph arriverebbe comunque in m/s.
+    wind_section = data.get("wind", {})
+    wind_speed = _build_series_dict(
+        wind_section.get("wind_speed"), _to_m_per_second
+    )
+
     # WN31 multi-canale.
     extra_temp_per_ch: dict[int, dict[int, float]] = {}
     extra_hum_per_ch: dict[int, dict[int, float]] = {}
@@ -1110,7 +1128,7 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
     all_timestamps: set[int] = set()
     for d in (
         outdoor_temp, outdoor_hum, indoor_temp, indoor_hum,
-        rain_daily, solar,
+        rain_daily, solar, wind_speed,
     ):
         all_timestamps.update(d.keys())
     for d in extra_temp_per_ch.values():
@@ -1164,6 +1182,7 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
             outdoor_humidity_pct=outdoor_hum.get(ts),
             rainfall_mm=rain_daily.get(ts),
             solar_w_m2=solar.get(ts),
+            wind_speed_m_s=wind_speed.get(ts),
             indoor_temp_c=indoor_temp.get(ts),
             indoor_humidity_pct=indoor_hum.get(ts),
             extra_temp_c=et_at_ts,

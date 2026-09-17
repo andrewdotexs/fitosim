@@ -701,6 +701,49 @@ class TestHistoryRobustness(unittest.TestCase):
         self.assertAlmostEqual(ts_to_point[200].soil_ec_mscm[1], 0.30, places=6)
         self.assertEqual(ts_to_point[200].soil_moisture_pct, {1: 63.0})
 
+    def test_wind_speed_is_read_from_history_and_converted(self):
+        # Il call_back chiede `wind` da sempre, ma il parser lo scartava:
+        # serve per ricostruire la forzante osservata di un giorno senza
+        # ricorrere a una previsione. Stessa conversione della real_time,
+        # quindi un account che rispondesse in km/h arriva in m/s.
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        payload = {
+            "code": 0,
+            "data": {
+                "wind": {
+                    "wind_speed": {
+                        "unit": "km/h",
+                        "list": {"100": "7.2", "200": "-", "300": "10.8"},
+                    },
+                },
+                "outdoor": {
+                    "temperature": {
+                        "unit": "°C",
+                        "list": {"100": "20.0"},
+                    },
+                },
+            },
+        }
+        series = parse_ecowitt_history_response(payload)
+        ts_to_point = {int(p.timestamp.timestamp()): p for p in series.points}
+        # 7.2 km/h = 2.0 m/s; 10.8 km/h = 3.0 m/s.
+        self.assertAlmostEqual(ts_to_point[100].wind_speed_m_s, 2.0, places=6)
+        self.assertAlmostEqual(ts_to_point[300].wind_speed_m_s, 3.0, places=6)
+        # A 200 l'unica lettura è mancante ("-") e nessun altro sensore
+        # ha osservato quell'istante: non nasce alcun punto, invece di
+        # un punto vuoto o con vento zero.
+        self.assertNotIn(200, ts_to_point)
+        # Il vento da solo basta a creare un timestamp (300 non ha altro).
+        self.assertIsNone(ts_to_point[300].outdoor_temp_c)
+
+    def test_history_without_wind_section_leaves_wind_none(self):
+        # La fixture reale non ha la sezione wind: nessun errore, e ogni
+        # punto porta None, non un valore inventato.
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        series = parse_ecowitt_history_response(_load_history_payload())
+        self.assertGreater(series.n_points, 0)
+        self.assertTrue(all(p.wind_speed_m_s is None for p in series.points))
+
 
 class TestHistoryUrlBuilder(unittest.TestCase):
     """Verifica della costruzione URL per l'endpoint history."""
