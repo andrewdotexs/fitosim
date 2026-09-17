@@ -6,9 +6,13 @@
 livelli 2 e 3 del manuale di calibrazione: substrato (θ_FC, θ_PWP) e specie (Kc). Il livello 1, la funzione di 
 trasferimento della sonda, e il livello 4, il modello chimico, restano fuori da questa prima passata.
 **Hardware:** due gateway, perché i sensori Ecowitt si accoppiano a uno solo. GW3000A: WH52 (θ, temperatura ed EC del 
-substrato). GW2000: WS90 (vento, radiazione solare, pioggia, temperatura, umidità, pressione), WN32P (temperatura e 
-umidità dell'aria), più cinque WH51 preesistenti. Lo strumento legge la sonda dal primo e la forzante dal secondo 
-(`weather_gateway`).
+substrato) e WN32P (temperatura e umidità dell'aria, accanto al vaso). GW2000: WS90 (vento, radiazione solare, pioggia, 
+temperatura, umidità, pressione), un pluviometro WH40 e cinque WH51 preesistenti. Lo strumento legge la sonda e l'aria 
+dal primo, vento, radiazione e pioggia dal secondo (`weather_gateway`, `air_gateway`).
+
+Una cosa da sapere sul WN32P, scoperta con la sezione `battery` dell'API: ha il **barometro**, quindi Ecowitt lo tratta 
+come un WH25 e ne espone i valori nella sezione **indoor**, ovunque stia fisicamente. La sorgente dell'aria si configura 
+per sezione dell'API (`outdoor_source = "indoor"`), non per posizione del sensore.
 
 ## In una frase
 
