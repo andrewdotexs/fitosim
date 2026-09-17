@@ -165,6 +165,54 @@ giardino.set_channel_id("phalaenopsis-1-finestra", "soil_ch1")
 
 La vista di sola lettura è `giardino.channel_mapping`.
 
+## Roadmap dello strumento
+
+La procedura sopra si esegue con uno strumento locale che vive in `tools/calib/`, **fuori** da `src/fitosim/`: il core resta una libreria pura, lo strumento la usa. Ha uno scope dichiarato, "far girare questa calibrazione", ed è costruito perché The Pot possa assorbirne le parti: tutta la logica sta in moduli Python, la pagina HTML è solo una vista.
+
+**Perché non una pagina HTML e basta.** Deve chiamare il cloud Ecowitt, eseguire la matematica di fitosim e ricordare lo stato tra un giorno e l'altro. Dal browser le chiamate a Ecowitt si scontrano col CORS e metterci le chiavi le esporrebbe. Quindi un piccolo backend Python con `http.server` della standard library, endpoint JSON, zero dipendenze nuove. Le credenziali stanno in un file locale ignorato da git, letto dal backend; la pagina non le vede mai.
+
+**Perché prima la riga di comando.** La parte rischiosa è una sola: la connessione Ecowitt e il parsing del WS90 sul tuo account. Va provata prima di costruirci sopra un'interfaccia. E la calibrazione non può aspettare l'interfaccia: l'ancora si registra alla prossima irrigazione, e ogni giorno senza il valore delle sei è un giorno perso. Per questo la fase 0 è l'anello completo da riga di comando, e l'interfaccia arriva dopo, a raccontare un flusso già provato.
+
+| Fase | Consegna | Cosa dimostra | Criterio di uscita |
+|---|---|---|---|
+| 0 | il pacchetto `tools/calib/` con la CLI | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera, almeno un'osservazione con discrepanza stampata |
+| 1 | backend HTTP + pagina di setup | gateway registrati e sensori scoperti dalla pagina | WH52 mappato sul vaso dalla pagina, misure canoniche visibili in tempo reale |
+| 2 | pagina di calibrazione | il flusso in sei passi guidato dal browser | un ciclo intero condotto dalla pagina |
+| 3 | la calibrazione stessa | proposte con confidenza crescente | dal terzo ciclo la prima proposta, dal quinto una utilizzabile |
+
+### Fase 0: l'anello da riga di comando
+
+Il pacchetto nasce già con la struttura che le fasi successive riempiono; i moduli sono quelli, la CLI è la prima vista.
+
+- `tools/calib/gateways.py`: il registro dei gateway. Un file di configurazione locale con uno o più gateway (nome, application key, api key, MAC), le funzioni per leggerlo e scriverlo, e la costruzione degli adapter Ecowitt di fitosim a partire da un gateway registrato. È la registrazione dei connettori della spec sensori, ridotta a ciò che serve.
+- `tools/calib/forcing.py`: la forzante meteo. Dalla history del WS90 e del WN32P costruisce il `WeatherDay` **osservato** di ciascun giorno, con minima e massima di temperatura, umidità, vento **riferito a 2 m** con FAO-56 eq. 47 (l'helper che a fitosim manca), radiazione e pioggia. Da Open-Meteo costruisce la lista dei `WeatherDayForecast` a sette giorni.
+- `tools/calib/workflow.py`: l'anello. Registrare l'ancora FC leggendo il WH52 adesso; prevedere sette giorni con `Garden.forecast`; osservare un giorno scaricando la history, aggregando alle sei e chiamando `update_from_sensor`; confrontare previsto e osservato a fine ciclo; calibrare con `calibrate_substrate` e `calibrate_kc` quando i cicli bastano. Lo stato del giardino vive nella SQLite di `GardenPersistence`; ancore, cicli, discrepanze e diario in un giornale JSON accanto.
+- `tools/calib/__main__.py`: la CLI. `ancora`, `prevedi`, `osserva`, `confronta`, `calibra`, `diario`, da lanciare dalla radice del repo con `python -m tools.calib`.
+- Test con le fixture CSV già presenti, senza rete: l'aggregazione alle sei, la conversione del vento, la chiusura di un ciclo sintetico.
+
+Criterio di uscita: `ancora` registrata alla prossima irrigazione a drenaggio; `osserva` che produce una discrepanza per almeno un giorno; `confronta` che stampa previsto contro osservato.
+
+### Fase 1: backend e pagina di setup
+
+- `tools/calib/server.py`: `http.server` con endpoint JSON che espongono `gateways.py` e `forcing.py`. Elenco e registrazione dei gateway; scoperta dei sensori con `fetch_real_time`, restituita come `Measurement` canoniche; associazione del canale del WH52 alla label del vaso con `set_channel_id`.
+- `tools/calib/static/setup.html`: form di registrazione, pulsante "scopri sensori" con l'elenco dei canali trovati (WH52 con θ, temperatura ed EC; WN32P; WS90 con vento, radiazione e pioggia), mappatura sul vaso, misure in tempo reale.
+
+Criterio di uscita: un gateway registrato dalla pagina, il WH52 mappato, le misure parsate visibili.
+
+### Fase 2: pagina di calibrazione
+
+- `tools/calib/static/calibrazione.html` sugli endpoint di `workflow.py`. Il vaso, dal giardino persistito o da un form. Il pulsante "registra ancora FC", da premere dopo l'irrigazione a drenaggio. "Prevedi sette giorni", con la curva disegnata. "Osserva oggi", che sovrappone l'osservato al previsto. Il registro dei cicli e il diario. "Calibra", abilitato solo dal terzo ciclo chiuso, che mostra le proposte con la loro confidenza prima di applicarle su una copia della specie. Il grafico in SVG inline, così funziona senza rete.
+
+Criterio di uscita: un ciclo intero condotto dalla pagina, dall'ancora al confronto.
+
+### Fase 3: la calibrazione, e dopo
+
+Non è codice. Dal terzo ciclo la prima proposta di Kc, da guardare con sospetto; dal quinto una utilizzabile; RMSE della θ giornaliera come metrica, con le soglie del manuale. Quando `the-pot-lisimetro` sarà operativo, la sua stima di Kc entra nella regola di precedenza allo scope di catalogo. E quando The Pot sarà pronto a guidare la calibrazione, `gateways.py` e `workflow.py` sono i moduli da portargli: la pagina no, quella è solo una vista.
+
+### Cosa resta fuori
+
+The Pot, che non si costruisce dentro fitosim. La risoluzione sub-giornaliera. I livelli 1 e 4 del manuale. Qualunque dipendenza esterna nello strumento.
+
 ## Riferimenti
 
 - Manuale di calibrazione: `docs/fitosim_calibration_manual.md`, in particolare capitoli 3 e 5
