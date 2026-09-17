@@ -280,10 +280,11 @@ Un pacchetto autonomo, `scripts/calibrazione_wh5x/`, da lanciare dalla radice di
 useranno: due moduli di pura logica, senza persistenza, che passeranno in `services/` così come sono; un modulo di 
 flusso la cui persistenza è l'unica parte da riscrivere quando arriveranno i modelli dell'app.
 
-- `gateways.py`: il registro dei gateway. Un file di configurazione locale, ignorato da git, con uno o più gateway 
-(nome, application key, api key, MAC), le funzioni per leggerlo e scriverlo, e la costruzione degli adapter Ecowitt di 
-fitosim a partire da un gateway registrato. È la registrazione dei connettori della spec sensori, ridotta a ciò che 
-serve. Pura logica: passa in `services/` senza modifiche.
+- `gateways.py`: l'account e il registro dei gateway, tenuti distinti. Le due chiavi (application key e api key) 
+sono **dell'account** Ecowitt, valgono per tutti i suoi gateway e stanno solo nell'ambiente, nel `.env`; il **MAC** 
+è del singolo gateway e si inserisce quando lo si registra, in un file locale ignorato da git che non contiene 
+segreti. Le chiamate al cloud prendono account e gateway insieme. È la registrazione dei connettori della spec 
+sensori, ridotta a ciò che serve. Pura logica: passa in `services/` senza modifiche.
 - `forcing.py`: la forzante meteo. Dalla history del WS90 e del WN32P costruisce il `WeatherDay` **osservato** di 
 ciascun giorno, con minima e massima di temperatura, umidità media, vento **riferito a 2 m** con FAO-56 eq. 47 (l'helper 
 che a fitosim manca), radiazione integrata sul giorno in MJ/m² e pioggia dal cumulato giornaliero. Da Open-Meteo 
