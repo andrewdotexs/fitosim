@@ -1845,10 +1845,13 @@ class TestPotNutritionIntegration(unittest.TestCase):
          Kn=1 silenzioso, ET identica a prima della tappa 3.
       2. Specie con modello chimico in condizioni ottimali → Kn=1,
          ET identica al caso legacy con stessi parametri.
-      3. Specie con modello chimico in stress → Kn<1, ET strettamente
-         minore del caso ottimale.
+      3. Specie con modello chimico in stress salino → Kn<1, ET
+         strettamente minore del caso ottimale.
       4. Effetto materiale: il Kn modula il bilancio idrico via
          apply_balance_step.
+      5. Vaso appena creato (salt_mass_meq = 0, EC 0): nessuna
+         penalità, ET identica alla specie legacy. L'EC bassa è un
+         segnale per la fertirrigazione, non uno stress osmotico.
     """
 
     def _make_basil_with_chemistry(self) -> Species:
@@ -1905,15 +1908,10 @@ class TestPotNutritionIntegration(unittest.TestCase):
         # e l'ET deve essere identica a quella del basilico legacy
         # con gli stessi parametri di Kc.
         chem_species = self._make_basil_with_chemistry()
-        pot_chem = self._make_pot(
-            chem_species,
-            salt_mass_meq=0.0,        # niente sali → EC=0, dentro range
-                                       # [1.0, 1.6]? No, 0 è SOTTO 1.0.
-                                       # Devo scegliere un EC dentro range.
-        )
-        # Per portare EC nel range ottimale, calcolo la salt_mass
-        # corretta. ec=1.3 con water_volume corrente.
-        # ec = salt/(volume*10) → salt = ec*volume*10
+        pot_chem = self._make_pot(chem_species)
+        # Porto l'EC dentro il range ottimale [1.0, 1.6] calcolando la
+        # salt_mass corretta: ec = salt/(volume*10) → salt = ec*volume*10.
+        # (Il caso EC=0 del vaso nuovo è coperto dal test dedicato.)
         target_ec = 1.3
         pot_chem.salt_mass_meq = target_ec * pot_chem.water_volume_liters * 10
         pot_chem.ph_substrate = 6.5  # dentro range [6.0, 7.0]
@@ -1943,6 +1941,36 @@ class TestPotNutritionIntegration(unittest.TestCase):
         )
         # In condizioni ottimali Kn=1 → ET identica.
         self.assertAlmostEqual(et_chem, et_legacy, places=6)
+
+    # ----- Vaso appena creato: EC 0, nessuna penalità -----
+
+    def test_fresh_pot_without_salts_transpires_like_legacy(self):
+        # Un Pot costruito senza toccare la chimica ha salt_mass_meq = 0
+        # e quindi EC modellata 0, sotto il minimo del range. L'EC
+        # bassa non ostacola l'assorbimento d'acqua: l'ET deve essere
+        # identica a quella della specie legacy con gli stessi Kc, e
+        # non il 30 % di quella (com'era con la rampa simmetrica).
+        chem_species = self._make_basil_with_chemistry()
+        pot_chem = self._make_pot(chem_species)
+        pot_chem.ph_substrate = 6.5   # pH in range: isola il lato EC
+        self.assertEqual(pot_chem.salt_mass_meq, 0.0)
+        self.assertEqual(pot_chem.ec_substrate_mscm, 0.0)
+
+        legacy_species = Species(
+            common_name="basil-legacy",
+            scientific_name="Ocimum basilicum",
+            kc_initial=0.50, kc_mid=1.10, kc_late=0.85,
+        )
+        pot_legacy = self._make_pot(legacy_species, state_mm=pot_chem.state_mm)
+
+        et_chem = pot_chem.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        et_legacy = pot_legacy.current_et_c(
+            et_0_mm=4.0, current_date=date(2026, 5, 15),
+        )
+        self.assertGreater(et_chem, 0.0)
+        self.assertAlmostEqual(et_chem, et_legacy, places=9)
 
     # ----- Specie con modello chimico in stress -----
 

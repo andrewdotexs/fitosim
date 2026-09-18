@@ -153,10 +153,11 @@ deriva di ciclo in ciclo è il segnale di accumulo che il coefficiente di lavagg
    trasferimento, uno per irrigazione.
 2. *Livello 4, il coefficiente di lavaggio.* Dalla serie dell'EC all'ancora contro l'EC prevista dal modello dopo gli 
    stessi eventi. Vuole cicli di fertirrigazione e lavaggio: è un lavoro da stagione di crescita.
-3. *Kn.* Si osserva solo quando l'EC esce dall'intervallo ottimale della specie, cosa che in substrato fresco senza 
-   fertirrigazione non succede. E il rosmarino di catalogo **non ha un intervallo ottimale di EC**: 
-   `supports_chemistry_model` è falso e Kn vale 1 per costruzione. Prima di parlare di Kn per questo vaso va definito 
-   l'intervallo della specie, con la letteratura o con il catalogo di The Pot.
+3. *Kn.* Si osserva solo quando l'EC **supera il massimo** dell'intervallo ottimale della specie, cosa che in substrato 
+   fresco senza fertirrigazione non succede. Sotto l'intervallo il Kn vale 1 per definizione: l'EC bassa è una carenza 
+   nutrizionale, non uno stress osmotico, e non riduce l'ET. E il rosmarino di catalogo **non ha un intervallo 
+   ottimale di EC**: `supports_chemistry_model` è falso e Kn vale 1 per costruzione. Prima di parlare di Kn per questo 
+   vaso va definito l'intervallo della specie, con la letteratura o con il catalogo di The Pot.
 
 Con una pianta nuova in substrato fresco e senza concime, per mesi la serie dell'EC sarà piatta e bassa. È il 
 comportamento atteso, ed è una linea di base preziosa: quando la fertirrigazione comincerà, ogni scostamento da lì 

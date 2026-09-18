@@ -1436,7 +1436,7 @@ TAW (total available water): differenza theta\_FC − theta\_PWP, l’acqua “u
 
 Kp (coefficiente di vaso): fattore moltiplicativo specifico del contenitore (materiale, colore, esposizione) che modula l’evapotraspirazione del singolo vaso. Estensione non standard di FAO-56, specifica del giardinaggio in vaso.
 
-Kn (coefficiente nutrizionale): fattore moltiplicativo che modula l’evapotraspirazione effettiva in funzione dello stato chimico del substrato (EC fuori range, pH fuori range). Vaso in range chimico ottimale ha Kn=1; vaso in stress chimico totale ha Kn=0.30. Estensione di tappa 3 fascia 2.
+Kn (coefficiente nutrizionale): fattore moltiplicativo che modula l’evapotraspirazione effettiva in funzione dello stato chimico del substrato (EC sopra il range, pH fuori range). Vaso in range chimico ottimale ha Kn=1; vaso in stress chimico totale ha Kn=0.30. L’EC sotto il range non riduce l’ET (una soluzione povera di sali non ostacola l’assorbimento d’acqua): è una carenza nutrizionale, segnalata dalle allerte fertilization\_due ed ec\_too\_low. Estensione di tappa 3 fascia 2.
 
 EC (conducibilità elettrica): misura della concentrazione di sali disciolti nella soluzione del substrato, espressa in mS/cm. Indicatore della disponibilità di nutrienti e dello stress salino. Range tipici 1.0-2.0 mS/cm per la maggior parte delle specie domestiche.
 

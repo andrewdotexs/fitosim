@@ -28,9 +28,9 @@ del dual-Kc. Con la sotto-tappa D introduciamo il fattore Kn::
 Il Kn è applicato all'esterno del calcolo standard: quando vale 1.0
 il modello si comporta esattamente come prima della sotto-tappa D, e
 l'estensione è completamente retrocompatibile. Quando scende sotto
-1.0 perché lo stato chimico è subottimale, la traspirazione predetta
-si riduce in modo coerente con la fisiologia della pianta in stress
-nutrizionale.
+1.0 perché il substrato è troppo salino o il pH è fuori range, la
+traspirazione predetta si riduce in modo coerente con la fisiologia
+della pianta in stress.
 
 Significato fisiologico
 -----------------------
@@ -49,18 +49,35 @@ scono o necrotizzano, la fotosintesi rallenta — anche questo riduce
 la traspirazione perché parte dell'acqua "tirata su" dalla pianta è
 guidata dalla fotosintesi attiva.
 
+Un'EC **bassa**, invece, non riduce la traspirazione. Una soluzione
+povera di sali ha un potenziale osmotico vicino a zero: l'acqua è
+più facile da assorbire, non più difficile. Quello che manca sono i
+nutrienti, e la carenza agisce sulla crescita (meno foglie, meno
+chioma) su una scala di settimane, non sul consumo idrico del giorno.
+Per questo il fattore EC è **unilaterale**: penalizza solo l'eccesso
+di sali, e sotto il range vale 1.0. È la stessa forma del
+coefficiente di stress salino di FAO-56 (cap. 8, eq. 83, da
+Maas-Hoffman): Ks = 1 fino alla soglia di EC, poi decrescita lineare.
+FAO-56 tratta la fertilità ridotta per altra via, come chioma ridotta
+(Kcb più basso), cioè come effetto di crescita e non come
+moltiplicatore giornaliero. La carenza nutrizionale in fitosim è
+quindi un **segnale per la fertirrigazione** — le allerte
+`ec_too_low` e `fertilization_due` in `domain/alerts.py` — e non un
+termine dell'evapotraspirazione. Un substrato fresco senza concime
+(EC ≈ 0) traspira come uno in range: senza questo, un vaso appena
+creato partirebbe con Kn = 0.3 e il 70 % di ET in meno finché non
+arriva la prima fertirrigazione, falsando ogni calibrazione del Kc.
+
 Forma matematica della funzione di stress
 -----------------------------------------
 
-Per ogni grandezza chimica (EC e pH separatamente) il fattore di
-stress è una **funzione triangolare** della distanza dal range
-ottimale della specie. Quando il valore corrente è dentro il range
-il fattore vale 1.0; man mano che ci si allontana dal range, scende
-linearmente verso un valore minimo `KN_MIN_DEFAULT = 0.3` raggiunto
-a una distanza configurabile (la "semi-ampiezza" della rampa).
-Oltre quella distanza la funzione è clampata al minimo.
-
-La forma è quindi una "trapezia con plateau interno":
+Per il **pH** il fattore di stress è una **funzione triangolare**
+della distanza dal range ottimale della specie, in entrambe le
+direzioni: dentro il range vale 1.0; man mano che ci si allontana
+scende linearmente verso un valore minimo `KN_MIN_DEFAULT = 0.3`
+raggiunto a una distanza configurabile (la "semi-ampiezza" della
+rampa), e oltre quella distanza è clampata al minimo. La forma è
+una "trapezia con plateau interno":
 
          1.0  ─┐    ┌──────────┐    ┌───
                 │    │          │    │
@@ -72,6 +89,21 @@ La forma è quindi una "trapezia con plateau interno":
               │     │          │      │
        ───── │      │          │      │ ─────
             a-h     a          b      b+h
+
+Per l'**EC** il fattore è la stessa funzione **senza la rampa
+sinistra**: 1.0 fino al massimo del range compreso, rampa lineare
+verso `KN_MIN_DEFAULT` sopra, clamp oltre (`salinity_factor`):
+
+         1.0  ─────────────────────┐
+                                   │
+                    Kn=1           │
+              (sotto e in range)   │
+                                   │
+                                    ╲
+       Kn_min                        ╲
+                                      │
+                                      │ ─────
+              0         a          b      b+h
 
 Il Kn complessivo è il **prodotto dei due fattori** (EC e pH),
 perché entrambi gli stress si combinano peggiorando la performance
@@ -92,9 +124,10 @@ from __future__ import annotations
 
 
 # Valore minimo del coefficiente Kn raggiunto in condizioni di stress
-# completo (EC o pH molto fuori range). Corrisponde al valore di
-# letteratura per stress salino acuto: la pianta riduce la
-# traspirazione del 70% rispetto alla condizione ottimale.
+# completo (EC molto sopra il range, o pH molto fuori range).
+# Corrisponde al valore di letteratura per stress salino acuto: la
+# pianta riduce la traspirazione del 70% rispetto alla condizione
+# ottimale.
 #
 # Quando in futuro la calibrazione contro i dati reali del sensore ATO
 # mostrasse che un Kn_min specifico per specie produce simulazioni più
@@ -135,7 +168,9 @@ def triangular_factor(
     La funzione vale 1.0 dentro il range ottimale `[optimal_min,
     optimal_max]`, scende linearmente verso `kn_min` nelle due rampe
     di larghezza `half_width` ai lati del range, e resta clampata al
-    minimo oltre quei limiti.
+    minimo oltre quei limiti. È la forma giusta per grandezze che
+    fanno male in entrambe le direzioni, come il pH; per l'EC, dove
+    solo l'eccesso è uno stress, vedi `salinity_factor`.
 
     Forma matematica completa
     -------------------------
@@ -182,17 +217,17 @@ def triangular_factor(
 
     Esempi
     --------
-    Basilico, range EC 1.0-1.6 mS/cm, half_width 0.6 (= ampiezza
-    range), Kn_min default::
+    Basilico, range pH 6.0-7.0, half_width `PH_STRESS_HALF_WIDTH`
+    = 2.0, Kn_min default::
 
-        >>> triangular_factor(current=1.3, optimal_min=1.0,
-        ...                   optimal_max=1.6, half_width=0.6)
+        >>> triangular_factor(current=6.5, optimal_min=6.0,
+        ...                   optimal_max=7.0, half_width=2.0)
         1.0
-        >>> triangular_factor(current=0.7, optimal_min=1.0,
-        ...                   optimal_max=1.6, half_width=0.6)
-        0.65         # rampa sinistra: -0.3 dal min, → 50% nella rampa
-        >>> triangular_factor(current=0.4, optimal_min=1.0,
-        ...                   optimal_max=1.6, half_width=0.6)
+        >>> triangular_factor(current=5.0, optimal_min=6.0,
+        ...                   optimal_max=7.0, half_width=2.0)
+        0.65         # rampa sinistra: -1.0 dal min, → 50% nella rampa
+        >>> triangular_factor(current=4.0, optimal_min=6.0,
+        ...                   optimal_max=7.0, half_width=2.0)
         0.3          # clampato al minimo (= optimal_min - half_width)
     """
     if optimal_min >= optimal_max:
@@ -237,6 +272,101 @@ def triangular_factor(
 
 
 # =======================================================================
+#  Fattore di stress salino: unilaterale
+# =======================================================================
+
+def salinity_factor(
+    *,
+    current: float,
+    optimal_max: float,
+    half_width: float,
+    kn_min: float = KN_MIN_DEFAULT,
+) -> float:
+    """
+    Calcola il fattore di stress osmotico da eccesso di sali.
+
+    È la metà destra di `triangular_factor`: vale 1.0 fino a
+    `optimal_max` compreso, scende linearmente verso `kn_min` nella
+    rampa di larghezza `half_width` sopra il massimo, e resta clampata
+    al minimo oltre. Sotto il range non c'è penalità, perché una
+    soluzione povera di sali non ostacola l'assorbimento d'acqua: la
+    carenza nutrizionale è un segnale per la fertirrigazione (allerte
+    `ec_too_low` e `fertilization_due`), non un termine dell'ET. Vedi
+    la docstring del modulo per la motivazione e FAO-56 cap. 8, eq. 83
+    per la forma.
+
+    Forma matematica completa
+    -------------------------
+
+    Definendo `b = optimal_max`, `h = half_width`, `m = kn_min`::
+
+        x ≤ b                   →  1
+        b < x < b + h           →  1 − (1 − m) × (x − b) / h
+        x ≥ b + h               →  m
+
+    Parametri
+    ---------
+    current : float
+        EC corrente della soluzione del substrato, in mS/cm.
+    optimal_max : float
+        Massimo del range ottimale della specie: la soglia sopra la
+        quale comincia lo stress osmotico.
+    half_width : float
+        Distanza oltre il massimo alla quale il fattore raggiunge
+        `kn_min`. Deve essere strettamente positiva.
+    kn_min : float, opzionale
+        Valore minimo del fattore in stress completo. Default
+        `KN_MIN_DEFAULT = 0.3`. Deve stare in (0, 1].
+
+    Ritorna
+    -------
+    float
+        Fattore di stress in [kn_min, 1.0].
+
+    Solleva
+    -------
+    ValueError
+        Per half_width non positivo o kn_min fuori (0, 1].
+
+    Esempi
+    --------
+    Basilico, range EC 1.0-1.6 mS/cm, half_width 0.6 (= ampiezza
+    range), Kn_min default::
+
+        >>> salinity_factor(current=0.0, optimal_max=1.6, half_width=0.6)
+        1.0          # substrato fresco senza concime: nessuna penalità
+        >>> salinity_factor(current=1.3, optimal_max=1.6, half_width=0.6)
+        1.0
+        >>> salinity_factor(current=1.9, optimal_max=1.6, half_width=0.6)
+        0.65         # rampa: +0.3 dal max, → 50% nella rampa
+        >>> salinity_factor(current=2.2, optimal_max=1.6, half_width=0.6)
+        0.3          # clampato al minimo (= optimal_max + half_width)
+    """
+    if half_width <= 0:
+        raise ValueError(
+            f"salinity_factor: half_width deve essere positivo "
+            f"(ricevuto {half_width})."
+        )
+    if not 0.0 < kn_min <= 1.0:
+        raise ValueError(
+            f"salinity_factor: kn_min deve stare in (0, 1] "
+            f"(ricevuto {kn_min})."
+        )
+
+    # Caso 1: sotto il range o dentro — fattore pieno.
+    if current <= optimal_max:
+        return 1.0
+
+    # Caso 2: oltre il limite di stress completo.
+    if current >= optimal_max + half_width:
+        return kn_min
+
+    # Caso 3: rampa. Scala lineare da 1.0 (a x = b) a kn_min (a x = b+h).
+    ramp_position = (current - optimal_max) / half_width
+    return 1.0 - (1.0 - kn_min) * ramp_position
+
+
+# =======================================================================
 #  Funzione principale: Kn complessivo da specie e stato chimico
 # =======================================================================
 
@@ -251,18 +381,20 @@ def nutritional_factor(
     nel suo stato chimico corrente.
 
     Il Kn è il **prodotto dei due fattori indipendenti** calcolati per
-    EC e pH separatamente, ognuno tramite `triangular_factor` con i
-    parametri della specie. Quando la specie non ha configurato il
-    modello chimico (`species.supports_chemistry_model == False`), la
-    funzione restituisce silenziosamente 1.0 — comportamento "inerte"
-    coerente con la filosofia di disabilitazione dell'estensione.
+    EC e pH separatamente con i parametri della specie: l'EC tramite
+    `salinity_factor` (unilaterale: penalizza solo l'eccesso di sali,
+    sotto il range vale 1.0), il pH tramite `triangular_factor`
+    (bilaterale). Quando la specie non ha configurato il modello
+    chimico (`species.supports_chemistry_model == False`), la funzione
+    restituisce silenziosamente 1.0 — comportamento "inerte" coerente
+    con la filosofia di disabilitazione dell'estensione.
 
     La semi-ampiezza della rampa di stress per l'EC è fissata pari
     all'ampiezza del range ottimale della specie (`max - min`), che
     è una scelta di calibrazione documentata: lo stress salino
-    completo si raggiunge a una distanza dal range pari all'ampiezza
-    del range stesso. Per il pH la semi-ampiezza è la costante
-    `PH_STRESS_HALF_WIDTH = 2.0` unità.
+    completo si raggiunge a una distanza sopra il range pari
+    all'ampiezza del range stesso. Per il pH la semi-ampiezza è la
+    costante `PH_STRESS_HALF_WIDTH = 2.0` unità.
 
     Parametri
     ---------
@@ -310,6 +442,16 @@ def nutritional_factor(
         >>> # kn = 0.65 × 1.0 = 0.65
         >>> assert abs(kn - 0.65) < 1e-9
 
+    Stesso basilico in substrato fresco, senza concime (EC ≈ 0):
+    nessuna penalità, perché l'EC bassa non è uno stress osmotico::
+
+        >>> kn = nutritional_factor(
+        ...     species=basil_with_chemistry,
+        ...     ec_substrate_mscm=0.0,
+        ...     ph_substrate=6.5,
+        ... )
+        >>> assert kn == 1.0
+
     Specie senza modello chimico configurato (es. specie del catalogo
     legacy della fascia 1)::
 
@@ -344,10 +486,11 @@ def nutritional_factor(
         species.ec_optimal_max_mscm - species.ec_optimal_min_mscm
     )
 
-    # Fattore EC.
-    ec_factor = triangular_factor(
+    # Fattore EC: unilaterale. Il minimo del range serve solo a dare
+    # la scala della rampa; sotto il minimo il fattore vale 1.0 e la
+    # carenza è affare delle allerte, non dell'ET.
+    ec_factor = salinity_factor(
         current=ec_substrate_mscm,
-        optimal_min=species.ec_optimal_min_mscm,
         optimal_max=species.ec_optimal_max_mscm,
         half_width=ec_range_width,
     )

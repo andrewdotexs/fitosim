@@ -7,17 +7,21 @@ Strategia di test
 Il modulo nutrition è composto da funzioni pure che prendono numeri
 e restituiscono numeri. I test verificano:
 
-  1. **triangular_factor**: la forma matematica della funzione su
-     tutti e cinque i rami (plateau interno, plateau sinistro
-     clampato, plateau destro clampato, rampa sinistra, rampa
-     destra). Casi al limite (boundary) compresi.
+  1. **triangular_factor** (usata per il pH): la forma matematica
+     della funzione su tutti e cinque i rami (plateau interno,
+     plateau sinistro clampato, plateau destro clampato, rampa
+     sinistra, rampa destra). Casi al limite (boundary) compresi.
 
-  2. **nutritional_factor**: combinazione di EC e pH per specie
+  2. **salinity_factor** (usata per l'EC): unilaterale. Vale 1 sotto
+     e dentro il range, rampa e clamp solo sopra il massimo.
+
+  3. **nutritional_factor**: combinazione di EC e pH per specie
      realistiche. Verifica della disabilitazione silenziosa per
-     specie senza modello chimico, e del prodotto come
-     combinazione dei due fattori.
+     specie senza modello chimico, del prodotto come combinazione
+     dei due fattori, e dell'assenza di penalità per EC bassa (un
+     substrato fresco senza concime traspira come uno in range).
 
-  3. **Validazione**: errori di input → ValueError con messaggi
+  4. **Validazione**: errori di input → ValueError con messaggi
      diagnostici.
 """
 
@@ -28,6 +32,7 @@ from fitosim.science.nutrition import (
     KN_MIN_DEFAULT,
     PH_STRESS_HALF_WIDTH,
     nutritional_factor,
+    salinity_factor,
     triangular_factor,
 )
 
@@ -200,7 +205,85 @@ class TestTriangularFactor(unittest.TestCase):
 
 
 # =======================================================================
-#  Famiglia 2: nutritional_factor — facade EC × pH
+#  Famiglia 2: salinity_factor — unilaterale, solo eccesso di sali
+# =======================================================================
+
+class TestSalinityFactor(unittest.TestCase):
+    """
+    La metà destra della triangolare: sotto il massimo nessuna
+    penalità, sopra rampa e clamp identici a `triangular_factor`.
+    """
+
+    # Parametri canonici (basilico-like): range 1.0-1.6, rampa 0.6.
+    b = 1.6   # optimal_max
+    h = 0.6   # half_width
+    m = KN_MIN_DEFAULT  # 0.3
+
+    def _f(self, x, **kwargs):
+        return salinity_factor(
+            current=x, optimal_max=self.b, half_width=self.h, **kwargs,
+        )
+
+    # ----- Sotto e dentro il range: fattore pieno -----
+
+    def test_below_and_inside_range_returns_one(self):
+        # L'EC bassa non è uno stress osmotico: 0.0 (substrato fresco),
+        # 0.5 (sotto il minimo 1.0), dentro il range, e il massimo
+        # compreso valgono tutti esattamente 1.0.
+        for x in [0.0, 0.15, 0.5, 1.0, 1.3, self.b]:
+            with self.subTest(current=x):
+                self.assertEqual(self._f(x), 1.0)
+
+    # ----- Rampa sopra il massimo -----
+
+    def test_ramp_at_midpoint(self):
+        # A metà rampa (x = b + h/2 = 1.9): 1 - 0.5 × 0.7 = 0.65,
+        # lo stesso valore della rampa destra di triangular_factor.
+        self.assertAlmostEqual(self._f(self.b + self.h / 2.0), 0.65, places=9)
+
+    def test_ramp_quarter(self):
+        # A un quarto della rampa: 1 - 0.25 × 0.7 = 0.825.
+        self.assertAlmostEqual(self._f(self.b + self.h / 4.0), 0.825, places=9)
+
+    def test_ramp_matches_triangular_right_side(self):
+        # Sopra il massimo le due funzioni coincidono punto per punto.
+        for x in [1.65, 1.8, 1.95, 2.1, 2.2, 3.0]:
+            with self.subTest(current=x):
+                self.assertAlmostEqual(
+                    self._f(x),
+                    triangular_factor(
+                        current=x, optimal_min=1.0,
+                        optimal_max=self.b, half_width=self.h,
+                    ),
+                    places=12,
+                )
+
+    # ----- Plateau clampato -----
+
+    def test_clamped_far_right(self):
+        for x in [self.b + self.h, self.b + 5 * self.h, 100.0]:
+            with self.subTest(current=x):
+                self.assertEqual(self._f(x), self.m)
+
+    # ----- Custom kn_min -----
+
+    def test_custom_kn_min(self):
+        # 1 - 0.5 × (1 - 0.5) = 0.75
+        self.assertAlmostEqual(
+            self._f(self.b + self.h / 2.0, kn_min=0.5), 0.75, places=9,
+        )
+
+    def test_monotonic_non_increasing(self):
+        # Mai crescente al crescere dell'EC, da zero fino oltre il clamp.
+        xs = [0.0, 0.3, 0.9, 1.0, 1.6, 1.7, 1.9, 2.2, 2.5, 5.0]
+        values = [self._f(x) for x in xs]
+        for i in range(1, len(values)):
+            with self.subTest(current=xs[i]):
+                self.assertLessEqual(values[i], values[i - 1])
+
+
+# =======================================================================
+#  Famiglia 3: nutritional_factor — facade EC × pH
 # =======================================================================
 
 class TestNutritionalFactor(unittest.TestCase):
@@ -228,6 +311,45 @@ class TestNutritionalFactor(unittest.TestCase):
             species=species,
             ec_substrate_mscm=1.9,
             ph_substrate=6.5,
+        )
+        self.assertAlmostEqual(kn, 0.65, places=9)
+
+    def test_ec_below_range_is_not_an_et_penalty(self):
+        # L'EC bassa limita la nutrizione (segnalata dalle allerte
+        # ec_too_low / fertilization_due), non l'assorbimento d'acqua:
+        # sotto il minimo del range il Kn resta esattamente 1.0, a
+        # qualsiasi distanza dal minimo.
+        species = _make_species_with_chemistry()   # range 1.0-1.6
+        for ec in [0.0, 0.15, 0.4, 0.5, 0.7, 0.9, 0.999]:
+            with self.subTest(ec=ec):
+                kn = nutritional_factor(
+                    species=species,
+                    ec_substrate_mscm=ec,
+                    ph_substrate=6.5,
+                )
+                self.assertEqual(kn, 1.0)
+
+    def test_fresh_substrate_without_salts_has_kn_one(self):
+        # Il caso operativo: un Pot appena creato ha salt_mass_meq = 0,
+        # quindi EC modellata 0. Deve traspirare come un vaso in range,
+        # altrimenti ogni calibrazione del Kc su substrato fresco parte
+        # con il 70 % di ET in meno.
+        species = _make_species_with_chemistry()
+        kn = nutritional_factor(
+            species=species,
+            ec_substrate_mscm=0.0,
+            ph_substrate=6.5,
+        )
+        self.assertEqual(kn, 1.0)
+
+    def test_ec_below_range_does_not_mask_ph_stress(self):
+        # EC bassa e pH fuori range: resta solo il fattore pH.
+        # pH=8.0 → rampa destra a metà → 0.65; ec_factor = 1.0.
+        species = _make_species_with_chemistry()
+        kn = nutritional_factor(
+            species=species,
+            ec_substrate_mscm=0.0,
+            ph_substrate=8.0,
         )
         self.assertAlmostEqual(kn, 0.65, places=9)
 
@@ -318,11 +440,28 @@ class TestNutritionalFactor(unittest.TestCase):
 
 
 # =======================================================================
-#  Famiglia 3: validazione degli input
+#  Famiglia 4: validazione degli input
 # =======================================================================
 
 class TestInputValidation(unittest.TestCase):
     """Errori di input → ValueError."""
+
+    def test_salinity_non_positive_half_width_rejected(self):
+        for half_width in [0.0, -0.5]:
+            with self.subTest(half_width=half_width):
+                with self.assertRaises(ValueError):
+                    salinity_factor(
+                        current=1.0, optimal_max=1.5, half_width=half_width,
+                    )
+
+    def test_salinity_kn_min_out_of_range_rejected(self):
+        for kn_min in [1.5, 0.0]:
+            with self.subTest(kn_min=kn_min):
+                with self.assertRaises(ValueError):
+                    salinity_factor(
+                        current=1.0, optimal_max=1.5, half_width=0.5,
+                        kn_min=kn_min,
+                    )
 
     def test_triangular_inverted_range_rejected(self):
         with self.assertRaises(ValueError):

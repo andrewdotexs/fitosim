@@ -803,11 +803,14 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
 
     <p>
       Modula la traspirazione in funzione dello stato chimico (EC, pH).
-      Stress salino e pH fuori range riducono la disponibilità idrica
-      apparente per effetti fisiologici.
+      Eccesso di sali (stress osmotico) e pH fuori range riducono la
+      disponibilità idrica apparente per effetti fisiologici. L'EC
+      <em>bassa</em> non riduce l'ET: è una carenza nutrizionale, che
+      agisce sulla crescita in settimane ed è segnalata dalle allerte
+      <code>ec_too_low</code> / <code>fertilization_due</code>.
     </p>
 
-    <p>Funzione: <code>nutritional_factor(species, ec_mscm, ph) → float</code>. Prodotto di due fattori trapezoidali (1.0 dentro range, rampe lineari ai bordi, clamp a <code>Kn_min=0.3</code>).</p>
+    <p>Funzione: <code>nutritional_factor(species, ec_mscm, ph) → float</code>. Prodotto di due fattori: <code>salinity_factor</code> per l'EC (unilaterale: 1.0 sotto e dentro il range, rampa lineare sopra il massimo, clamp a <code>Kn_min=0.3</code>; forma di FAO-56 cap. 8 eq. 83) e <code>triangular_factor</code> per il pH (trapezoidale: 1.0 dentro range, rampe lineari ai due bordi, stesso clamp).</p>
 
     <!-- RADIATION -->
     <h3 id="science-radiation"><code>science/radiation.py</code> — Radiazione</h3>

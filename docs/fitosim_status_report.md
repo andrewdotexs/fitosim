@@ -131,7 +131,7 @@ La seconda tappa ha aggiunto il primo sensore di suolo "ricco" che misura non so
 
 La terza tappa ha esteso il Pot col modello chimico completo: massa salina come stato canonico (salt\_mass\_meq), pH del substrato come stato indipendente (ph\_substrate), e EC come property derivata dal rapporto sali/acqua. Il fenomeno della concentrazione per evapotraspirazione emerge automaticamente: meno acqua a parità di sali significa EC più alta, senza nessuna riga di codice che lo gestisce esplicitamente.
 
-Il coefficiente nutrizionale Kn modula l’evapotraspirazione effettiva in funzione dello stato chimico: vaso in range chimico ottimale ha Kn=1, vaso in stress chimico totale ha Kn=0.30 (la pianta consuma molto meno perché la sua fisiologia ne soffre). Implementato come funzione triangolare lineare a tratti, semplice e debugabile, calibrabile in fascia 3.
+Il coefficiente nutrizionale Kn modula l’evapotraspirazione effettiva in funzione dello stato chimico: vaso in range chimico ottimale ha Kn=1, vaso in stress chimico totale ha Kn=0.30 (la pianta consuma molto meno perché la sua fisiologia ne soffre). Lo stress da EC è solo per eccesso di sali (stress osmotico, forma di FAO-56 eq. 83): l’EC sotto il range non riduce l’ET, è una carenza nutrizionale segnalata dalle allerte. Il pH penalizza in entrambe le direzioni. Implementato come funzione lineare a tratti, semplice e debugabile, calibrabile in fascia 3.
 
 Il rainfall\_exposure (frazione 0..1) modella la copertura ambientale del vaso. Vasi sotto balcone o sotto chioma di alberi ricevono solo una frazione della pioggia caduta sull’area aperta — fenomeno che per i vasi outdoor produce salinizzazione differenziale di lungo termine, importante per la calibrazione futura del modello.
 
