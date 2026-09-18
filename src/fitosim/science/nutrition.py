@@ -39,15 +39,36 @@ Una pianta con stress salino (EC del substrato troppo alta) fa fatica
 ad assorbire acqua per via dell'effetto osmotico inverso: la
 concentrazione esterna è simile a quella delle cellule, e la pianta
 chiude parzialmente gli stomi per ridurre le perdite. Il risultato è
-una traspirazione reale inferiore alla potenziale.
+una traspirazione reale inferiore alla potenziale. Quanto inferiore lo
+dice FAO-56 tab. 23 (Maas-Hoffman): per la maggior parte delle
+colture il Ks salino perde l'8-17 % per ogni dS/m di ECe oltre la
+soglia (pomodoro 9.9, lattuga 13, cipolla 16, fagiolo 19 %/(dS/m),
+diviso Ky ≈ 1-1.15); la fragola, tra le più sensibili, 33. Le nostre
+soglie sono EC della soluzione del substrato (PourThru), che legge
+circa 1.5 volte l'ECe, quindi in queste unità la stessa pendenza vale
+6-11 %/(mS/cm). La rampa di fitosim usa `EC_STRESS_SLOPE_PCT_PER_MSCM`
+con quella scala: lo stress è un fenomeno di diversi mS/cm, non di
+decimi. Fino al 2026-09 la rampa scendeva a 0.3 in una sola ampiezza
+di range (47-140 %/(mS/cm) a seconda del gruppo): dopo ogni
+fertirrigazione, l'EC che si concentra con l'asciugamento portava il
+modello a tagliare l'ET fino al 70 % nella coda del ciclo.
 
-Una pianta con pH del substrato fuori range vive lo stesso fenomeno
-per ragioni diverse: alcuni nutrienti diventano chimicamente non
-disponibili (ferro che precipita a pH alto, alluminio tossico a pH
-basso), la pianta soffre di carenze fisiologiche, le foglie ingialli-
-scono o necrotizzano, la fotosintesi rallenta — anche questo riduce
-la traspirazione perché parte dell'acqua "tirata su" dalla pianta è
-guidata dalla fotosintesi attiva.
+Il pH del substrato fuori range non ostacola l'assorbimento d'acqua:
+agisce sulla disponibilità dei nutrienti (ferro, manganese e fosforo
+che precipitano a pH alto; manganese e alluminio tossici a pH basso,
+poco rilevante in torba sopra 5.0) e quindi sulla salute e sulla
+crescita, in settimane, non sul consumo idrico del giorno. FAO-56
+non ha un coefficiente per il pH. Il fattore pH resta nel Kn come
+modulatore **lieve** e bilaterale — entrambi i lati fanno male alla
+pianta — con una banda di tolleranza di `PH_TOLERANCE` = ±0.3 unità
+attorno al range, la stessa sotto la quale `ph_out_of_range` in
+`domain/alerts.py` non emette allerte, e un pavimento `PH_KN_MIN` =
+0.8: al massimo un quinto dell'ET, mai i due terzi. Il numero è una
+scelta prudente, non una misura; è documentato perché sia
+calibrabile. Conta anche perché il pH iniziale del Pot è quasi
+sempre un default (il `ph_typical` del substrato, o 7.0) che nessuno
+ha misurato: con una scheda a pH 5.8-6.2 il vecchio fattore tagliava
+il 28 % dell'ET di un vaso appena invasato, il nuovo il 5 %.
 
 Un'EC **bassa**, invece, non riduce la traspirazione. Una soluzione
 povera di sali ha un potenziale osmotico vicino a zero: l'acqua è
@@ -73,26 +94,33 @@ Forma matematica della funzione di stress
 
 Per il **pH** il fattore di stress è una **funzione triangolare**
 della distanza dal range ottimale della specie, in entrambe le
-direzioni: dentro il range vale 1.0; man mano che ci si allontana
-scende linearmente verso un valore minimo `KN_MIN_DEFAULT = 0.3`
-raggiunto a una distanza configurabile (la "semi-ampiezza" della
-rampa), e oltre quella distanza è clampata al minimo. La forma è
+direzioni: dentro il range, e nella banda di tolleranza `t` =
+`PH_TOLERANCE` ai suoi lati, vale 1.0; oltre la banda scende
+linearmente verso il pavimento `m` = `PH_KN_MIN` raggiunto a una
+distanza `h` = `PH_STRESS_HALF_WIDTH` (la "semi-ampiezza" della
+rampa), e oltre quella distanza è clampata al pavimento. La forma è
 una "trapezia con plateau interno":
 
-         1.0  ─┐    ┌──────────┐    ┌───
-                │    │          │    │
-                │    │  Kn=1    │    │
-                │    │ (range)  │    │
-                │    │          │    │
-                ╱    │          │    ╲
-       Kn_min ╱     │          │     ╲
-              │     │          │      │
-       ───── │      │          │      │ ─────
-            a-h     a          b      b+h
+         1.0  ─┐    ┌──────────────┐    ┌───
+                │    │              │    │
+                │    │    Kn=1      │    │
+                │    │ (range ± t)  │    │
+                │    │              │    │
+                ╱    │              │    ╲
+       Kn_min ╱     │              │     ╲
+              │     │              │      │
+       ───── │      │              │      │ ─────
+          a-t-h    a-t     a    b    b+t    b+t+h
 
 Per l'**EC** il fattore è la stessa funzione **senza la rampa
-sinistra**: 1.0 fino al massimo del range compreso, rampa lineare
-verso `KN_MIN_DEFAULT` sopra, clamp oltre (`salinity_factor`):
+sinistra** e senza banda: 1.0 fino al massimo del range compreso,
+rampa lineare verso `KN_MIN_DEFAULT` sopra, clamp oltre
+(`salinity_factor`). La semi-ampiezza `h` non viene dal range ma
+dalla pendenza `EC_STRESS_SLOPE_PCT_PER_MSCM`: è la distanza sopra il
+massimo alla quale la rampa, che perde quella percentuale per ogni
+mS/cm, tocca il pavimento — `h = (1 − Kn_min) × 100 / pendenza`,
+circa 5.8 mS/cm con i default. Il minimo del range non entra nel
+fattore: serve alle allerte di fertirrigazione.
 
          1.0  ─────────────────────┐
                                    │
@@ -108,7 +136,8 @@ verso `KN_MIN_DEFAULT` sopra, clamp oltre (`salinity_factor`):
 Il Kn complessivo è il **prodotto dei due fattori** (EC e pH),
 perché entrambi gli stress si combinano peggiorando la performance
 della pianta: una pianta con sia EC alta sia pH fuori range soffre
-più che una pianta con solo uno dei due problemi.
+più che una pianta con solo uno dei due problemi. Il pavimento
+complessivo è `KN_MIN_DEFAULT × PH_KN_MIN` = 0.24.
 
 Filosofia di disabilitazione
 ----------------------------
@@ -123,11 +152,11 @@ retrocompatibile per le specie del catalogo legacy della fascia 1.
 from __future__ import annotations
 
 
-# Valore minimo del coefficiente Kn raggiunto in condizioni di stress
-# completo (EC molto sopra il range, o pH molto fuori range).
-# Corrisponde al valore di letteratura per stress salino acuto: la
-# pianta riduce la traspirazione del 70% rispetto alla condizione
-# ottimale.
+# Valore minimo del fattore EC, raggiunto in stress salino completo
+# (EC molto sopra il range). Corrisponde al valore di letteratura per
+# stress salino acuto: la pianta riduce la traspirazione del 70%
+# rispetto alla condizione ottimale. È anche il default di `kn_min`
+# per `triangular_factor`; il pH usa il suo pavimento, PH_KN_MIN.
 #
 # Quando in futuro la calibrazione contro i dati reali del sensore ATO
 # mostrasse che un Kn_min specifico per specie produce simulazioni più
@@ -138,15 +167,50 @@ from __future__ import annotations
 KN_MIN_DEFAULT = 0.3
 
 
+# Pendenza della rampa di stress salino: percentuale di ET persa per
+# ogni mS/cm di EC della soluzione del substrato oltre il massimo del
+# range ottimale della specie. È il `b / Ky` di FAO-56 eq. 83.
+#
+# FAO-56 tab. 23 (Maas-Hoffman) dà, in %/(dS/m) di ECe: pomodoro 9.9,
+# lattuga 13, cipolla 16, fagiolo 19, fragola 33; con Ky ≈ 1-1.15 la
+# perdita di ET è 8-17 %/(dS/m) per la maggior parte delle colture. Le
+# soglie di fitosim sono EC PourThru, circa 1.5 volte l'ECe (e-GRO,
+# cat. A: SME 0.9-1.3 contro PourThru 1.3-2.0), quindi in queste unità
+# la stessa pendenza vale 6-11 %/(mS/cm). 12 è un default prudente,
+# dalla parte delle specie sensibili: le ornamentali in vaso lo sono
+# più delle ortive di pieno campo della tabella. Con KN_MIN_DEFAULT il
+# pavimento si tocca a (1 − 0.3) × 100 / 12 ≈ 5.8 mS/cm sopra il
+# massimo. Come per `kn_min`, la calibrazione potrà aggiungere una
+# pendenza per specie (o per gruppo botanico in The Pot: orchidee,
+# conifere e bonsai sensibili verso 25, ortive tolleranti verso 8).
+EC_STRESS_SLOPE_PCT_PER_MSCM = 12.0
+
+
+# Banda di tolleranza del pH attorno al range ottimale, in unità di pH:
+# dentro `[min − t, max + t]` il fattore pH vale 1.0. È la stessa
+# tolleranza sotto la quale `check_ph_out_of_range` (domain/alerts.py)
+# non emette allerte: Kn e allerte devono cominciare a "vedere" il pH
+# fuori range nello stesso punto.
+PH_TOLERANCE = 0.3
+
+
+# Pavimento del fattore pH in stress completo. Il pH agisce sulla
+# nutrizione e sulla crescita in settimane, non sull'assorbimento
+# d'acqua del giorno (FAO-56 non ha un coefficiente per il pH): resta
+# nel Kn come modulatore lieve, al massimo un quinto dell'ET. Scelta
+# prudente, non misura; da calibrare.
+PH_KN_MIN = 0.8
+
+
 # Semi-ampiezza della rampa di stress per il pH, in unità di pH. È la
-# distanza dal range ottimale alla quale Kn raggiunge KN_MIN_DEFAULT.
+# distanza oltre la banda di tolleranza alla quale il fattore pH
+# raggiunge PH_KN_MIN: 10 % di ET per unità di pH.
 #
 # Per il basilico (range ottimale pH 6.0-7.0), questo significa che
-# Kn_pH=1 dentro il range, scende linearmente verso 0.3 fino a pH=4.0
-# (= 6.0 - 2.0) e a pH=9.0 (= 7.0 + 2.0), e oltre quei limiti resta
-# clampato a 0.3. È un'approssimazione ragionevole per la maggior
-# parte delle specie ortive; per acidofile estreme come il mirtillo
-# potremmo voler stringere questa ampiezza in tappa di calibrazione.
+# Kn_pH=1 tra pH 5.7 e 7.3, scende linearmente verso 0.8 fino a pH=3.7
+# (= 5.7 - 2.0) e a pH=9.3 (= 7.3 + 2.0), e oltre quei limiti resta
+# clampato a 0.8. Per acidofile estreme come il mirtillo potremmo voler
+# stringere questa ampiezza in tappa di calibrazione.
 PH_STRESS_HALF_WIDTH = 2.0
 
 
@@ -330,8 +394,9 @@ def salinity_factor(
 
     Esempi
     --------
-    Basilico, range EC 1.0-1.6 mS/cm, half_width 0.6 (= ampiezza
-    range), Kn_min default::
+    Massimo 1.6 mS/cm, half_width 0.6 (numeri tondi per l'esempio:
+    `nutritional_factor` deriva la semi-ampiezza dalla pendenza
+    `EC_STRESS_SLOPE_PCT_PER_MSCM`, circa 5.8 mS/cm), Kn_min default::
 
         >>> salinity_factor(current=0.0, optimal_max=1.6, half_width=0.6)
         1.0          # substrato fresco senza concime: nessuna penalità
@@ -384,17 +449,19 @@ def nutritional_factor(
     EC e pH separatamente con i parametri della specie: l'EC tramite
     `salinity_factor` (unilaterale: penalizza solo l'eccesso di sali,
     sotto il range vale 1.0), il pH tramite `triangular_factor`
-    (bilaterale). Quando la specie non ha configurato il modello
+    (bilaterale, lieve). Quando la specie non ha configurato il modello
     chimico (`species.supports_chemistry_model == False`), la funzione
     restituisce silenziosamente 1.0 — comportamento "inerte" coerente
     con la filosofia di disabilitazione dell'estensione.
 
-    La semi-ampiezza della rampa di stress per l'EC è fissata pari
-    all'ampiezza del range ottimale della specie (`max - min`), che
-    è una scelta di calibrazione documentata: lo stress salino
-    completo si raggiunge a una distanza sopra il range pari
-    all'ampiezza del range stesso. Per il pH la semi-ampiezza è la
-    costante `PH_STRESS_HALF_WIDTH = 2.0` unità.
+    La rampa dell'EC parte da `ec_optimal_max_mscm` e perde
+    `EC_STRESS_SLOPE_PCT_PER_MSCM` per cento di ET per ogni mS/cm oltre
+    (FAO-56 eq. 83, vedi la costante per la derivazione); la
+    semi-ampiezza passata a `salinity_factor` è la distanza alla quale
+    quella pendenza tocca `KN_MIN_DEFAULT`. Il minimo del range non
+    entra nel calcolo. Per il pH il plateau è il range allargato di
+    `PH_TOLERANCE` (la tolleranza delle allerte), la semi-ampiezza è
+    `PH_STRESS_HALF_WIDTH` e il pavimento `PH_KN_MIN`.
 
     Parametri
     ---------
@@ -412,11 +479,11 @@ def nutritional_factor(
     Ritorna
     -------
     float
-        Kn complessivo in [KN_MIN²_DEFAULT, 1.0]. Il limite inferiore
-        teorico è KN_MIN × KN_MIN = 0.09 nel caso degenere di stress
+        Kn complessivo in [KN_MIN_DEFAULT × PH_KN_MIN, 1.0]. Il limite
+        inferiore teorico è 0.3 × 0.8 = 0.24 nel caso degenere di stress
         massimo simultaneo su EC e pH; in pratica si vedono valori
-        intorno a 0.6-0.9 per condizioni "subottimali ma non drammatiche"
-        e intorno a 1.0 per condizioni ben gestite.
+        intorno a 0.8-0.95 per condizioni "subottimali ma non
+        drammatiche" e 1.0 per condizioni ben gestite.
 
     Esempi
     --------
@@ -434,13 +501,24 @@ def nutritional_factor(
 
         >>> kn = nutritional_factor(
         ...     species=basil_with_chemistry,
-        ...     ec_substrate_mscm=1.9,    # 0.3 sopra max=1.6, su 0.6 di half_width
+        ...     ec_substrate_mscm=2.6,    # 1.0 sopra max=1.6
         ...     ph_substrate=6.5,
         ... )
-        >>> # ec_factor: rampa destra, posizione 0.5 → 1 - 0.7*0.5 = 0.65
+        >>> # ec_factor: 1 mS/cm oltre × 12 %/(mS/cm) → 1 - 0.12 = 0.88
         >>> # ph_factor: 1.0
-        >>> # kn = 0.65 × 1.0 = 0.65
-        >>> assert abs(kn - 0.65) < 1e-9
+        >>> # kn = 0.88 × 1.0 = 0.88
+        >>> assert abs(kn - 0.88) < 1e-9
+
+    Stesso basilico con EC ottimale e pH 8.0 (1.0 sopra il massimo,
+    0.7 oltre la banda di tolleranza di 0.3)::
+
+        >>> kn = nutritional_factor(
+        ...     species=basil_with_chemistry,
+        ...     ec_substrate_mscm=1.3,
+        ...     ph_substrate=8.0,
+        ... )
+        >>> # ph_factor: 0.7 / 2.0 della rampa → 1 - 0.2 × 0.35 = 0.93
+        >>> assert abs(kn - 0.93) < 1e-9
 
     Stesso basilico in substrato fresco, senza concime (EC ≈ 0):
     nessuna penalità, perché l'EC bassa non è uno stress osmotico::
@@ -479,28 +557,28 @@ def nutritional_factor(
             f"(ricevuto {ph_substrate})."
         )
 
-    # Semi-ampiezza per l'EC: pari all'ampiezza del range ottimale
-    # della specie. Il modello aggrava lo stress salino con la stessa
-    # "scala" del range ottimale, che è una calibrazione naturale.
-    ec_range_width = (
-        species.ec_optimal_max_mscm - species.ec_optimal_min_mscm
+    # Fattore EC: unilaterale, sopra il massimo del range. La rampa
+    # perde EC_STRESS_SLOPE_PCT_PER_MSCM per cento per mS/cm; la
+    # semi-ampiezza è la distanza alla quale tocca il pavimento. Il
+    # minimo del range non entra: sotto il massimo il fattore vale 1.0
+    # e la carenza è affare delle allerte, non dell'ET.
+    ec_half_width = (
+        (1.0 - KN_MIN_DEFAULT) * 100.0 / EC_STRESS_SLOPE_PCT_PER_MSCM
     )
-
-    # Fattore EC: unilaterale. Il minimo del range serve solo a dare
-    # la scala della rampa; sotto il minimo il fattore vale 1.0 e la
-    # carenza è affare delle allerte, non dell'ET.
     ec_factor = salinity_factor(
         current=ec_substrate_mscm,
         optimal_max=species.ec_optimal_max_mscm,
-        half_width=ec_range_width,
+        half_width=ec_half_width,
     )
 
-    # Fattore pH (semi-ampiezza costante, vedi commento sulla costante).
+    # Fattore pH: plateau sul range allargato della tolleranza delle
+    # allerte, rampa lieve fino al suo pavimento (vedi le costanti).
     ph_factor = triangular_factor(
         current=ph_substrate,
-        optimal_min=species.ph_optimal_min,
-        optimal_max=species.ph_optimal_max,
+        optimal_min=species.ph_optimal_min - PH_TOLERANCE,
+        optimal_max=species.ph_optimal_max + PH_TOLERANCE,
         half_width=PH_STRESS_HALF_WIDTH,
+        kn_min=PH_KN_MIN,
     )
 
     # Kn complessivo: prodotto dei due fattori.

@@ -350,6 +350,26 @@ class TestRulePhOutOfRange(unittest.TestCase):
         result = check_ph_out_of_range(pot, date(2026, 5, 15))
         self.assertIn("alcalino", result.message)
 
+    def test_tolerance_band_shared_with_kn(self):
+        # Allerta e Kn cominciano a "vedere" il pH fuori range nello
+        # stesso punto: dentro la banda nessuna allerta e Kn = 1, appena
+        # fuori allerta e Kn < 1. La banda è PH_TOLERANCE, condivisa.
+        from fitosim.science.nutrition import PH_TOLERANCE, nutritional_factor
+        eps = 1e-6
+        for ph, outside in [
+            (7.0 + PH_TOLERANCE - eps, False), (7.0 + PH_TOLERANCE + eps, True),
+            (6.0 - PH_TOLERANCE + eps, False), (6.0 - PH_TOLERANCE - eps, True),
+        ]:
+            with self.subTest(ph=ph):
+                pot = _make_pot(ph_substrate=ph)
+                alert = check_ph_out_of_range(pot, date(2026, 5, 15))
+                self.assertEqual(alert is not None, outside)
+                # EC in range (1.3): isola il fattore pH.
+                kn = nutritional_factor(
+                    species=pot.species, ec_substrate_mscm=1.3, ph_substrate=ph,
+                )
+                self.assertEqual(kn < 1.0, outside)
+
 
 # =======================================================================
 #  Famiglia 3: ALL_RULES e applicazione completa

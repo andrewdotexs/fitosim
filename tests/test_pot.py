@@ -2006,7 +2006,8 @@ class TestPotNutritionIntegration(unittest.TestCase):
 
     def test_extreme_chemistry_stress_floor_effect(self):
         # Stress massimo simultaneo (EC e pH entrambi molto fuori):
-        # Kn = KN_MIN² ≈ 0.09, ET ridotta drasticamente.
+        # Kn = KN_MIN_DEFAULT × PH_KN_MIN = 0.3 × 0.8 = 0.24, ET ridotta
+        # drasticamente.
         chem_species = self._make_basil_with_chemistry()
 
         pot_optimal = self._make_pot(chem_species)
@@ -2029,13 +2030,11 @@ class TestPotNutritionIntegration(unittest.TestCase):
         et_extreme = pot_extreme.current_et_c(
             et_0_mm=4.0, current_date=date(2026, 5, 15),
         )
-        # Il rapporto deve essere circa Kn² = 0.09 (approssimato perché
-        # entrano in gioco anche Ks dipendente da theta, ma con
-        # state_mm uguali si compensa). Aspettative: il ratio è
-        # significativamente inferiore a 1.
+        # Il rapporto è esattamente il Kn: stesso state_mm, quindi
+        # stesso Ks, e nel single Kc il Kn moltiplica tutto l'ET.
         ratio = et_extreme / et_optimal
-        # Il floor teorico è 0.09; in pratica deve essere intorno a quello.
-        self.assertLess(ratio, 0.15)
+        from fitosim.science.nutrition import KN_MIN_DEFAULT, PH_KN_MIN
+        self.assertAlmostEqual(ratio, KN_MIN_DEFAULT * PH_KN_MIN, places=9)
 
     # ----- Effetto materiale sul bilancio idrico -----
 
@@ -2067,6 +2066,120 @@ class TestPotNutritionIntegration(unittest.TestCase):
         # Il Pot ottimale deve aver consumato MORE acqua del Pot
         # stressato: state_mm finale del primo è inferiore.
         self.assertLess(pot_opt.state_mm, pot_str.state_mm)
+
+
+class TestPotNutritionDualKc(unittest.TestCase):
+    """
+    Il Kn nel dual-Kc sta sul termine della pianta, non su Ke.
+
+    FAO-56 scrive ETc = (Ks × Kcb + Ke) × ET₀: gli stress della pianta
+    riducono la sua traspirazione, l'evaporazione dal substrato ha la
+    sua riduzione (Kr). Lo stress chimico è uno stress della pianta
+    (eq. 84 moltiplica il Ks salino per il Kcb), quindi:
+
+        ET_c,act = Kp × (Ks × Kn × Kcb + Ke) × ET₀
+
+    Test concentrati su:
+      1. La riduzione da Kn vale esattamente (1 − Kn) × traspirazione:
+         l'evaporazione superficiale non si muove.
+      2. Bilancio giornaliero e diagnostica (`current_et_c`) danno lo
+         stesso ET: prima della correzione il bilancio ignorava il Kn
+         e la diagnostica lo applicava anche a Ke.
+      3. Il De (strato superficiale) evolve uguale con e senza stress.
+    """
+
+    def _make_species(self) -> Species:
+        return Species(
+            common_name="basilico-dual-chem",
+            scientific_name="Ocimum basilicum",
+            kc_initial=0.50, kc_mid=1.10, kc_late=0.85,
+            kcb_initial=0.35, kcb_mid=1.00, kcb_late=0.75,
+            depletion_fraction=0.40,
+            ec_optimal_min_mscm=1.0,
+            ec_optimal_max_mscm=1.6,
+            ph_optimal_min=6.0,
+            ph_optimal_max=7.0,
+        )
+
+    def _make_pot(self, ec_mscm: float, state_mm: float = 30.0) -> Pot:
+        pot = Pot(
+            label="basil-dual-chem",
+            species=self._make_species(),
+            substrate=_make_substrate_with_rew_tew(),
+            pot_volume_l=2.0,
+            pot_diameter_cm=18.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1),
+            state_mm=state_mm,
+        )
+        pot.salt_mass_meq = ec_mscm * pot.water_volume_liters * 10
+        pot.ph_substrate = 6.5
+        self.assertTrue(pot.supports_dual_kc)
+        return pot
+
+    ET0 = 5.0
+    DAY = date(2026, 5, 15)
+
+    def test_kn_reduces_only_the_transpiration_term(self):
+        pot_opt = self._make_pot(ec_mscm=1.3)     # in range → Kn = 1
+        pot_str = self._make_pot(ec_mscm=10.0)    # molto sopra → Kn = floor
+        kn = pot_str._current_kn()
+        self.assertLess(kn, 1.0)
+
+        et_opt, evap_opt = pot_opt._current_et_c_dual_kc(
+            et_0_mm=self.ET0, current_date=self.DAY, kn=1.0,
+        )
+        et_str, evap_str = pot_str._current_et_c_dual_kc(
+            et_0_mm=self.ET0, current_date=self.DAY, kn=kn,
+        )
+        # L'evaporazione superficiale non risente dello stato chimico.
+        self.assertAlmostEqual(evap_str, evap_opt, places=12)
+        self.assertGreater(evap_opt, 0.0)
+        # La traspirazione (ET − E) è scalata esattamente di Kn.
+        transpiration_opt = et_opt - evap_opt
+        self.assertGreater(transpiration_opt, 0.0)
+        self.assertAlmostEqual(et_str, evap_opt + kn * transpiration_opt, places=12)
+        # Quindi la riduzione totale è minore di quella che darebbe
+        # Kn applicato a tutto l'ET (il vecchio comportamento).
+        self.assertGreater(et_str, et_opt * kn)
+
+    def test_current_et_c_matches_decomposition(self):
+        pot_str = self._make_pot(ec_mscm=10.0)
+        kn = pot_str._current_kn()
+        et_total, _ = pot_str._current_et_c_dual_kc(
+            et_0_mm=self.ET0, current_date=self.DAY, kn=kn,
+        )
+        self.assertAlmostEqual(
+            pot_str.current_et_c(et_0_mm=self.ET0, current_date=self.DAY),
+            et_total, places=12,
+        )
+
+    def test_balance_step_and_diagnostic_agree(self):
+        # Il bilancio deve consumare esattamente l'ET che la diagnostica
+        # dichiara, anche in stress chimico. Con state_mm = 30 e ET di
+        # pochi mm il vaso resta tra PWP e FC: niente clamp, niente
+        # drenaggio, quindi la differenza di stato è l'ET.
+        pot = self._make_pot(ec_mscm=10.0)
+        self.assertLess(pot._current_kn(), 1.0)
+        et_declared = pot.current_et_c(et_0_mm=self.ET0, current_date=self.DAY)
+        before = pot.state_mm
+        result = pot.apply_balance_step(
+            et_0_mm=self.ET0, water_input_mm=0.0, current_date=self.DAY,
+        )
+        self.assertEqual(result.drainage, 0.0)
+        self.assertAlmostEqual(before - pot.state_mm, et_declared, places=9)
+
+    def test_balance_step_applies_kn_but_not_to_de(self):
+        # Vaso stressato: consuma meno acqua dal bulk (Kn sul Kcb), ma
+        # lo strato superficiale evapora uguale (De identico).
+        pot_opt = self._make_pot(ec_mscm=1.3)
+        pot_str = self._make_pot(ec_mscm=10.0)
+        for pot in (pot_opt, pot_str):
+            pot.apply_balance_step(
+                et_0_mm=self.ET0, water_input_mm=0.0, current_date=self.DAY,
+            )
+        self.assertLess(pot_opt.state_mm, pot_str.state_mm)
+        self.assertAlmostEqual(pot_opt.de_mm, pot_str.de_mm, places=12)
 
 
 # =======================================================================

@@ -315,14 +315,15 @@ children.push(p(
   'esplicitamente.'
 ));
 children.push(p(
-  'Il coefficiente nutrizionale Kn modula l\u2019evapotraspirazione effettiva in ' +
-  'funzione dello stato chimico: vaso in range chimico ottimale ha Kn=1, vaso in ' +
-  'stress chimico totale ha Kn=0.30 (la pianta consuma molto meno perché la sua ' +
-  'fisiologia ne soffre). Lo stress da EC è solo per eccesso di sali (stress ' +
-  'osmotico, forma di FAO-56 eq. 83): l\u2019EC sotto il range non riduce l\u2019ET, è ' +
-  'una carenza nutrizionale segnalata dalle allerte. Il pH penalizza in entrambe le ' +
-  'direzioni. Implementato come funzione lineare a tratti, semplice e debugabile, ' +
-  'calibrabile in fascia 3.'
+  'Il coefficiente nutrizionale Kn modula la traspirazione della pianta in ' +
+  'funzione dello stato chimico: vaso in range chimico ottimale ha Kn=1. Lo ' +
+  'stress da EC è solo per eccesso di sali (stress osmotico, forma e pendenza ' +
+  'di FAO-56 eq. 83 e tab. 23: 12% di ET per mS/cm sopra il massimo della ' +
+  'specie, pavimento 0.30): l\u2019EC sotto il range non riduce l\u2019ET, è una ' +
+  'carenza nutrizionale segnalata dalle allerte. Il pH penalizza lievemente in ' +
+  'entrambe le direzioni, oltre la tolleranza di ±0.3 condivisa con le allerte ' +
+  '(pavimento 0.8). Nel dual-Kc il Kn sta sul Kcb, non su Ke. Implementato come ' +
+  'funzione lineare a tratti, semplice e debugabile, calibrabile in fascia 3.'
 ));
 children.push(p(
   'Il rainfall_exposure (frazione 0..1) modella la copertura ambientale del vaso. Vasi ' +

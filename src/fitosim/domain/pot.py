@@ -1068,6 +1068,7 @@ class Pot:
         self,
         et_0_mm: float,
         current_date: date,
+        kn: float = 1.0,
     ) -> tuple[float, float]:
         """
         Calcolo del dual-Kc per il giorno corrente.
@@ -1079,12 +1080,18 @@ class Pot:
 
         La formula completa è:
 
-            ET_c,act = Kp × (Ks × Kcb + Ke) × ET_0
+            ET_c,act = Kp × (Ks × Kn × Kcb + Ke) × ET_0
             E_actual = Kp × Ke × ET_0  (quota di evaporazione superf.)
 
-        dove Ks modula solo Kcb (traspirazione, dipende dall'umidità
-        del bulk), mentre Ke ha già Kr che modula la disponibilità
-        della superficie.
+        dove Ks e Kn modulano solo Kcb: sono stress della pianta (idrico
+        il primo, chimico il secondo) e riducono la sua traspirazione,
+        come in FAO-56 eq. 84 dove il Ks salino moltiplica il Kcb. Ke ha
+        già Kr, che modula la disponibilità della superficie, e non
+        risente dello stato chimico: la pressione di vapore di una
+        soluzione a qualche mS/cm è quella dell'acqua pura a meno di
+        frazioni di punto. Il limite energetico di Ke usa il Kcb di
+        chioma, quindi ridurre il Kcb per Kn non gonfia l'evaporazione.
+        Il chiamante passa il Kn (default 1.0, modello chimico inerte).
         """
         from fitosim.science.balance import stress_coefficient_ks
         stage = self.current_stage(current_date)
@@ -1129,10 +1136,29 @@ class Pot:
             self.cover_height_m,
         )
         ke = soil_evaporation_coefficient(kcb=kcb_canopy, kr=kr)
-        # ET totale e sua decomposizione.
-        et_c_total = self.kp * (ks * kcb + ke) * et_0_mm
+        # ET totale e sua decomposizione. Kn sta sul termine della
+        # pianta, non su Ke (vedi docstring).
+        et_c_total = self.kp * (ks * kn * kcb + ke) * et_0_mm
         soil_evap = self.kp * ke * et_0_mm
         return et_c_total, soil_evap
+
+    def _current_kn(self) -> float:
+        """
+        Coefficiente nutrizionale Kn dello stato chimico corrente.
+
+        Calcolato da `science.nutrition.nutritional_factor` a partire
+        dall'EC e dal pH correnti del substrato e dai range ottimali
+        della specie. Vale 1.0 silenziosamente quando la specie non ha
+        il modello chimico configurato (catalogo legacy della fascia
+        1): l'estensione è inerte e retrocompatibile. Import lazy per
+        evitare cicli a livello di package.
+        """
+        from fitosim.science.nutrition import nutritional_factor
+        return nutritional_factor(
+            species=self.species,
+            ec_substrate_mscm=self.ec_substrate_mscm,
+            ph_substrate=self.ph_substrate,
+        )
 
     def current_et_c(self, et_0_mm: float, current_date: date) -> float:
         """
@@ -1151,7 +1177,7 @@ class Pot:
 
         Dual-Kc (specie ha Kcb e substrato ha REW/TEW):
 
-            ET_c,act = Kp × (Ks × Kcb + Ke) × Kn × ET_0
+            ET_c,act = Kp × (Ks × Kn × Kcb + Ke) × ET_0
 
         dove:
           Kc/Kcb vengono dalla biologia della pianta (Species);
@@ -1159,29 +1185,24 @@ class Pot:
             substrato, calcolato via il modulo science/dual_kc.py);
           Ks viene dallo stato idrico del bulk substrato;
           Kp è il coefficiente di vaso (materiale/colore/esposizione);
-          Kn è il fattore nutrizionale calcolato da
+          Kn è il fattore nutrizionale (`_current_kn`), calcolato da
             science.nutrition.nutritional_factor a partire dall'EC e
             dal pH correnti del substrato e dai range ottimali della
             specie. Vale 1.0 silenziosamente quando la specie non ha
             il modello chimico configurato — retrocompat totale con la
-            fascia 1.
+            fascia 1. Nel dual-Kc sta sul termine della pianta e non
+            su Ke: lo stress chimico riduce la traspirazione, non
+            l'evaporazione dal substrato. Nel single Kc l'evaporazione
+            è dentro il Kc e Kn (come Ks) inevitabilmente la tocca: è
+            il limite noto del single Kc, lo stesso di FAO-56 cap. 6.
         """
-        # Calcolo del Kn nutrizionale. Con specie senza modello chimico
-        # configurato (caso del catalogo legacy della fascia 1)
-        # nutritional_factor ritorna 1.0 silenziosamente e l'estensione
-        # è inerte. Import lazy per evitare cicli a livello di package.
-        from fitosim.science.nutrition import nutritional_factor
-        kn = nutritional_factor(
-            species=self.species,
-            ec_substrate_mscm=self.ec_substrate_mscm,
-            ph_substrate=self.ph_substrate,
-        )
+        kn = self._current_kn()
 
         if self.supports_dual_kc:
             et_c_total, _soil_evap = self._current_et_c_dual_kc(
-                et_0_mm=et_0_mm, current_date=current_date,
+                et_0_mm=et_0_mm, current_date=current_date, kn=kn,
             )
-            return et_c_total * kn
+            return et_c_total
         # Cammino tradizionale single Kc: Ks × Kc × ET₀, come
         # `species.actual_et_c`, ma con il Kc passato dalla copertura
         # della chioma (H.1-c) prima di moltiplicare. Con il pavimento
@@ -1289,10 +1310,13 @@ class Pot:
         # Per il dual-Kc abbiamo bisogno anche della componente di
         # evaporazione superficiale, che useremo dopo per aggiornare
         # de_mm. Quando il dual-Kc non è attivo questa componente non
-        # serve e il cammino è quello tradizionale.
+        # serve e il cammino è quello tradizionale. Il Kn entra qui
+        # come in current_et_c: bilancio e diagnostica devono dare lo
+        # stesso ET.
         if self.supports_dual_kc:
             et_c_mm, soil_evap_mm = self._current_et_c_dual_kc(
                 et_0_mm=et_0_mm, current_date=current_date,
+                kn=self._current_kn(),
             )
         else:
             et_c_mm = self.current_et_c(et_0_mm, current_date)

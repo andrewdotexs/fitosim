@@ -64,6 +64,7 @@ from enum import Enum
 from typing import Callable, Optional, Tuple
 
 from fitosim.domain.pot import Pot
+from fitosim.science.nutrition import PH_TOLERANCE
 
 
 # =======================================================================
@@ -372,13 +373,16 @@ def check_ph_out_of_range(
     Allerta se il pH è fuori dal range ottimale della specie.
 
     Soglie:
-      - Tra range_min - 0.3 e range_max + 0.3: nessuna allerta
-        (margine di tolleranza).
+      - Tra range_min - PH_TOLERANCE e range_max + PH_TOLERANCE (±0.3):
+        nessuna allerta (margine di tolleranza). È la stessa banda
+        entro cui il fattore pH del Kn vale 1: allerte e Kn cominciano
+        a "vedere" il pH fuori range nello stesso punto.
       - Fuori del margine ma entro 0.7: warning.
       - Oltre 0.7 fuori range: critical.
 
-    Severity sempre warning o critical (mai info, perché un pH fuori
-    range ha conseguenze chimiche misurabili sul Kn).
+    Severity sempre warning o critical (mai info: il pH fuori range è
+    un problema nutrizionale che si aggrava in settimane e che nessun
+    sensore domestico misura, quindi va detto quando c'è).
     """
     if not pot.species.supports_chemistry_model:
         return None
@@ -389,8 +393,8 @@ def check_ph_out_of_range(
     ph_min = pot.species.ph_optimal_min
     ph_max = pot.species.ph_optimal_max
 
-    # Margine di tolleranza ±0.3.
-    if (ph_min - 0.3) <= ph <= (ph_max + 0.3):
+    # Margine di tolleranza, condiviso con il Kn.
+    if (ph_min - PH_TOLERANCE) <= ph <= (ph_max + PH_TOLERANCE):
         return None
 
     # Calcola la distanza dal range più vicina.
