@@ -1,14 +1,17 @@
 # Calibrazione con il sensore di substrato WH5X
 
-**Data:** 2026-09-17
-**Status:** Procedura operativa concordata, da eseguire. Prima calibrazione su hardware reale.
-**Scope:** un vaso outdoor con un WH52, forzante meteo locale (WN32P + WS90), previsione da Open-Meteo. Calibra i 
-livelli 2 e 3 del manuale di calibrazione: substrato (θ_FC, θ_PWP) e specie (Kc). Il livello 1, la funzione di 
-trasferimento della sonda, e il livello 4, il modello chimico, restano fuori da questa prima passata.
+**Data:** 2026-09-17, aggiornata il 2026-09-18 con i tre vasi
+**Status:** Procedura operativa concordata, strumento pronto, tre vasi configurati; la prima ancora è alla prossima 
+irrigazione a drenaggio. Prima calibrazione su hardware reale.
+**Scope:** tre vasi outdoor sullo stesso balcone — un rosmarino con il WH52, il suo gemello e una lattuga con due WH51 — 
+forzante meteo locale (WN32P + WS90), previsione da Open-Meteo. Calibra i livelli 2 e 3 del manuale di calibrazione: 
+substrato (θ_FC, θ_PWP) e specie (Kc). Il livello 1, la funzione di trasferimento della sonda, e il livello 4, il 
+modello chimico, restano fuori da questa prima passata.
 **Hardware:** due gateway, perché i sensori Ecowitt si accoppiano a uno solo. GW3000A: WH52 (θ, temperatura ed EC del 
 substrato) e WN32P (temperatura e umidità dell'aria, accanto al vaso). GW2000: WS90 (vento, radiazione solare, pioggia, 
-temperatura, umidità, pressione), un pluviometro WH40 e cinque WH51 preesistenti. Lo strumento legge la sonda e l'aria 
-dal primo, vento, radiazione e pioggia dal secondo (`weather_gateway`, `air_gateway`).
+temperatura, umidità, pressione), un pluviometro WH40 e cinque WH51 preesistenti, due dei quali passano nei vasi nuovi. 
+Lo strumento legge la sonda e l'aria dal primo, vento, radiazione e pioggia dal secondo (`weather_gateway`, 
+`air_gateway`); per i due vasi sui WH51 la sonda sta sul GW2000 e l'aria resta sul GW3000A.
 
 Una cosa da sapere sul WN32P, scoperta con la sezione `battery` dell'API: ha il **barometro**, quindi Ecowitt lo tratta 
 come un WH25 e ne espone i valori nella sezione **indoor**, ovunque stia fisicamente. La sorgente dell'aria si configura 
@@ -263,11 +266,16 @@ La confidenza cresce con il numero di cicli di irrigazione, non con i giorni:
 
 Su un vaso outdoor a metà settembre l'evapotraspirazione cala, i cicli si allungano e i dati arrivano più lenti: cinque 
 cicli possono voler dire un mese o più, e in inverno la calibrazione di fatto si ferma. È il ritmo giusto, non un 
-problema: le proposte di bassa confidenza non vanno forzate.
+problema: le proposte di bassa confidenza non vanno forzate. È anche il motivo dei tre vasi (vedi la roadmap): con i 
+numeri del modello, a Milano a fine settembre il rosmarino in 5 L consuma la sua RAW (17 mm) in dieci-quattordici 
+giorni, la lattuga in 3 L la sua (9 mm) in quattro-sei. I primi tre cicli, e la prima proposta di Kc, arriveranno 
+dalla lattuga.
 
 Le metriche di successo restano quelle del manuale di calibrazione: RMSE della θ prevista contro quella osservata, 
 giorno per giorno. Sotto 0.02 è un buon risultato, 0.05 è marginale, oltre 0.08 il modello calibrato non è meglio del 
-generico e conviene tornare a cercare l'errore, prima nell'ancora, poi nel diario.
+generico e conviene tornare a cercare l'errore, prima nell'ancora, poi nel diario. Sotto queste soglie ce n'è una che 
+si misura invece di stabilirla: lo scarto tra le θ osservate dei due rosmarini gemelli. È il rumore di due vasi uguali 
+letti da due sonde, e un RMSE previsto-osservato più basso di quello non dice niente sul modello.
 
 ## Due correzioni al manuale di calibrazione
 
@@ -318,10 +326,40 @@ persistenza nei modelli veri con una migrazione Alembic. Le credenziali dei gate
 
 | Fase | Dove | Consegna | Cosa dimostra | Criterio di uscita |
 |---|---|---|---|---|
-| 0 | `the-pot/scripts/calibrazione_wh5x/` | la CLI dell'anello | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera, almeno un'osservazione con discrepanza stampata |
+| 0 | `the-pot/scripts/calibrazione_wh5x/` | la CLI dell'anello, sui tre vasi | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera su ciascun vaso, almeno un'osservazione con discrepanza stampata, il rumore fra i gemelli misurato |
 | 1 | `src/the_pot/services/` + `web/` | registrazione dei gateway come feature dell'app | gateway e sensori dalla pagina | WH52 mappato sul vaso dalla pagina, misure canoniche visibili |
 | 2 | `src/the_pot/services/` + `web/` | pagina di calibrazione | il flusso in sei passi guidato dal browser | un ciclo intero condotto dalla pagina |
 | 3 | nessuna | la calibrazione stessa | proposte con confidenza crescente | dal terzo ciclo la prima proposta, dal quinto una utilizzabile |
+
+### I tre vasi
+
+Un vaso solo non basta a una calibrazione, per una ragione che precede il modello: davanti a una discrepanza non si 
+sa se sia il modello o il vaso. La fase 0 gira quindi su tre vasi, sullo stesso balcone, con la stessa esposizione, 
+e ciascuno compra una cosa diversa.
+
+| Vaso | Specie e vaso | Sonda | Cosa compra |
+|---|---|---|---|
+| `rosmarino-1` | `ROSEMARY`, 5 L terracotta Ø 24, terriccio universale | WH52 su GW3000A ch 1 | il vaso di riferimento: θ, temperatura ed EC del substrato |
+| `rosmarino-2` | identico al primo, pianta della stessa taglia, stesso sacco | WH51 su GW2000 | il **pavimento di rumore**: due vasi uguali, stesso meteo, stessa previsione; la differenza fra le due θ osservate è il caso, non il modello |
+| `lattuga-1` | `LETTUCE`, 3 L plastica scura Ø 18, terriccio universale, trapiantata a fine settembre | WH51 su GW2000 | l'**angolo opposto** dello spazio dei parametri: Kc 1,00 contro 0,75, p 0,30 contro 0,60, radici a 15–20 cm, annuale a gradi-giorno; cicli di quattro-sei giorni, cioè i primi tre cicli prima dell'inverno, e un appassimento visibile che marca il punto di appassimento |
+
+Tre cose da sapere, tutte scritte anche nei `config.json`:
+
+- **Il gemello è gemello nei dati del modello, non nelle sonde.** Il primo ha un WH52, il secondo un WH51: il rumore 
+misurato include lo scarto fra i due modelli di sonda. Le ancore lo assorbono, perché sono percentili della sonda 
+stessa, e la pendenza si confronta lo stesso. Un WH51 legge solo la θ: temperatura ed EC del substrato restano vuote 
+nelle osservazioni di quei due vasi.
+- **Per una perenne la data d'impianto non entra nel modello** (il calendario fenologico segue il mese), quindi il 
+gemello può essere una pianta comprata ora. Per la lattuga invece lo stadio corre dalla data del trapianto, a 
+gradi-giorno con base 4 °C: a Milano a fine settembre circa dodici giorni di fase iniziale, poi la mediana. La data va 
+scritta giusta.
+- **Il canale del WH51 lo decide chi sposta la sonda.** I cinque WH51 rispondono tutti, quindi stanno tutti in qualche 
+terra: i due che passano nei vasi nuovi vanno scritti in `soil_channel` prima di `setup`, che fissa il canale nel 
+giardino salvato.
+
+Basilico e pomodoro, i due che si fertirrigano, sono i vasi della primavera: il basilico a Milano sta finendo, e tre 
+settimane di pianta in senescenza confonderebbero il Kc con la fase. L'agrume, se ci sarà, è il vaso grande da lungo 
+periodo per il Kp e, in primavera, per i sali.
 
 ### Fase 0: l'anello da riga di comando
 
@@ -344,15 +382,23 @@ osservare un giorno scaricando la history, aggregando alle sei e chiamando `upda
 osservato a fine ciclo; calibrare con `calibrate_substrate` e `calibrate_kc` quando i cicli bastano. Lo stato vive 
 tutto nella SQLite di fitosim: gli stati del vaso in `GardenPersistence`, ancore e diario come eventi con 
 `record_event`. Nessun giornale a parte. È il modulo la cui persistenza cambierà in fase 1 e 2.
-- `__main__.py`: la CLI. `scopri`, `ancora`, `prevedi`, `osserva`, `confronta`, `calibra`, `diario`.
+- `__main__.py`: la CLI. `scopri`, `ancora`, `prevedi`, `osserva`, `confronta`, `calibra`, `diario`. **Un vaso, una 
+cartella**: ogni vaso è `data/calibrazione/<nome>/` con la sua `config.json`, il suo registro dei gateway e la sua 
+SQLite, e `--vaso <nome>` lo sceglie; con più vasi il comando rifiuta di indovinare e li elenca. La sequenza si ripete 
+per vaso, tre volte al giorno per tre vasi.
 - Test senza rete, con payload sintetici e le fixture di fitosim: l'aggregazione alle sei, la conversione del vento, 
 l'integrazione della radiazione, la chiusura di un ciclo sintetico.
 
 Prerequisito già assolto in fitosim: la history Ecowitt ora porta anche il vento (`EcowittSeriesPoint.wind_speed_m_s`), 
 senza il quale la forzante osservata non si poteva ricostruire.
 
-Criterio di uscita: `scopri` che elenca WH52, WN32P e WS90 sull'account; `ancora` registrata alla prossima irrigazione a 
-drenaggio; `osserva` che produce una discrepanza per almeno un giorno; `confronta` che stampa previsto contro osservato.
+Stato al 2026-09-18: `scopri` elenca WH52, WN32P, WS90 e i cinque WH51 sui due gateway; i tre workspace esistono e 
+costruiscono il vaso (rosmarini: FC 44,2 mm, PWP 16,6 mm; lattuga: FC 47,2 mm, PWP 17,7 mm, soglia di allerta 38,3 mm); 
+nessuna ancora ancora.
+
+Criterio di uscita: `ancora` registrata alla prossima irrigazione a drenaggio su ciascun vaso; `osserva` che produce 
+una discrepanza per almeno un giorno; `confronta` che stampa previsto contro osservato; lo scarto fra le θ dei due 
+rosmarini misurato su almeno un ciclo, che da lì in poi è il pavimento di ogni RMSE.
 
 ### Fase 1: la registrazione dei gateway come feature dell'app
 
