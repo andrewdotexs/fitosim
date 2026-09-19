@@ -1,17 +1,17 @@
 # Calibrazione con il sensore di substrato WH5X
 
-**Data:** 2026-09-17, aggiornata il 2026-09-18 con i tre vasi
-**Status:** Procedura operativa concordata, strumento pronto, tre vasi configurati; la prima ancora è alla prossima 
-irrigazione a drenaggio. Prima calibrazione su hardware reale.
-**Scope:** tre vasi outdoor sullo stesso balcone — un rosmarino con il WH52, il suo gemello e una lattuga con due WH51 — 
-forzante meteo locale (WN32P + WS90), previsione da Open-Meteo. Calibra i livelli 2 e 3 del manuale di calibrazione: 
-substrato (θ_FC, θ_PWP) e specie (Kc). Il livello 1, la funzione di trasferimento della sonda, e il livello 4, il 
-modello chimico, restano fuori da questa prima passata.
-**Hardware:** due gateway, perché i sensori Ecowitt si accoppiano a uno solo. GW3000A: WH52 (θ, temperatura ed EC del 
-substrato) e WN32P (temperatura e umidità dell'aria, accanto al vaso). GW2000: WS90 (vento, radiazione solare, pioggia, 
-temperatura, umidità, pressione), un pluviometro WH40 e cinque WH51 preesistenti, due dei quali passano nei vasi nuovi. 
-Lo strumento legge la sonda e l'aria dal primo, vento, radiazione e pioggia dal secondo (`weather_gateway`, 
-`air_gateway`); per i due vasi sui WH51 la sonda sta sul GW2000 e l'aria resta sul GW3000A.
+**Data:** 2026-09-17, aggiornata il 2026-09-19 con i cinque vasi
+**Status:** Procedura operativa concordata, strumento pronto, cinque vasi configurati; piante e sonde comprate, rinvasi 
+fra una settimana, la prima ancora alla prima irrigazione a drenaggio dopo. Prima calibrazione su hardware reale.
+**Scope:** cinque vasi outdoor sullo stesso balcone — due rosmarini gemelli e un basilico in tre vasi uguali, due
+cassette gemelle di lattuga — ciascuno con un WH52, forzante meteo locale (WN32P + WS90), previsione da Open-Meteo.
+Calibra i livelli 2 e 3 del manuale di calibrazione: substrato (θ_FC, θ_PWP) e specie (Kc). Il livello 1, la
+funzione di trasferimento della sonda, e il livello 4, il modello chimico, restano fuori da questa prima passata.
+**Hardware:** due gateway, perché i sensori Ecowitt si accoppiano a uno solo. GW3000A: cinque WH52 (θ, temperatura ed
+EC del substrato, uno per vaso) e il WN32P (temperatura e umidità dell'aria, accanto ai vasi). GW2000: WS90 (vento,
+radiazione solare, pioggia, temperatura, umidità, pressione), un pluviometro WH40 e cinque WH51 preesistenti, che
+restano dove sono. Lo strumento legge sonda e aria dal primo, vento, radiazione e pioggia dal secondo
+(`weather_gateway`, `air_gateway`).
 
 Una cosa da sapere sul WN32P, scoperta con la sezione `battery` dell'API: ha il **barometro**, quindi Ecowitt lo tratta 
 come un WH25 e ne espone i valori nella sezione **indoor**, ovunque stia fisicamente. La sorgente dell'aria si configura 
@@ -266,16 +266,18 @@ La confidenza cresce con il numero di cicli di irrigazione, non con i giorni:
 
 Su un vaso outdoor a metà settembre l'evapotraspirazione cala, i cicli si allungano e i dati arrivano più lenti: cinque 
 cicli possono voler dire un mese o più, e in inverno la calibrazione di fatto si ferma. È il ritmo giusto, non un 
-problema: le proposte di bassa confidenza non vanno forzate. È anche il motivo dei tre vasi (vedi la roadmap): con i 
-numeri del modello, a Milano a fine settembre il rosmarino in 5 L consuma la sua RAW (17 mm) in dieci-quattordici 
-giorni, la lattuga in 3 L la sua (9 mm) in quattro-sei. I primi tre cicli, e la prima proposta di Kc, arriveranno 
-dalla lattuga.
+problema: le proposte di bassa confidenza non vanno forzate. È anche il motivo dei cinque vasi (vedi la roadmap): con
+i numeri del modello, a Milano a fine settembre il rosmarino nel vaso alto (5,7 L, 19,5 cm di substrato) consumerebbe
+la sua RAW (29 mm) in venti giorni, il basilico la sua (20 mm) in nove, la lattuga in cassetta (13 cm) la sua (10–13
+mm) in cinque-sette. Per questo il rosmarino si annaffia a scadenza e non alla soglia: il ciclo si chiude
+all'irrigazione. I primi tre cicli, e la prima proposta di Kc, arriveranno dal basilico e dalle lattughe.
 
 Le metriche di successo restano quelle del manuale di calibrazione: RMSE della θ prevista contro quella osservata, 
 giorno per giorno. Sotto 0.02 è un buon risultato, 0.05 è marginale, oltre 0.08 il modello calibrato non è meglio del 
-generico e conviene tornare a cercare l'errore, prima nell'ancora, poi nel diario. Sotto queste soglie ce n'è una che 
-si misura invece di stabilirla: lo scarto tra le θ osservate dei due rosmarini gemelli. È il rumore di due vasi uguali 
-letti da due sonde, e un RMSE previsto-osservato più basso di quello non dice niente sul modello.
+generico e conviene tornare a cercare l'errore, prima nell'ancora, poi nel diario. Sotto queste soglie ce n'è una che
+si misura invece di stabilirla: lo scarto tra le θ osservate dei due rosmarini gemelli, e quello fra le due cassette.
+È il rumore di due vasi uguali letti da due sonde uguali, e un RMSE previsto-osservato più basso di quello non dice
+niente sul modello.
 
 ## Due correzioni al manuale di calibrazione
 
@@ -326,40 +328,71 @@ persistenza nei modelli veri con una migrazione Alembic. Le credenziali dei gate
 
 | Fase | Dove | Consegna | Cosa dimostra | Criterio di uscita |
 |---|---|---|---|---|
-| 0 | `the-pot/scripts/calibrazione_wh5x/` | la CLI dell'anello, sui tre vasi | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera su ciascun vaso, almeno un'osservazione con discrepanza stampata, il rumore fra i gemelli misurato |
+| 0 | `the-pot/scripts/calibrazione_wh5x/` | la CLI dell'anello, sui cinque vasi | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera su ciascun vaso, almeno un'osservazione con discrepanza stampata, il rumore fra i gemelli misurato in entrambe le coppie |
 | 1 | `src/the_pot/services/` + `web/` | registrazione dei gateway come feature dell'app | gateway e sensori dalla pagina | WH52 mappato sul vaso dalla pagina, misure canoniche visibili |
 | 2 | `src/the_pot/services/` + `web/` | pagina di calibrazione | il flusso in sei passi guidato dal browser | un ciclo intero condotto dalla pagina |
 | 3 | nessuna | la calibrazione stessa | proposte con confidenza crescente | dal terzo ciclo la prima proposta, dal quinto una utilizzabile |
 
-### I tre vasi
+### I cinque vasi
 
-Un vaso solo non basta a una calibrazione, per una ragione che precede il modello: davanti a una discrepanza non si 
-sa se sia il modello o il vaso. La fase 0 gira quindi su tre vasi, sullo stesso balcone, con la stessa esposizione, 
-e ciascuno compra una cosa diversa.
+Un vaso solo non basta a una calibrazione, per una ragione che precede il modello: davanti a una discrepanza non si
+sa se sia il modello o il vaso. La fase 0 gira quindi su cinque vasi, sullo stesso balcone, con la stessa
+esposizione, **la stessa sonda** (cinque WH52, tutti sul GW3000A col WN32P; i WH51 restano dove sono) e ciascuno
+compra una cosa diversa. Sono due coppie di gemelli e un contrasto.
 
-| Vaso | Specie e vaso | Sonda | Cosa compra |
+| Vaso | Specie | Vaso e substrato | Cosa compra |
 |---|---|---|---|
-| `rosmarino-1` | `ROSEMARY`, 5 L terracotta Ø 24, terriccio universale | WH52 su GW3000A ch 1 | il vaso di riferimento: θ, temperatura ed EC del substrato |
-| `rosmarino-2` | identico al primo, pianta della stessa taglia, stesso sacco | WH51 su GW2000 | il **pavimento di rumore**: due vasi uguali, stesso meteo, stessa previsione; la differenza fra le due θ osservate è il caso, non il modello |
-| `lattuga-1` | `LETTUCE`, 3 L plastica scura Ø 18, terriccio universale, trapiantata a fine settembre | WH51 su GW2000 | l'**angolo opposto** dello spazio dei parametri: Kc 1,00 contro 0,75, p 0,30 contro 0,60, radici a 15–20 cm, annuale a gradi-giorno; cicli di quattro-sei giorni, cioè i primi tre cicli prima dell'inverno, e un appassimento visibile che marca il punto di appassimento |
+| `rosmarino-1` | `ROSEMARY` | tronco di cono nero da 6,5 L (Ø 23,5 sopra, 15,5 sotto, alto 21,5; substrato a 19,5 cm, cioè 5,7 L su una bocca di 22,8), ZOMA aromatiche | il riferimento: θ, temperatura ed EC |
+| `rosmarino-2` | `ROSEMARY` | identico: stessa pianta da vivaio, stesso vaso, stesso sacco | il **pavimento di rumore** dei vasi tondi: due vasi uguali, stessa sonda, stesso meteo; la differenza fra le due θ osservate è il caso, non il modello |
+| `basilico-1` | `BASIL` | identico ai rosmarini | il **contrasto di specie** a parità di tutto il resto: Kc 1,05 contro 0,75, stomi 100 contro 200 s/m, p 0,40 contro 0,60; uno sprint di 3–5 settimane, finché il freddo non lo ferma |
+| `lattuga-1` | `LETTUCE` ×3 | cassetta nera 46,5×16 sopra, 44×14 sotto, alta 15 (substrato a 13 cm: 8,7 L su 726 cm²), miscela cocco-humus-carbone | l'**angolo opposto** dei parametri (Kc 1,00, p 0,30, radici corte, annuale a giorni) e il vaso "da campo": tre piante che coprono la superficie stanno più vicine all'ipotesi di FAO-56 di una pianta in un vaso tondo |
+| `lattuga-2` | `LETTUCE` ×3 | identica | il pavimento di rumore delle cassette, e la risposta a "il modello sbaglia in modo diverso sui due tipi di vaso?" |
 
-Tre cose da sapere, tutte scritte anche nei `config.json`:
+**I substrati.** Due, uno per gruppo, e dentro il gruppo lo stesso sacco: è la condizione perché i gemelli siano
+gemelli e il contrasto sia di specie.
 
-- **Il gemello è gemello nei dati del modello, non nelle sonde.** Il primo ha un WH52, il secondo un WH51: il rumore 
-misurato include lo scarto fra i due modelli di sonda. Le ancore lo assorbono, perché sono percentili della sonda 
-stessa, e la pendenza si confronta lo stesso. Un WH51 legge solo la θ: temperatura ed EC del substrato restano vuote 
-nelle osservazioni di quei due vasi.
-- **Per una perenne la data d'impianto non entra nel modello** (il calendario fenologico segue il mese), quindi il 
-gemello può essere una pianta comprata ora. Per la lattuga invece lo stadio corre dalla data del trapianto, a 
-gradi-giorno con base 4 °C: a Milano a fine settembre circa dodici giorni di fase iniziale, poi la mediana. La data va 
-scritta giusta.
-- **Il canale del WH51 lo decide chi sposta la sonda.** I cinque WH51 rispondono tutti, quindi stanno tutti in qualche 
-terra: i due che passano nei vasi nuovi vanno scritti in `soil_channel` prima di `setup`, che fissa il canale nel 
-giardino salvato.
+- *Vasi tondi:* ZOMA «Terriccio per basilico e piante aromatiche» — torba o cocco con pomice, perlite, corteccia,
+akadama e quarzite, humus di lombrico, senza concimi chimici; il produttore non pubblica né composizione in
+percentuale né pH, EC o ritenzione. Drenante come vuole il rosmarino; il basilico ci berrà più spesso, che per la
+calibrazione è un bene. Il prior di fitosim è `UNIVERSAL_POTTING_SOIL` (θ_FC 0,40, θ_PWP 0,15): senza scheda tecnica
+non c'è un numero migliore, e l'ancora lo corregge dalla prima irrigazione. Il 15 kg per 20 L del formato grande
+dice che la frazione minerale è alta: più il mezzo è minerale e grosso, più la percentuale del WH52 si allontana
+dalla θ vera (livello 1) — uguale per i tre vasi, quindi interno al gruppo.
+- *Cassette:* miscela propria, misurata in volume e scritta nel diario — 50 % fibra di cocco tamponata a basso EC,
+20 % humus di lombrico, 10 % carbone vegetale 3–10 mm **pre-caricato** (un giorno a bagno in concime diluito, o una
+settimana mescolato all'humus, e sciacquato se la cenere è tanta: il carbone fresco ha pH 8–10 ed è salato), 20 %
+pomice 3–8 mm. Le quote sono quelle che la pianta e la sonda tollerano: la lattuga è sensibile ai sali e l'humus
+oltre il 20–25 % porta EC e particelle fini che chiudono i pori; il carbone oltre il 10 % alza il pH fuori dal
+5,5–6,5 della lattuga e nei primi giorni sequestra azoto e potassio; e il carbone **conduce**, cosa che i sensori
+dielettrici sentono: al 10 % l'effetto è piccolo ma è un altro livello 1, diverso da quello dei vasi tondi, e l'EC
+delle cassette non si confronta con quella dei tondi. La pomice — non perlite, che galleggia e in una cassetta bassa
+finisce tutta in cima — serve al drenaggio più qui che nei vasi alti: in 13 cm la falda sospesa sul fondo è una
+frazione grande del profilo. Prior componibile con `compose_substrate`: cocco 0,55/0,12, humus ≈ 0,60/0,28, carbone
+≈ 0,35/0,12, pomice 0,18/0,05 → θ_FC ≈ 0,47, θ_PWP ≈ 0,14, TAW ≈ 43 mm, RAW ≈ 13 mm. Humus e carbone non sono nel
+catalogo fitosim e lo strumento oggi accetta solo un nome di catalogo: la ricetta in `config.json` è il prossimo
+passo dello strumento (sotto).
 
-Basilico e pomodoro, i due che si fertirrigano, sono i vasi della primavera: il basilico a Milano sta finendo, e tre 
-settimane di pianta in senescenza confonderebbero il Kc con la fase. L'agrume, se ci sarà, è il vaso grande da lungo 
-periodo per il Kp e, in primavera, per i sali.
+Quattro cose da sapere, tutte scritte anche nei `config.json`:
+
+- **Per una perenne la data d'impianto non entra nel modello** (il calendario fenologico segue il mese). Per le
+annuali lo strumento non traccia i gradi-giorno, quindi lo stadio corre dai giorni: il basilico da vivaio è già in
+stadio mediano con copertura piena, e la sua `planting_date` è la **semina stimata** (inizio agosto), non il
+rinvaso, altrimenti il modello gli dà Kc 0,5 per venti giorni. Per le lattughe vale il **trapianto**: lo stadio
+iniziale FAO-56 è "copertura scarsa", ed è il tempo che ci mettono a chiudere la cassetta.
+- **Il primo ciclo dopo il rinvaso è di assestamento.** Substrato fresco, radici non ancora nel nuovo volume, θ_FC
+che si sposta con le prime bagnate. L'ancora si registra alla prima irrigazione a drenaggio e si ri-registra alla
+seconda; il ciclo 1 si legge come riscaldamento, per i rinvasi come per i trapianti.
+- **Un ciclo si chiude a ogni irrigazione, non alla soglia.** Col vaso alto e p = 0,60 il rosmarino consumerebbe la
+sua RAW (29 mm) in venti giorni d'autunno: aspettare la soglia vuol dire due cicli prima di dicembre. Si annaffia a
+drenaggio a scadenza, ogni sette-dieci giorni: ogni bagnata chiude un ciclo, e Ks resta 1, che è la condizione in
+cui il Kc è definito.
+- **Il canale lo decide l'accoppiamento.** Cinque WH52 finiscono in `soil_moisture_ec_ch1…5`; quale sonda è quale lo
+dice `scopri --tutto`, e va scritto in `soil_channel` prima di `setup`, che fissa il canale nel giardino salvato (se
+poi cambia, lo strumento si ferma e lo dice).
+
+Con lo stesso sacco in tre vasi e nessun concime, le tre EC all'ancora dovrebbero coincidere: il loro scarto è il
+rumore sonda-sonda dell'EC, misurato gratis prima di qualunque fertirrigazione. Il pomodoro, l'altro che si
+fertirriga, è il vaso della primavera; l'agrume, se ci sarà, il vaso grande da lungo periodo per il Kp e per i sali.
 
 ### Fase 0: l'anello da riga di comando
 
@@ -382,23 +415,32 @@ osservare un giorno scaricando la history, aggregando alle sei e chiamando `upda
 osservato a fine ciclo; calibrare con `calibrate_substrate` e `calibrate_kc` quando i cicli bastano. Lo stato vive 
 tutto nella SQLite di fitosim: gli stati del vaso in `GardenPersistence`, ancore e diario come eventi con 
 `record_event`. Nessun giornale a parte. È il modulo la cui persistenza cambierà in fase 1 e 2.
-- `__main__.py`: la CLI. `scopri`, `ancora`, `prevedi`, `osserva`, `confronta`, `calibra`, `diario`. **Un vaso, una 
-cartella**: ogni vaso è `data/calibrazione/<nome>/` con la sua `config.json`, il suo registro dei gateway e la sua 
-SQLite, e `--vaso <nome>` lo sceglie; con più vasi il comando rifiuta di indovinare e li elenca. La sequenza si ripete 
-per vaso, tre volte al giorno per tre vasi.
+- `__main__.py`: la CLI. `scopri`, `ancora`, `prevedi`, `osserva`, `confronta`, `calibra`, `diario`. **Un vaso, una
+cartella**: ogni vaso è `data/calibrazione/<nome>/` con la sua `config.json`, il suo registro dei gateway e la sua
+SQLite, e `--vaso <nome>` lo sceglie; con più vasi il comando rifiuta di indovinare e li elenca. **`--tutti`** ripete
+lo stesso comando su ogni vaso: la giornata dei cinque vasi è `--tutti osserva` e `--tutti confronta`. **Il vaso si
+descrive come si misura col metro** — forma, dimensioni in alto e al fondo, altezza interna e del substrato — e lo
+strumento ne deriva il volume di substrato (tronco di cono o di piramide) e la superficie evaporante all'altezza del
+substrato; un vaso «da 6,5 L» con due dita di bordo ne contiene 5,7. Se la config cambia dopo `setup`, il comando si
+ferma con le due versioni a confronto invece di simulare in silenzio il vaso vecchio.
+- Da fare: **la ricetta del substrato in `config.json`**. Oggi `substrate` è un nome del catalogo fitosim; la
+miscela delle cassette (cocco, humus, carbone, pomice) vuole `compose_substrate` con i componenti del catalogo più
+due materiali dichiarati lì, con la loro θ_FC e θ_PWP e la fonte accanto.
 - Test senza rete, con payload sintetici e le fixture di fitosim: l'aggregazione alle sei, la conversione del vento, 
 l'integrazione della radiazione, la chiusura di un ciclo sintetico.
 
 Prerequisito già assolto in fitosim: la history Ecowitt ora porta anche il vento (`EcowittSeriesPoint.wind_speed_m_s`), 
 senza il quale la forzante osservata non si poteva ricostruire.
 
-Stato al 2026-09-18: `scopri` elenca WH52, WN32P, WS90 e i cinque WH51 sui due gateway; i tre workspace esistono e 
-costruiscono il vaso (rosmarini: FC 44,2 mm, PWP 16,6 mm; lattuga: FC 47,2 mm, PWP 17,7 mm, soglia di allerta 38,3 mm); 
-nessuna ancora ancora.
+Stato al 2026-09-19: `scopri` elenca WH52, WN32P, WS90 e i cinque WH51 sui due gateway; i cinque workspace esistono
+e costruiscono il vaso dalle misure (vasi tondi: 5,67 L, 407 cm², FC 55,8 mm, PWP 20,9 mm, soglia 34,9 per il
+rosmarino e 41,8 per il basilico; cassette: 8,72 L, 726 cm², FC 48,0 mm, PWP 18,0 mm, soglia 39,0 col prior
+universale). Segnaposto da chiudere al rinvaso: i canali delle sonde, l'altezza vera del substrato, le date. Nessuna
+ancora ancora.
 
-Criterio di uscita: `ancora` registrata alla prossima irrigazione a drenaggio su ciascun vaso; `osserva` che produce 
-una discrepanza per almeno un giorno; `confronta` che stampa previsto contro osservato; lo scarto fra le θ dei due 
-rosmarini misurato su almeno un ciclo, che da lì in poi è il pavimento di ogni RMSE.
+Criterio di uscita: `ancora` registrata alla prima irrigazione a drenaggio su ciascun vaso; `osserva` che produce una
+discrepanza per almeno un giorno; `confronta` che stampa previsto contro osservato; lo scarto fra le θ dei due
+rosmarini e fra le due cassette misurato su almeno un ciclo, che da lì in poi è il pavimento di ogni RMSE.
 
 ### Fase 1: la registrazione dei gateway come feature dell'app
 
