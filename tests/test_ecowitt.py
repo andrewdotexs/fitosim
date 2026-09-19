@@ -387,6 +387,10 @@ class TestParsingRobustness(unittest.TestCase):
         }
         obs = parse_ecowitt_response(payload)
         self.assertAlmostEqual(obs.rain_today_mm, 4.7)
+        # E i due pluviometri restano leggibili uno per uno: chi ne ha
+        # due (WH40 e WS90) sceglie, il preferito resta il piezo.
+        self.assertAlmostEqual(obs.rain_today_piezo_mm, 4.7)
+        self.assertAlmostEqual(obs.rain_today_gauge_mm, 5.0)
 
     def test_traditional_rain_used_if_piezo_absent(self):
         # Senza piezo, fallback al pluviometro tradizionale.
@@ -401,6 +405,8 @@ class TestParsingRobustness(unittest.TestCase):
         }
         obs = parse_ecowitt_response(payload)
         self.assertAlmostEqual(obs.rain_today_mm, 5.0)
+        self.assertIsNone(obs.rain_today_piezo_mm)
+        self.assertAlmostEqual(obs.rain_today_gauge_mm, 5.0)
 
 
 # =======================================================================
@@ -735,6 +741,28 @@ class TestHistoryRobustness(unittest.TestCase):
         self.assertNotIn(200, ts_to_point)
         # Il vento da solo basta a creare un timestamp (300 non ha altro).
         self.assertIsNone(ts_to_point[300].outdoor_temp_c)
+
+    def test_history_keeps_both_rain_gauges_apart(self):
+        # Un WH40 a basculla e il piezo del WS90 sullo stesso gateway non
+        # leggono la stessa pioggia: `rainfall_mm` resta il preferito
+        # (piezo), ma chi vuole scegliere trova i due cumulati separati.
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        payload = {
+            "code": 0,
+            "data": {
+                "rainfall": {"daily": {"unit": "mm", "list": {"100": "17.7", "200": "17.7"}}},
+                "rainfall_piezo": {"daily": {"unit": "mm", "list": {"100": "15.0"}}},
+            },
+        }
+        series = parse_ecowitt_history_response(payload)
+        ts_to_point = {int(p.timestamp.timestamp()): p for p in series.points}
+        self.assertAlmostEqual(ts_to_point[100].rainfall_mm, 15.0)
+        self.assertAlmostEqual(ts_to_point[100].rainfall_piezo_mm, 15.0)
+        self.assertAlmostEqual(ts_to_point[100].rainfall_gauge_mm, 17.7)
+        # A 200 il piezo tace: il preferito è None (non ricade sull'altro
+        # per un singolo istante), la basculla c'è.
+        self.assertIsNone(ts_to_point[200].rainfall_piezo_mm)
+        self.assertAlmostEqual(ts_to_point[200].rainfall_gauge_mm, 17.7)
 
     def test_history_without_wind_section_leaves_wind_none(self):
         # La fixture reale non ha la sezione wind: nessun errore, e ogni

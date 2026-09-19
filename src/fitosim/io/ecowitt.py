@@ -288,7 +288,13 @@ class EcowittObservation:
     rain_rate_mm_hr : float | None
         Tasso di pioggia attuale, mm/h.
     rain_event_mm, rain_today_mm, rain_24h_mm : float | None
-        Precipitazioni accumulate nei rispettivi periodi.
+        Precipitazioni accumulate nei rispettivi periodi, dal pluviometro
+        preferito (piezo se presente, altrimenti a basculla).
+    rain_today_piezo_mm, rain_today_gauge_mm : float | None
+        Il cumulato di oggi di **ciascun** pluviometro, quando ci sono
+        tutti e due: `rainfall_piezo.daily` (WS90) e `rainfall.daily`
+        (WH40). Chi ha entrambi può scegliere; `rain_today_mm` resta il
+        preferito.
     indoor_temp_c, indoor_humidity_pct : float | None
         Sensore interno della console base (sempre presente).
     extra_temp_c, extra_humidity_pct : dict[int, float]
@@ -334,6 +340,8 @@ class EcowittObservation:
     rain_event_mm: Optional[float] = None
     rain_today_mm: Optional[float] = None
     rain_24h_mm: Optional[float] = None
+    rain_today_piezo_mm: Optional[float] = None
+    rain_today_gauge_mm: Optional[float] = None
 
     indoor_temp_c: Optional[float] = None
     indoor_humidity_pct: Optional[float] = None
@@ -469,6 +477,16 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
     rain_event = _parse_node_to(rain_section.get("event"), _to_mm)
     rain_today = _parse_node_to(rain_section.get("daily"), _to_mm)
     rain_24h = _parse_node_to(rain_section.get("24_hours"), _to_mm)
+    # E i due pluviometri uno per uno, per chi li ha entrambi e vuole
+    # scegliere: un WH40 a basculla e il piezo del WS90 sullo stesso
+    # gateway non leggono la stessa pioggia (17,7 contro 15,0 mm in un
+    # giorno di prova), e quale sia giusto lo decide chi ha il vaso.
+    rain_today_piezo = _parse_node_to(
+        (data.get("rainfall_piezo") or {}).get("daily"), _to_mm
+    )
+    rain_today_gauge = _parse_node_to(
+        (data.get("rainfall") or {}).get("daily"), _to_mm
+    )
 
     # ---------- Indoor ----------
     indoor = data.get("indoor", {})
@@ -547,6 +565,8 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         rain_event_mm=rain_event,
         rain_today_mm=rain_today,
         rain_24h_mm=rain_24h,
+        rain_today_piezo_mm=rain_today_piezo,
+        rain_today_gauge_mm=rain_today_gauge,
         indoor_temp_c=indoor_temp_c,
         indoor_humidity_pct=indoor_humidity,
         extra_temp_c=extra_temp,
@@ -869,6 +889,15 @@ class EcowittSeriesPoint:
     massimo della giornata.
     """
 
+    rainfall_piezo_mm: Optional[float] = None
+    rainfall_gauge_mm: Optional[float] = None
+    """
+    Lo stesso cumulato, ma di **ciascun** pluviometro quando il gateway
+    ne ha due: il piezo del WS90 (`rainfall_piezo.daily`) e il WH40 a
+    basculla (`rainfall.daily`). `rainfall_mm` è il preferito dei due;
+    chi vuole scegliere legge questi.
+    """
+
     solar_w_m2: Optional[float] = None
 
     wind_speed_m_s: Optional[float] = None
@@ -1064,6 +1093,12 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
     rain_daily = _build_series_dict(
         rain_section.get("daily"), _to_mm
     )
+    rain_piezo_daily = _build_series_dict(
+        (data.get("rainfall_piezo") or {}).get("daily"), _to_mm
+    )
+    rain_gauge_daily = _build_series_dict(
+        (data.get("rainfall") or {}).get("daily"), _to_mm
+    )
 
     # Solar è in W/m² (universale). Usiamo _build_series_pure perché
     # l'unità è già canonica.
@@ -1128,7 +1163,7 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
     all_timestamps: set[int] = set()
     for d in (
         outdoor_temp, outdoor_hum, indoor_temp, indoor_hum,
-        rain_daily, solar, wind_speed,
+        rain_daily, rain_piezo_daily, rain_gauge_daily, solar, wind_speed,
     ):
         all_timestamps.update(d.keys())
     for d in extra_temp_per_ch.values():
@@ -1181,6 +1216,8 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
             outdoor_temp_c=outdoor_temp.get(ts),
             outdoor_humidity_pct=outdoor_hum.get(ts),
             rainfall_mm=rain_daily.get(ts),
+            rainfall_piezo_mm=rain_piezo_daily.get(ts),
+            rainfall_gauge_mm=rain_gauge_daily.get(ts),
             solar_w_m2=solar.get(ts),
             wind_speed_m_s=wind_speed.get(ts),
             indoor_temp_c=indoor_temp.get(ts),
