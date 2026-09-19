@@ -8,11 +8,14 @@ Ogni substrato è caratterizzato da due parametri idrologici fondamentali:
       che il substrato trattiene dopo il drenaggio gravitazionale. È
       il "livello pieno" utile del serbatoio-vaso.
 
-  θ_PWP (contenuto idrico volumetrico al punto di appassimento permanente)
-      La soglia sotto la quale la pianta non riesce più a estrarre acqua,
-      perché le forze capillari del substrato superano la suzione
-      radicale. Corrisponde convenzionalmente a un potenziale matriciale
-      di −1500 kPa. È il "livello vuoto" effettivo per la pianta.
+  θ_PWP (contenuto idrico volumetrico al limite inferiore della riserva)
+      La soglia sotto la quale la pianta non riesce più a estrarre acqua
+      a un ritmo che le serva. Nei suoli agrari è il punto di
+      appassimento permanente, −1500 kPa; nei substrati in vaso la
+      conducibilità idraulica crolla molto prima, e la convenzione dei
+      substrati (De Boodt & Verdonck 1972) la mette a −10 kPa. È il
+      "livello vuoto" effettivo per la pianta, e il catalogo di The Pot,
+      da cui l'app prende i substrati, lo dà a −10 kPa.
 
 Dalla coppia (θ_FC, θ_PWP) si derivano due grandezze operative:
 
@@ -26,12 +29,13 @@ Moltiplicando queste frazioni volumetriche per il volume fisico del vaso
 si ottengono le grandezze idrauliche in litri che il bilancio idrico
 (prossimo modulo `science.balance`) userà come input.
 
-Nota sui valori del catalogo: i numeri tabellati sono valori
-rappresentativi della letteratura orticola per miscele commerciali
-tipiche. In uso reale variano entro ±15-20% in funzione del produttore,
-del grado di compattazione, e del tempo trascorso dal confezionamento.
-Versioni future di fitosim permetteranno la calibrazione per-vaso dei
-parametri sulla base dei feedback reali del sensore WH51.
+Nota sui valori tabellati qui sotto: sono fixture dimostrative per i
+test e gli esempi, non un catalogo. Il catalogo ufficiale dei substrati
+e dei loro componenti è quello di The Pot (`the-pot/catalog/`), con la
+fonte accanto a ogni numero. In uso reale i valori variano entro ±15-20%
+in funzione del produttore, del grado di compattazione e del tempo
+trascorso dal confezionamento; la calibrazione per vaso sul sensore
+(`science/calibration.py`) ricava i due estremi dai dati.
 """
 
 from dataclasses import dataclass
@@ -63,8 +67,23 @@ class Substrate:
         (volume di acqua) / (volume di substrato) al raggiungimento
         della capacità di campo.
     theta_pwp : float
-        Contenuto idrico volumetrico al punto di appassimento
-        permanente, adimensionale, nell'intervallo [0, theta_fc).
+        Contenuto idrico volumetrico al limite inferiore della riserva
+        utile, adimensionale, nell'intervallo [0, theta_fc). Il nome
+        viene dal punto di appassimento permanente di FAO-56 (−1500
+        kPa), che è un concetto da suolo agrario. **Per un substrato in
+        vaso il limite utile è più alto**: oltre −10 kPa la conducibilità
+        idraulica di torba, cocco e inerti crolla e la pianta non estrae
+        più acqua a un ritmo che le serva, ed è lì che i substrati si
+        misurano (De Boodt & Verdonck 1972, la convenzione dell'acqua
+        facilmente disponibile fra −1 e −10 kPa; Raviv & Lieth 2008,
+        cap. 3). Il catalogo di The Pot, che è la fonte dei substrati
+        dell'app, usa questa convenzione: `theta_fc` è l'acqua a −1 kPa
+        (capacità di contenitore), `theta_pwp` quella a −10 kPa. Con
+        la torba chiara vale 0,75 / 0,35, non 0,58 / 0,10: la riserva
+        utile è più piccola e il modello annaffia prima, che per una
+        pianta in vaso è il verso giusto. La calibrazione sul sensore
+        (livello 2) ricava comunque i due estremi dai picchi e dalle
+        valli osservati, qualunque sia la convenzione di partenza.
     description : str, opzionale
         Nota libera per documentare composizione o comportamento tipico.
     rew_mm, tew_mm : float | None, opzionali
@@ -235,13 +254,16 @@ class Substrate:
 
 
 # =======================================================================
-#  CATALOGO DI SUBSTRATI TIPICI
+#  SUBSTRATI DIMOSTRATIVI (fixture per test ed esempi)
 # =======================================================================
-# I valori riportati sono rappresentativi di miscele commerciali standard
-# per giardinaggio domestico a latitudini medie. Sono stati scelti come
-# punto di partenza ragionevole per simulazioni iniziali; la calibrazione
-# fine per il singolo vaso andrà fatta confrontando le previsioni del
-# bilancio idrico con le letture del sensore WH51 nel tempo.
+# **Non sono un catalogo.** Dal 2026-09-19 il catalogo ufficiale dei
+# substrati è quello di The Pot (`the-pot/catalog/substrates/`, con le
+# ricette sui componenti di `substrate_components/` e le fonti accanto a
+# ogni numero): l'app e lo strumento di calibrazione leggono da lì, e
+# questi cinque restano per i test e gli esempi di fitosim. Usano ancora
+# la convenzione da suolo agrario (θ_PWP a −1500 kPa), mentre The Pot usa
+# quella dei substrati (−10 kPa; vedi `Substrate.theta_pwp`): i numeri
+# non si confrontano fra i due, ed è voluto non tenerli allineati a mano.
 
 UNIVERSAL_POTTING_SOIL = Substrate(
     name="Terriccio universale",
@@ -665,8 +687,13 @@ class BaseMaterial:
 
 
 # -----------------------------------------------------------------------
-#  Catalogo dei materiali base
+#  Materiali base dimostrativi (fixture per test ed esempi)
 # -----------------------------------------------------------------------
+#
+# Come per i substrati sopra: i materiali ufficiali sono i componenti del
+# catalogo di The Pot (`substrate_components/`, θ_FC a −1 kPa e θ_PWP a
+# −10 kPa, densità e fonti). Questi nove servono a `compose_substrate`
+# nei test e negli esempi, con la convenzione da suolo agrario.
 #
 # Valori di θ_FC e θ_PWP in letteratura agronomica vivaistica e
 # bonsaistica, mediane di range pubblicati. Coperture per ciascun

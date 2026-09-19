@@ -370,10 +370,14 @@ delle cassette non si confronta con quella dei tondi. La pomice — non perlite,
 finisce tutta in cima — serve al drenaggio più qui che nei vasi alti: in 13 cm la falda sospesa sul fondo è una
 frazione grande del profilo. Il prior è la ricetta stessa, scritta in `config.json` con i componenti del catalogo
 di The Pot e la media pesata sui volumi del seed: cocco 0,78/0,33, humus 0,70/0,40, carbone 0,35/0,13, pomice
-0,30/0,10 → θ_FC 0,625, θ_PWP 0,278, TAW 45 mm, RAW 13,5 mm. Le stesse quote coi materiali di fitosim darebbero
-0,47/0,14: i due cataloghi non si parlano sulle costanti idriche (la fibra di cocco è 0,78 da una parte e 0,55
-dall'altra), ed è una decisione aperta; per la calibrazione conta poco, perché l'ancora rimette i due estremi
-sulla scala della sonda.
+0,30/0,10 → θ_FC 0,625, θ_PWP 0,278, TAW 45 mm, RAW 13,5 mm. Le stesse quote coi materiali dimostrativi di
+fitosim darebbero 0,47/0,14, e la differenza non è un errore ma una **convenzione**: The Pot misura i substrati
+come si misurano i substrati — θ_FC è l'acqua a capacità di contenitore (−1 kPa), θ_PWP quella a −10 kPa, oltre
+la quale la conducibilità crolla e la pianta non estrae più a un ritmo utile (De Boodt & Verdonck 1972; Raviv &
+Lieth 2008) — mentre fitosim aveva scritto le sue fixture con il punto di appassimento dei suoli agrari (−1500
+kPa). Dal 2026-09-19 il catalogo ufficiale è solo quello di The Pot, con questa convenzione, e la riserva utile
+che ne esce è più piccola: il modello annaffia prima, che per un vaso è il verso giusto. Per la calibrazione
+conta poco comunque, perché l'ancora rimette i due estremi sulla scala della sonda.
 
 Quattro cose da sapere, tutte scritte anche nei `config.json`:
 

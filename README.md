@@ -59,8 +59,12 @@ parametri noti. In questo dominio specifico la libreria copre:
   (`docs/fitosim_canopy_design.md`)
 - Modello del sottovaso opzionale come componente di stato distinto, con
   riassorbimento capillare verso il substrato
-- Sostrati personalizzati: catalogo di nove materiali base (akadama, pomice,
-  perlite, ecc.) e factory `compose_substrate` per i mix
+- Sostrati personalizzati: factory `compose_substrate` per i mix, con nove
+  materiali base dimostrativi (akadama, pomice, perlite, ecc.). **Il catalogo
+  ufficiale di specie, substrati e componenti è quello di The Pot**
+  (`the-pot/catalog/`, con le fonti): le specie e i substrati definiti qui
+  sono fixture per test ed esempi, e la convenzione delle costanti idriche
+  dell'app è quella dei substrati (θ_PWP a −10 kPa, vedi `Substrate`)
 - Modello chimico completo: massa salina, pH, EC come grandezza derivata,
   coefficiente nutrizionale Kn che modula l'evapotraspirazione
 - Esposizione differenziata alla pioggia per i vasi parzialmente coperti
@@ -484,8 +488,8 @@ approfondimento.
 il punto di riferimento per imparare a usare la libreria, dai concetti
 fondamentali (capitoli 1-3) alle capacità avanzate del singolo vaso
 (4-9), dal dashboard operativo del balcone (10-16) alle FAQ (17). Le
-appendici contengono il catalogo delle specie pre-definite, i substrati
-disponibili, e un glossario dei termini agronomici.
+appendici contengono le specie e i substrati dimostrativi (il catalogo
+ufficiale è in The Pot), e un glossario dei termini agronomici.
 
 **Status report** (`docs/fitosim_status_report.docx`): il riassunto
 quantitativo dello stato di sviluppo, con metriche, roadmap e storico delle

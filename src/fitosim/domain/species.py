@@ -915,8 +915,14 @@ def actual_et_c(
 
 
 # =======================================================================
-#  CATALOGO DI SPECIE
+#  SPECIE DIMOSTRATIVE (fixture per test ed esempi)
 # =======================================================================
+# **Non sono un catalogo.** Dal 2026-09-19 il catalogo ufficiale delle
+# specie è quello di The Pot (`the-pot/catalog/species/`, 369 schede con
+# le fonti): l'app e lo strumento di calibrazione costruiscono la
+# `Species` da lì, tramite `fitosim_adapter`, fenologia compresa. Queste
+# cinque restano per i test e gli esempi di fitosim.
+#
 # Cinque specie rappresentative dei regimi agronomici più comuni nel
 # giardinaggio domestico italiano. I valori di Kc sono tratti da FAO-56
 # Tabella 12 (colture orticole) e Tabella 17 (colture arboree); le
