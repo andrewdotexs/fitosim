@@ -381,11 +381,13 @@ conta poco comunque, perché l'ancora rimette i due estremi sulla scala della so
 
 Quattro cose da sapere, tutte scritte anche nei `config.json`:
 
-- **Per una perenne la data d'impianto non entra nel modello** (il calendario fenologico segue il mese). Per le
-annuali lo strumento non traccia i gradi-giorno, quindi lo stadio corre dai giorni: il basilico da vivaio è già in
-stadio mediano con copertura piena, e la sua `planting_date` è la **semina stimata** (inizio agosto), non il
-rinvaso, altrimenti il modello gli dà Kc 0,5 per venti giorni. Per le lattughe vale il **trapianto**: lo stadio
-iniziale FAO-56 è "copertura scarsa", ed è il tempo che ci mettono a chiudere la cassetta.
+- **Per una perenne la data d'impianto non entra nel modello** (il calendario fenologico segue il mese). Le
+annuali con le soglie in scheda — basilico e lattuga, `[care.gradi_giorno]` — leggono lo stadio dai **gradi-giorno**:
+a `setup` lo strumento li somma fra `planting_date` e ieri dall'archivio Open-Meteo, l'unica forzante che c'era
+prima del vaso, e poi li accumula fitosim dalla forzante osservata. Il basilico da vivaio è già cresciuto, e la
+sua `planting_date` è la **semina stimata** (inizio agosto): sui 45 giorni fino al 18 settembre l'archivio dà 737
+gradi-giorno, fase mediana da subito, finale a 840. Per le lattughe vale il **trapianto**: lo stadio iniziale
+FAO-56 è "copertura scarsa", ed è il tempo che ci mettono a chiudere la cassetta.
 - **Il primo ciclo dopo il rinvaso è di assestamento.** Substrato fresco, radici non ancora nel nuovo volume, θ_FC
 che si sposta con le prime bagnate. L'ancora si registra alla prima irrigazione a drenaggio e si ri-registra alla
 seconda; il ciclo 1 si legge come riscaldamento, per i rinvasi come per i trapianti.
