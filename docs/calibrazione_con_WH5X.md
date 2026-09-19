@@ -329,7 +329,7 @@ persistenza nei modelli veri con una migrazione Alembic. Le credenziali dei gate
 | Fase | Dove | Consegna | Cosa dimostra | Criterio di uscita |
 |---|---|---|---|---|
 | 0 | `the-pot/scripts/calibrazione_wh5x/` | la CLI dell'anello, sui cinque vasi | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera su ciascun vaso, almeno un'osservazione con discrepanza stampata, il rumore fra i gemelli misurato in entrambe le coppie |
-| 1 | `src/the_pot/services/` + `web/` | registrazione dei gateway come feature dell'app | gateway e sensori dalla pagina | WH52 mappato sul vaso dalla pagina, misure canoniche visibili |
+| 1 | `src/the_pot/services/` | lo strumento legge gateway e canali da `dispositivi` (H.2-a, già in app) | niente registro doppio | un vaso calibrato con gateway e canale presi da «I tuoi dispositivi» |
 | 2 | `src/the_pot/services/` + `web/` | pagina di calibrazione | il flusso in sei passi guidato dal browser | un ciclo intero condotto dalla pagina |
 | 3 | nessuna | la calibrazione stessa | proposte con confidenza crescente | dal terzo ciclo la prima proposta, dal quinto una utilizzabile |
 
@@ -354,8 +354,9 @@ gemelli e il contrasto sia di specie.
 - *Vasi tondi:* ZOMA «Terriccio per basilico e piante aromatiche» — torba o cocco con pomice, perlite, corteccia,
 akadama e quarzite, humus di lombrico, senza concimi chimici; il produttore non pubblica né composizione in
 percentuale né pH, EC o ritenzione. Drenante come vuole il rosmarino; il basilico ci berrà più spesso, che per la
-calibrazione è un bene. Il prior di fitosim è `UNIVERSAL_POTTING_SOIL` (θ_FC 0,40, θ_PWP 0,15): senza scheda tecnica
-non c'è un numero migliore, e l'ancora lo corregge dalla prima irrigazione. Il 15 kg per 20 L del formato grande
+calibrazione è un bene. Il prior è la scheda `drenante-mediterranea` del catalogo di The Pot (universale, pomice e
+sabbia: θ_FC 0,405, θ_PWP 0,186), il substrato che The Pot consiglia al rosmarino e il più vicino a un miscuglio
+minerale senza scheda tecnica; l'ancora lo corregge dalla prima irrigazione. Il 15 kg per 20 L del formato grande
 dice che la frazione minerale è alta: più il mezzo è minerale e grosso, più la percentuale del WH52 si allontana
 dalla θ vera (livello 1) — uguale per i tre vasi, quindi interno al gruppo.
 - *Cassette:* miscela propria, misurata in volume e scritta nel diario — 50 % fibra di cocco tamponata a basso EC,
@@ -367,10 +368,12 @@ oltre il 20–25 % porta EC e particelle fini che chiudono i pori; il carbone ol
 dielettrici sentono: al 10 % l'effetto è piccolo ma è un altro livello 1, diverso da quello dei vasi tondi, e l'EC
 delle cassette non si confronta con quella dei tondi. La pomice — non perlite, che galleggia e in una cassetta bassa
 finisce tutta in cima — serve al drenaggio più qui che nei vasi alti: in 13 cm la falda sospesa sul fondo è una
-frazione grande del profilo. Prior componibile con `compose_substrate`: cocco 0,55/0,12, humus ≈ 0,60/0,28, carbone
-≈ 0,35/0,12, pomice 0,18/0,05 → θ_FC ≈ 0,47, θ_PWP ≈ 0,14, TAW ≈ 43 mm, RAW ≈ 13 mm. Humus e carbone non sono nel
-catalogo fitosim e lo strumento oggi accetta solo un nome di catalogo: la ricetta in `config.json` è il prossimo
-passo dello strumento (sotto).
+frazione grande del profilo. Il prior è la ricetta stessa, scritta in `config.json` con i componenti del catalogo
+di The Pot e la media pesata sui volumi del seed: cocco 0,78/0,33, humus 0,70/0,40, carbone 0,35/0,13, pomice
+0,30/0,10 → θ_FC 0,625, θ_PWP 0,278, TAW 45 mm, RAW 13,5 mm. Le stesse quote coi materiali di fitosim darebbero
+0,47/0,14: i due cataloghi non si parlano sulle costanti idriche (la fibra di cocco è 0,78 da una parte e 0,55
+dall'altra), ed è una decisione aperta; per la calibrazione conta poco, perché l'ancora rimette i due estremi
+sulla scala della sonda.
 
 Quattro cose da sapere, tutte scritte anche nei `config.json`:
 
@@ -423,9 +426,15 @@ descrive come si misura col metro** — forma, dimensioni in alto e al fondo, al
 strumento ne deriva il volume di substrato (tronco di cono o di piramide) e la superficie evaporante all'altezza del
 substrato; un vaso «da 6,5 L» con due dita di bordo ne contiene 5,7. Se la config cambia dopo `setup`, il comando si
 ferma con le due versioni a confronto invece di simulare in silenzio il vaso vecchio.
-- Da fare: **la ricetta del substrato in `config.json`**. Oggi `substrate` è un nome del catalogo fitosim; la
-miscela delle cassette (cocco, humus, carbone, pomice) vuole `compose_substrate` con i componenti del catalogo più
-due materiali dichiarati lì, con la loro θ_FC e θ_PWP e la fonte accanto.
+- `catalogo.py`: **specie e substrati dal catalogo di The Pot**, non da quello dimostrativo di fitosim. `species` è
+uno slug di `catalog/species/`, `substrate` uno slug di `catalog/substrates/` o una ricetta di componenti in
+volume; la strada verso fitosim è quella dell'app — il parser del seed e `fitosim_adapter` — letta dal repo senza
+database. Prerequisito, chiuso lo stesso giorno: l'adapter non passava la fenologia, e ogni specie girava da
+annuale a giorni dall'impianto (un rosmarino piantato ad aprile era in stadio finale da luglio per sempre; un vaso
+senza data, Kc iniziale per sempre). Ora le perenni ricevono il calendario stagionale di `fenologia.py` e la
+riduzione in riposo e dormienza di fitosim, le annuali restano ai giorni; chi è cosa lo dice la scheda
+(`[care] ciclo_vita`) o il gruppo. Sull'anno, a Milano: rosmarino da Kc 0,60 fisso a 0,85 in stagione e 0,42 in
+riposo, +31 %.
 - Test senza rete, con payload sintetici e le fixture di fitosim: l'aggregazione alle sei, la conversione del vento, 
 l'integrazione della radiazione, la chiusura di un ciclo sintetico.
 
@@ -442,14 +451,16 @@ Criterio di uscita: `ancora` registrata alla prima irrigazione a drenaggio su ci
 discrepanza per almeno un giorno; `confronta` che stampa previsto contro osservato; lo scarto fra le θ dei due
 rosmarini e fra le due cassette misurato su almeno un ciclo, che da lì in poi è il pavimento di ogni RMSE.
 
-### Fase 1: la registrazione dei gateway come feature dell'app
+### Fase 1: lo strumento si collega ai dispositivi dell'app
 
-`gateways.py` diventa un servizio di `src/the_pot/services/`; i gateway e le mappature canale → vaso entrano nei 
-modelli con una migrazione Alembic. La pagina in `web/`: form di registrazione, pulsante "scopri sensori" con l'elenco 
-dei canali trovati (WH52 con θ, temperatura ed EC; WN32P; WS90 con vento, radiazione e pioggia), mappatura sul vaso, 
-misure canoniche in tempo reale. È la registrazione dei connettori della spec sensori, e a quel punto è del prodotto.
+La registrazione dei gateway **esiste già**: `dispositivi.py` (H.2-a) registra i gateway Ecowitt via cloud, scopre i
+canali e li mette sotto un vaso — «si registra in I tuoi dispositivi, si mette sotto un vaso, si tara». La prima
+stesura di questa roadmap proponeva di costruirla, senza controllare. La fase 1 è quindi il contrario: il
+`gateways.py` dello strumento sparisce e l'anello legge gateway e mappature canale → vaso da `dispositivi`; da
+verificare che i WH52 (θ, temperatura ed EC nella sezione `soil_moisture_ec_chN`) e il WN32P nello slot indoor
+passino dalla scoperta com'è.
 
-Criterio di uscita: un gateway registrato dalla pagina, il WH52 mappato, le misure parsate visibili.
+Criterio di uscita: lo strumento gira su un vaso i cui gateway e canale vengono da «I tuoi dispositivi».
 
 ### Fase 2: la pagina di calibrazione
 
@@ -469,8 +480,14 @@ Kc entra nella regola di precedenza allo scope di catalogo, sopra la pendenza de
 
 ### Cosa resta fuori
 
-fitosim resta una libreria: nessuna interfaccia e nessun gateway dentro `src/fitosim/`, solo la matematica e gli 
+fitosim resta una libreria: nessuna interfaccia e nessun gateway dentro `src/fitosim/`, solo la matematica e gli
 adapter. La risoluzione sub-giornaliera. I livelli 1 e 4 del manuale. Dipendenze oltre quelle che `the-pot` già ha.
+
+Due decisioni aperte trovate controllando il `domain` di fitosim contro The Pot, fuori da questo lavoro: il
+**pianificatore doppio** (`domain/scheduler.py` di fitosim e la proiezione di `idrica_service`, che non lo usa) e i
+**due client Open-Meteo** (`io/openmeteo.py` e `previsione.py`, che The Pot preferisce per l'asincrono, la cache e
+i campi dell'interfaccia). Garden, persistenza SQLite e serializzazione di fitosim li usano solo lo strumento e gli
+esempi: restano, congelati.
 
 ## Riferimenti
 
