@@ -1,8 +1,9 @@
 # Calibrazione con il sensore di substrato WH5X
 
 **Data:** 2026-09-17, aggiornata il 2026-09-19 con i cinque vasi
-**Status:** Procedura operativa concordata, strumento pronto, cinque vasi configurati; piante e sonde comprate, rinvasi 
-fra una settimana, la prima ancora alla prima irrigazione a drenaggio dopo. Prima calibrazione su hardware reale.
+**Status:** Procedura operativa concordata, strumento completo (catalogo di The Pot, geometria dei vasi, gemelli,
+pluviometri, gradi-giorno, test senza database), cinque vasi configurati; piante e sonde comprate, rinvasi fra una
+settimana, la prima ancora alla prima irrigazione a drenaggio dopo. Prima calibrazione su hardware reale.
 **Scope:** cinque vasi outdoor sullo stesso balcone — due rosmarini gemelli e un basilico in tre vasi uguali, due
 cassette gemelle di lattuga — ciascuno con un WH52, forzante meteo locale (WN32P + WS90), previsione da Open-Meteo.
 Calibra i livelli 2 e 3 del manuale di calibrazione: substrato (θ_FC, θ_PWP) e specie (Kc). Il livello 1, la
@@ -328,7 +329,7 @@ persistenza nei modelli veri con una migrazione Alembic. Le credenziali dei gate
 
 | Fase | Dove | Consegna | Cosa dimostra | Criterio di uscita |
 |---|---|---|---|---|
-| 0 | `the-pot/scripts/calibrazione_wh5x/` | la CLI dell'anello, sui cinque vasi | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera su ciascun vaso, almeno un'osservazione con discrepanza stampata, il rumore fra i gemelli misurato in entrambe le coppie |
+| 0 | `the-pot/scripts/calibrazione_wh5x/` | la CLI dell'anello, sui cinque vasi — **completa** al 2026-09-19 | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera su ciascun vaso, almeno un'osservazione con discrepanza stampata, il rumore fra i gemelli misurato in entrambe le coppie con `gemelli` |
 | 1 | `src/the_pot/services/` | lo strumento legge gateway e canali da `dispositivi` (H.2-a, già in app) | niente registro doppio | un vaso calibrato con gateway e canale presi da «I tuoi dispositivi» |
 | 2 | `src/the_pot/services/` + `web/` | pagina di calibrazione | il flusso in sei passi guidato dal browser | un ciclo intero condotto dalla pagina |
 | 3 | nessuna | la calibrazione stessa | proposte con confidenza crescente | dal terzo ciclo la prima proposta, dal quinto una utilizzabile |
@@ -432,26 +433,43 @@ descrive come si misura col metro** — forma, dimensioni in alto e al fondo, al
 strumento ne deriva il volume di substrato (tronco di cono o di piramide) e la superficie evaporante all'altezza del
 substrato; un vaso «da 6,5 L» con due dita di bordo ne contiene 5,7. Se la config cambia dopo `setup`, il comando si
 ferma con le due versioni a confronto invece di simulare in silenzio il vaso vecchio.
-- `catalogo.py`: **specie e substrati dal catalogo di The Pot**, non da quello dimostrativo di fitosim. `species` è
+- `catalogo.py`: **specie e substrati dal catalogo di The Pot**, che dal 2026-09-19 è l'unico: le cinque specie e
+i cinque substrati di fitosim sono fixture per i suoi test, e lo strumento non ne accetta più i nomi. `species` è
 uno slug di `catalog/species/`, `substrate` uno slug di `catalog/substrates/` o una ricetta di componenti in
 volume; la strada verso fitosim è quella dell'app — il parser del seed e `fitosim_adapter` — letta dal repo senza
 database. Prerequisito, chiuso lo stesso giorno: l'adapter non passava la fenologia, e ogni specie girava da
 annuale a giorni dall'impianto (un rosmarino piantato ad aprile era in stadio finale da luglio per sempre; un vaso
 senza data, Kc iniziale per sempre). Ora le perenni ricevono il calendario stagionale di `fenologia.py` e la
-riduzione in riposo e dormienza di fitosim, le annuali restano ai giorni; chi è cosa lo dice la scheda
-(`[care] ciclo_vita`) o il gruppo. Sull'anno, a Milano: rosmarino da Kc 0,60 fisso a 0,85 in stagione e 0,42 in
-riposo, +31 %.
-- Test senza rete, con payload sintetici e le fixture di fitosim: l'aggregazione alle sei, la conversione del vento, 
-l'integrazione della radiazione, la chiusura di un ciclo sintetico.
+riduzione in riposo e dormienza di fitosim; chi è cosa lo dice la scheda (`[care] ciclo_vita`) o il gruppo.
+Sull'anno, a Milano: rosmarino da Kc 0,60 fisso a 0,85 in stagione e 0,42 in riposo, +31 %.
+- **Gradi-giorno.** Le annuali con le soglie in scheda (`[care.gradi_giorno]`: basilico 10 / 240 / 840, lattuga
+4 / 165 / 440, stime derivate da FAO-56 e dichiarate in Fonti) leggono lo stadio dal calore: a `setup` i
+gradi-giorno fra `planting_date` e ieri dall'archivio Open-Meteo, poi li accumula fitosim dalla forzante
+osservata. Il basilico seminato il 5 agosto è a 737, in fase mediana; coi giorni sarebbe stato «iniziale» per tre
+settimane dal rinvaso.
+- **`gemelli A B`**: lo scarto giorno per giorno fra le osservazioni di due vasi — θ, EC a 25 °C, temperatura —
+con media, RMSE e massimo, e il **pavimento per vaso** RMSE/√2. Verifica campo per campo che i due siano gemelli
+nel modello e avverte se non lo sono. È il comando che il criterio di uscita chiedeva e non c'era.
+- **`rain_source`**: i due pluviometri del GW2000 (piezo del WS90, WH40 a basculla) non leggono la stessa pioggia,
+17,7 contro 15,0 mm in un giorno di prova. La config sceglie — `auto`, `piezo`, `gauge` — `scopri` li mostra
+entrambi, `osserva` registra la sorgente e si ferma se il pluviometro scelto per nome tace. Richiede la history
+Ecowitt con i due cumulati separati (fitosim `3fb6d85`).
+- Test senza rete **e senza database**, con payload sintetici: l'aggregazione alle sei, la conversione del vento,
+l'integrazione della radiazione, la chiusura di un ciclo sintetico, i gemelli, i pluviometri, i gradi-giorno.
+Il gancio che provvede al Postgres di prova in The Pot è ora di fine raccolta e si muove solo se un test di `e2e/`
+o `browser/` è della partita: con Docker fermo questi test girano lo stesso (86 nel file, 727 con gli unit).
 
-Prerequisito già assolto in fitosim: la history Ecowitt ora porta anche il vento (`EcowittSeriesPoint.wind_speed_m_s`), 
-senza il quale la forzante osservata non si poteva ricostruire.
+Prerequisiti assolti in fitosim: la history Ecowitt porta il vento (`EcowittSeriesPoint.wind_speed_m_s`), senza il
+quale la forzante osservata non si poteva ricostruire, e i due pluviometri uno per uno.
 
-Stato al 2026-09-19: `scopri` elenca WH52, WN32P, WS90 e i cinque WH51 sui due gateway; i cinque workspace esistono
-e costruiscono il vaso dalle misure (vasi tondi: 5,67 L, 407 cm², FC 55,8 mm, PWP 20,9 mm, soglia 34,9 per il
-rosmarino e 41,8 per il basilico; cassette: 8,72 L, 726 cm², FC 48,0 mm, PWP 18,0 mm, soglia 39,0 col prior
-universale). Segnaposto da chiudere al rinvaso: i canali delle sonde, l'altezza vera del substrato, le date. Nessuna
-ancora ancora.
+Stato al 2026-09-19, sera: `scopri` elenca WH52, WN32P, WS90, WH40 e i cinque WH51 sui due gateway; i cinque
+workspace esistono e costruiscono il vaso dalle misure e dal catalogo di The Pot (vasi tondi su
+`drenante-mediterranea`: 5,67 L, 407 cm², FC 56,5 mm, PWP 25,9 mm, soglia 44,2 per i rosmarini e 41,8 per il
+basilico; cassette sulla ricetta cocco-humus-carbone-pomice: 8,72 L, 726 cm², FC 75,0 mm, PWP 33,4 mm, soglia
+62,5). Dello strumento non manca niente di quanto era in lista. Segnaposto da chiudere al rinvaso: i canali delle
+sonde, l'altezza vera del substrato, le date; e tre righe di config che sono ancora ipotesi — `wind_height_m` 2,0,
+`rainfall_exposure` 1,0, `shelter_level` STANDARD — che su un balcone con un balcone sopra non sono neutre.
+Nessuna ancora ancora.
 
 Criterio di uscita: `ancora` registrata alla prima irrigazione a drenaggio su ciascun vaso; `osserva` che produce una
 discrepanza per almeno un giorno; `confronta` che stampa previsto contro osservato; lo scarto fra le θ dei due
