@@ -446,6 +446,18 @@ class TestSpeciesChemistryModel(unittest.TestCase):
                 ph_optimal_max=15.0,
             )
 
+    def test_ec_stress_slope_is_optional_and_bounded(self):
+        # A4 (2026-09-20): la pendenza salina della specie. None e' il
+        # default (vale la globale); dichiarata, sta in (0, 100].
+        s = self._make_basic_species()
+        self.assertIsNone(s.ec_stress_slope_pct_per_mscm)
+        s = self._make_basic_species(ec_stress_slope_pct_per_mscm=9.0)
+        self.assertEqual(s.ec_stress_slope_pct_per_mscm, 9.0)
+        for storta in (0.0, -5.0, 150.0):
+            with self.subTest(pendenza=storta):
+                with self.assertRaises(ValueError):
+                    self._make_basic_species(ec_stress_slope_pct_per_mscm=storta)
+
     def test_acidophilic_species_accepted(self):
         # Mirtillo: pH acido 4.5-5.5 è accettato (sotto neutro ma sopra 0).
         s = self._make_basic_species(

@@ -169,9 +169,18 @@ KN_MIN_DEFAULT = 0.3
 # dalla parte delle specie sensibili: le ornamentali in vaso lo sono
 # più delle ortive di pieno campo della tabella. Con KN_MIN_DEFAULT il
 # pavimento si tocca a (1 − 0.3) × 100 / 12 ≈ 5.8 mS/cm sopra il
-# massimo. Come per `kn_min`, la calibrazione potrà aggiungere una
-# pendenza per specie (o per gruppo botanico in The Pot: orchidee,
-# conifere e bonsai sensibili verso 25, ortive tolleranti verso 8).
+# massimo.
+#
+# Dal 2026-09-20 (A4) è il ripiego: la specie può portare la sua
+# pendenza (`Species.ec_stress_slope_pct_per_mscm`) e il catalogo di
+# The Pot la dà per gruppo con la fonte accanto — ortive 9 (mediana
+# della tab. 23 tradotta: pomodoro 6.3, lattuga 8.7, fagiolo 11),
+# agrumi 11 (arancio e pompelmo 10.7), mediterranee 5 (rosmarino,
+# oleandro e bougainvillea «tolleranti» in Bernstein, Francois & Clark
+# 1972) — mentre i gruppi senza una fonte restano a 12. Letta come
+# classe di Maas-Hoffman, in queste unità: sensibili sopra 10,
+# moderatamente sensibili 5-10, moderatamente tolleranti 4-5,
+# tolleranti sotto 4.
 EC_STRESS_SLOPE_PCT_PER_MSCM = 12.0
 
 
@@ -423,12 +432,13 @@ def nutritional_factor(
     "inerte" coerente con la filosofia di disabilitazione
     dell'estensione.
 
-    La rampa parte da `ec_optimal_max_mscm` e perde
-    `EC_STRESS_SLOPE_PCT_PER_MSCM` per cento di ET per ogni mS/cm oltre
-    (FAO-56 eq. 83, vedi la costante per la derivazione); la
-    semi-ampiezza passata a `salinity_factor` è la distanza alla quale
-    quella pendenza tocca `KN_MIN_DEFAULT`. Il minimo del range non
-    entra nel calcolo.
+    La rampa parte da `ec_optimal_max_mscm` e perde per ogni mS/cm
+    oltre la pendenza della specie (`ec_stress_slope_pct_per_mscm`,
+    A4) o, se la specie non la dichiara,
+    `EC_STRESS_SLOPE_PCT_PER_MSCM` per cento di ET (FAO-56 eq. 83,
+    vedi la costante per la derivazione); la semi-ampiezza passata a
+    `salinity_factor` è la distanza alla quale quella pendenza tocca
+    `KN_MIN_DEFAULT`. Il minimo del range non entra nel calcolo.
 
     Il pH del substrato non entra (A3, 2026-09-20): agisce sulla
     nutrizione e sulla crescita in settimane, non sulla traspirazione
@@ -504,13 +514,14 @@ def nutritional_factor(
         )
 
     # Fattore EC: unilaterale, sopra il massimo del range. La rampa
-    # perde EC_STRESS_SLOPE_PCT_PER_MSCM per cento per mS/cm; la
-    # semi-ampiezza è la distanza alla quale tocca il pavimento. Il
-    # minimo del range non entra: sotto il massimo il fattore vale 1.0
-    # e la carenza è affare delle allerte, non dell'ET.
-    ec_half_width = (
-        (1.0 - KN_MIN_DEFAULT) * 100.0 / EC_STRESS_SLOPE_PCT_PER_MSCM
-    )
+    # perde la pendenza della specie — o quella globale — per cento per
+    # mS/cm; la semi-ampiezza è la distanza alla quale tocca il
+    # pavimento. Il minimo del range non entra: sotto il massimo il
+    # fattore vale 1.0 e la carenza è affare delle allerte, non dell'ET.
+    slope = species.ec_stress_slope_pct_per_mscm
+    if slope is None:
+        slope = EC_STRESS_SLOPE_PCT_PER_MSCM
+    ec_half_width = (1.0 - KN_MIN_DEFAULT) * 100.0 / slope
     return salinity_factor(
         current=ec_substrate_mscm,
         optimal_max=species.ec_optimal_max_mscm,

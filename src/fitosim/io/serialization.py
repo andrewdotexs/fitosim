@@ -224,6 +224,8 @@ def _species_to_dict(species: Species) -> Dict[str, Any]:
         "gdd_to_mid": species.gdd_to_mid,
         "gdd_to_late": species.gdd_to_late,
         "t_cap_c": species.t_cap_c,
+        # A4 (2026-09-20): la pendenza salina della specie.
+        "ec_stress_slope_pct_per_mscm": species.ec_stress_slope_pct_per_mscm,
     }
 
 
@@ -256,6 +258,7 @@ def _dict_to_species(data: Dict[str, Any]) -> Species:
         "depletion_fraction", "notes",
         "stomatal_resistance_s_m", "crop_height_m",
         "t_base_c", "gdd_to_mid", "gdd_to_late", "t_cap_c",
+        "ec_stress_slope_pct_per_mscm",
     ):
         if data.get(field_name) is not None:
             kwargs[field_name] = data[field_name]

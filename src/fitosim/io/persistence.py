@@ -129,7 +129,11 @@ from fitosim.science.substrate import (
 # sulla tabella substrates, la densità apparente con cui il vaso pesa
 # il tampone del pH. NULL vuol dire «non dichiarata» e vale la densità
 # fissa di sempre.
-SCHEMA_VERSION = 7
+#
+# Versione 8 (A4, 2026-09-20): la colonna facoltativa
+# ec_stress_slope_pct_per_mscm sulla tabella species, la pendenza della
+# rampa salina del Kn. NULL vuol dire «la globale», 12 % per mS/cm.
+SCHEMA_VERSION = 8
 
 
 # =======================================================================
@@ -183,7 +187,9 @@ SCHEMA_STATEMENTS: List[str] = [
         t_base_c                 REAL,
         gdd_to_mid               REAL,
         gdd_to_late              REAL,
-        t_cap_c                  REAL
+        t_cap_c                  REAL,
+        -- A4 (v8): la pendenza salina della specie, NULL = la globale.
+        ec_stress_slope_pct_per_mscm REAL
     )
     """,
 
@@ -405,6 +411,7 @@ def _species_phenology_params(species: Species) -> tuple:
         species.gdd_to_mid,
         species.gdd_to_late,
         species.t_cap_c,
+        species.ec_stress_slope_pct_per_mscm,
     )
 
 
@@ -423,6 +430,7 @@ def _species_extra_kwargs(row: sqlite3.Row) -> dict:
     for field_name in (
         "depletion_fraction", "stomatal_resistance_s_m", "crop_height_m",
         "notes", "t_base_c", "gdd_to_mid", "gdd_to_late", "t_cap_c",
+        "ec_stress_slope_pct_per_mscm",
     ):
         if field_name in keys and row[field_name] is not None:
             kwargs[field_name] = row[field_name]
@@ -683,6 +691,9 @@ class GardenPersistence:
             if current < 7:
                 self._migrate_v6_to_v7()
                 current = 7
+            if current < 8:
+                self._migrate_v7_to_v8()
+                current = 8
             # Aggiorna la versione registrata.
             self._conn.execute(
                 "INSERT INTO schema_metadata (version) VALUES (?)",
@@ -823,6 +834,22 @@ class GardenPersistence:
                     "ALTER TABLE substrates ADD COLUMN bulk_density_kg_l REAL"
                 )
 
+    def _migrate_v7_to_v8(self) -> None:
+        """
+        Migrazione dalla versione 7 alla versione 8.
+
+        Cambiamento (A4, 2026-09-20): la colonna facoltativa
+        `ec_stress_slope_pct_per_mscm` sulla tabella species, la
+        pendenza della rampa salina del Kn. Le specie già salvate
+        restano NULL — «la pendenza globale» — e il Kn si comporta come
+        prima. Idempotente e difensiva come le precedenti.
+        """
+        if self._table_exists("species"):
+            if not self._column_exists("species", "ec_stress_slope_pct_per_mscm"):
+                self._conn.execute(
+                    "ALTER TABLE species ADD COLUMN ec_stress_slope_pct_per_mscm REAL"
+                )
+
     def _migrate_v4_to_v5(self) -> None:
         """
         Migrazione dalla versione 4 alla versione 5.
@@ -943,7 +970,7 @@ class GardenPersistence:
                         phenology_calendar_json = ?,
                         annual_growth_stages_json = ?,
                         t_base_c = ?, gdd_to_mid = ?, gdd_to_late = ?,
-                        t_cap_c = ?
+                        t_cap_c = ?, ec_stress_slope_pct_per_mscm = ?
                     WHERE id = ?
                     """,
                     (
@@ -973,9 +1000,10 @@ class GardenPersistence:
                     stomatal_resistance_s_m, crop_height_m, notes,
                     phenology_anchor,
                     phenology_calendar_json, annual_growth_stages_json,
-                    t_base_c, gdd_to_mid, gdd_to_late, t_cap_c
+                    t_base_c, gdd_to_mid, gdd_to_late, t_cap_c,
+                    ec_stress_slope_pct_per_mscm
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     species.common_name, species.scientific_name,

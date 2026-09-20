@@ -207,6 +207,17 @@ class Species:
         non al Kn: dal 2026-09-20 (A3) il pH non riduce l'ET — agisce
         sulla nutrizione in settimane, e nel vaso è uno stato
         modellato, non misurato.
+    ec_stress_slope_pct_per_mscm : float | None, opzionale
+        Pendenza della rampa di stress salino della specie: percentuale
+        di ET persa per ogni mS/cm di EC della soluzione del substrato
+        sopra `ec_optimal_max_mscm` (A4, 2026-09-20). È il `b / Ky` di
+        FAO-56 eq. 83, con `b` dalla tab. 23 (Maas-Hoffman) e la
+        divisione per 1.5 fra estratto saturo e PourThru: pomodoro
+        6.3, lattuga 8.7, arancio 10.7, pesco 14, fragola 22. Quando è
+        None vale `nutrition.EC_STRESS_SLOPE_PCT_PER_MSCM` (12, il
+        default prudente). Il catalogo di The Pot lo dà per gruppo con
+        la fonte accanto — ortive 9, agrumi 11, mediterranee 5 — e la
+        scheda lo scavalca quando dichiara il suo.
 
     Vincoli
     -------
@@ -267,6 +278,9 @@ class Species:
     ec_optimal_max_mscm: float | None = None
     ph_optimal_min: float | None = None
     ph_optimal_max: float | None = None
+    # Pendenza della rampa salina della specie, % di ET per mS/cm sopra
+    # il massimo (A4). None → la costante globale di `nutrition`.
+    ec_stress_slope_pct_per_mscm: float | None = None
     # ----- Parametri fisiologici per Penman-Monteith fisico (tappa 5 sotto-tappa C) -----
     # Questi due parametri caratterizzano la specie ai fini del modello
     # fisico di Penman-Monteith, che applica direttamente l'equazione
@@ -426,6 +440,17 @@ class Species:
                     f"Specie '{self.common_name}': il range ottimale di pH "
                     f"deve soddisfare 0 < min ({self.ph_optimal_min}) "
                     f"< max ({self.ph_optimal_max}) ≤ 14."
+                )
+        # La pendenza salina: positiva, e sotto i 100 % per mS/cm, che
+        # vorrebbe dire ET zero a un solo mS/cm sopra il massimo — la
+        # fragola, la più sensibile di FAO-56 tab. 23, sta a 22.
+        if self.ec_stress_slope_pct_per_mscm is not None:
+            if not 0.0 < self.ec_stress_slope_pct_per_mscm <= 100.0:
+                raise ValueError(
+                    f"Specie '{self.common_name}': ec_stress_slope_pct_per_mscm="
+                    f"{self.ec_stress_slope_pct_per_mscm} deve stare in "
+                    f"(0, 100]: è la percentuale di ET persa per mS/cm sopra "
+                    f"il massimo (FAO-56 tab. 23: da 3.6 a 33 per dS/m di ECe)."
                 )
 
         # Coerenza dell'ancoraggio fenologico: una perenne senza

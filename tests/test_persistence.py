@@ -1534,6 +1534,88 @@ class TestSpeciesConfigRoundTrip(unittest.TestCase):
         self.assertEqual(loaded.gdd_to_mid, 240.0)
         self.assertEqual(loaded.gdd_to_late, 840.0)
 
+    def test_ec_stress_slope_survives(self):
+        # A4 (2026-09-20): la pendenza salina della specie, e None resta
+        # None (vale la globale).
+        original = Species(
+            common_name="ortiva", scientific_name="Testus hortensis",
+            kc_initial=0.6, kc_mid=1.05, kc_late=0.85,
+            ec_stress_slope_pct_per_mscm=9.0,
+        )
+        self.assertEqual(self._round_trip(original).ec_stress_slope_pct_per_mscm, 9.0)
+        muta = Species(
+            common_name="muta", scientific_name="Testus tacitus",
+            kc_initial=0.6, kc_mid=1.05, kc_late=0.85,
+        )
+        self.assertIsNone(self._round_trip(muta).ec_stress_slope_pct_per_mscm)
+
+    def test_v7_database_migrates_to_v8(self):
+        # Un database v7 (species senza la colonna) migra, e le sue specie
+        # restano NULL: la pendenza globale, come si comportavano.
+        import os
+        import sqlite3
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            conn = sqlite3.connect(tmp_path)
+            conn.execute("""
+                CREATE TABLE schema_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version INTEGER NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE species (
+                    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name                     TEXT NOT NULL UNIQUE,
+                    scientific_name          TEXT NOT NULL,
+                    kc_initial               REAL NOT NULL,
+                    kc_mid                   REAL NOT NULL,
+                    kc_late                  REAL NOT NULL,
+                    kcb_initial              REAL,
+                    kcb_mid                  REAL,
+                    kcb_late                 REAL,
+                    initial_stage_days       INTEGER NOT NULL,
+                    mid_stage_days           INTEGER NOT NULL,
+                    ec_optimal_min_mscm      REAL,
+                    ec_optimal_max_mscm      REAL,
+                    ph_optimal_min           REAL,
+                    ph_optimal_max           REAL,
+                    depletion_fraction       REAL,
+                    stomatal_resistance_s_m  REAL,
+                    crop_height_m            REAL,
+                    notes                    TEXT,
+                    phenology_anchor         TEXT,
+                    phenology_calendar_json  TEXT,
+                    annual_growth_stages_json TEXT,
+                    t_base_c                 REAL,
+                    gdd_to_mid               REAL,
+                    gdd_to_late              REAL,
+                    t_cap_c                  REAL
+                )
+            """)
+            conn.execute(
+                "INSERT INTO species (name, scientific_name, kc_initial, kc_mid, "
+                "kc_late, initial_stage_days, mid_stage_days) "
+                "VALUES ('vecchia', 'Testus vetus', 0.5, 1.0, 0.7, 30, 60)"
+            )
+            conn.execute("INSERT INTO schema_metadata (version) VALUES (7)")
+            conn.commit()
+            conn.close()
+
+            with GardenPersistence(tmp_path) as p:
+                cursor = p._conn.execute("PRAGMA table_info(species)")
+                cols = [r["name"] for r in cursor.fetchall()]
+                self.assertIn("ec_stress_slope_pct_per_mscm", cols)
+                self.assertIsNone(p.get_species("vecchia").ec_stress_slope_pct_per_mscm)
+                p._migrate_v7_to_v8()   # idempotente
+                cursor = p._conn.execute("PRAGMA table_info(species)")
+                cols = [r["name"] for r in cursor.fetchall()]
+                self.assertEqual(cols.count("ec_stress_slope_pct_per_mscm"), 1)
+        finally:
+            os.unlink(tmp_path)
+
     def test_perennial_stays_perennial(self):
         # Il caso peggiore: senza la persistenza dell'ancoraggio, una
         # perenne ricaricata tornava ANNUAL e restava inchiodata in

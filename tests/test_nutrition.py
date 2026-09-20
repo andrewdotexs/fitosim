@@ -413,6 +413,49 @@ class TestNutritionalFactor(unittest.TestCase):
         self.assertEqual(PH_TOLERANCE, 0.3)
         self.assertIs(banda_delle_allerte, PH_TOLERANCE)
 
+    # ----- A4 (2026-09-20): la pendenza della specie -----
+
+    def test_species_slope_overrides_the_global_one(self):
+        # Una mediterranea a 5 %/(mS/cm) (Bernstein et al. 1972: tolleranti)
+        # e un'ortiva a 9 (FAO-56 tab. 23) perdono meno del 12 globale a
+        # parita' di eccesso: a +1 mS/cm, 0.95 e 0.91 contro 0.88.
+        base = _make_species_with_chemistry()   # max 1.6, pendenza globale
+        from dataclasses import replace
+        mediterranea = replace(base, ec_stress_slope_pct_per_mscm=5.0)
+        ortiva = replace(base, ec_stress_slope_pct_per_mscm=9.0)
+        self.assertAlmostEqual(
+            nutritional_factor(species=base, ec_substrate_mscm=2.6), 0.88, places=9,
+        )
+        self.assertAlmostEqual(
+            nutritional_factor(species=mediterranea, ec_substrate_mscm=2.6), 0.95, places=9,
+        )
+        self.assertAlmostEqual(
+            nutritional_factor(species=ortiva, ec_substrate_mscm=2.6), 0.91, places=9,
+        )
+        # Il pavimento resta 0.3, raggiunto piu' lontano: a +14 mS/cm per
+        # la mediterranea invece che a +5.8.
+        self.assertAlmostEqual(
+            nutritional_factor(species=mediterranea, ec_substrate_mscm=1.6 + 14.0),
+            KN_MIN_DEFAULT, places=9,
+        )
+        self.assertGreater(
+            nutritional_factor(species=mediterranea, ec_substrate_mscm=1.6 + 5.8),
+            KN_MIN_DEFAULT,
+        )
+
+    def test_species_slope_none_means_the_global_constant(self):
+        base = _make_species_with_chemistry()
+        self.assertIsNone(base.ec_stress_slope_pct_per_mscm)
+        for ec in [1.0, 2.0, 4.0]:
+            with self.subTest(ec=ec):
+                expected = max(
+                    KN_MIN_DEFAULT,
+                    1.0 - EC_STRESS_SLOPE_PCT_PER_MSCM / 100.0 * max(0.0, ec - 1.6),
+                )
+                self.assertAlmostEqual(
+                    nutritional_factor(species=base, ec_substrate_mscm=ec), expected, places=9,
+                )
+
     def test_floor_is_kn_min_default(self):
         # Stress salino massimo: Kn = KN_MIN_DEFAULT = 0.3, e non piu'
         # 0.3 x 0.8 = 0.24 con il pH.

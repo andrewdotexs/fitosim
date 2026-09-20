@@ -692,6 +692,25 @@ class TestRoundTripFidelity(unittest.TestCase):
         self.assertIsNone(pot.gdd_accumulated)
         self.assertFalse(pot.species.supports_gdd)
 
+    def test_ec_stress_slope_round_trip(self):
+        # A4 (2026-09-20): la pendenza salina della specie sopravvive al
+        # giro, e un JSON senza il campo si rilegge con None (la globale).
+        from dataclasses import replace
+
+        from fitosim.domain.species import BASIL
+        ortiva = replace(BASIL, ec_stress_slope_pct_per_mscm=9.0)
+        loaded = self._round_trip(self._garden_with(ortiva))
+        self.assertEqual(
+            loaded.get_pot("vaso-1").species.ec_stress_slope_pct_per_mscm, 9.0,
+        )
+        payload = json.loads(export_garden_json(self._garden_with(BASIL)))
+        for sp in payload["catalog"]["species"]:
+            sp.pop("ec_stress_slope_pct_per_mscm", None)
+        loaded = import_garden_json(json.dumps(payload))
+        self.assertIsNone(
+            loaded.get_pot("vaso-1").species.ec_stress_slope_pct_per_mscm,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

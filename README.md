@@ -341,7 +341,7 @@ fitosim/
 │   │   ├── lysimeter.py               # pesata -> Kc (ground truth)
 │   │   └── calibration_resolution.py  # precedenza tra fonti
 │   └── io/                 # adapter di acquisizione e persistenza
-│       ├── persistence.py  # SQLite, schema v7
+│       ├── persistence.py  # SQLite, schema v8
 │       ├── serialization.py # JSON formato v3
 │       └── sensors/
 │           ├── protocols.py    # SoilSensor, EnvironmentSensor (Protocol)
