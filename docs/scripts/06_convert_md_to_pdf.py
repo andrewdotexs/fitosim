@@ -46,6 +46,8 @@ OUT_DIR = DOCS / "pdf"
 DEFAULT_TARGETS = [
     "fitosim_user_manual.md",
     "fitosim_calibration_manual.md",
+    "calibrazione_con_WH5X.md",
+    "fitosim_canopy_design.md",
     "fitosim_feedback_layer_design.md",
     "fitosim_root_modeling_design.md",
     "fitosim_status_report.md",

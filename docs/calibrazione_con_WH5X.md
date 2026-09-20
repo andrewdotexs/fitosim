@@ -318,29 +318,12 @@ si misura invece di stabilirla: lo scarto tra le θ osservate dei due rosmarini 
 È il rumore di due vasi uguali letti da due sonde uguali, e un RMSE previsto-osservato più basso di quello non dice
 niente sul modello.
 
-## Due correzioni al manuale di calibrazione
+## Il manuale di calibrazione è quello in `docs/`
 
-Entrambe stanno in esempi di codice da copiare, quindi vanno sapute prima di partire. Sono emerse verificando per via 
-programmatica ogni nome citato in questo documento contro il sorgente.
-
-**Capitolo 4.** Il manuale mostra `calibrate_substrate(theta_observations=…, sampling_interval_hours=…)`. 
-La firma reale è
-
-```
-calibrate_substrate(theta_series: list[float], name="calibrated", min_distance=…, min_prominence=…)
-```
-
-con **un valore per giorno**, già aggregato come descritto sopra. L'aggregazione dal campionamento del sensore al 
-valore giornaliero è a carico del chiamante, non della funzione.
-
-**Capitolo 2.** Il manuale mostra `giardino.channel_id_map = {"soil_ch1": "phalaenopsis-1-finestra", …}`. L'attributo 
-non esiste, e la direzione è invertita: la mappa reale va da **label a canale**, e si scrive con il metodo
-
-```
-giardino.set_channel_id("phalaenopsis-1-finestra", "soil_ch1")
-```
-
-La vista di sola lettura è `giardino.channel_mapping`.
+Il manuale in `docs/fitosim_calibration_manual.md` è allineato al codice (fascia 3, luglio 2026; A2 e A3 il 20 settembre).
+Le due correzioni che questa sezione elencava il 17 settembre — la firma di `calibrate_substrate` e la mappa dei
+canali del giardino — riguardavano il `.docx` di maggio, che dal 20 settembre non è più nel repository: i sorgenti
+della documentazione sono i `.md`, e i PDF si rigenerano da quelli.
 
 ## Roadmap dello strumento
 

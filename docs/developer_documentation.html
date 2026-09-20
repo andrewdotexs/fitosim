@@ -420,11 +420,11 @@
     <p class="subtitle">Motore scientifico Python per la simulazione FAO-56 del bilancio idrico e chimico di piante in vaso.</p>
 
     <div class="badges">
-      <span class="badge">v0.1.0</span>
+      <span class="badge">v0.31.0</span>
       <span class="badge neutral">Python ≥ 3.10</span>
       <span class="badge info">stdlib only (core)</span>
-      <span class="badge">1366 test verdi</span>
-      <span class="badge info">layer feedback fase A</span>
+      <span class="badge">1424 test verdi</span>
+      <span class="badge info">layer feedback fase A · calibrazione WH52</span>
       <span class="badge neutral">MIT License</span>
     </div>
 
@@ -433,7 +433,7 @@
       contiene la struttura del codice, i contratti pubblici dei tre layer
       architetturali (<code>science</code>, <code>domain</code>, <code>io</code>),
       le convenzioni di stile, e le istruzioni per testare e contribuire. Per
-      l'uso da utente finale, fare riferimento a <code>docs/fitosim_user_manual.docx</code>.
+      l'uso da utente finale, fare riferimento a <code>docs/fitosim_user_manual.md</code>.
     </p>
 
     <!-- =================== 1. PANORAMICA =================== -->
@@ -1436,7 +1436,7 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     </div>
 
     <div class="callout note">
-      <strong>Schema v5 — persistenza della calibrazione (fase A)</strong>
+      <strong>Schema v5 — persistenza della calibrazione (fase A)</strong> (oggi lo schema è v8: v6 la chioma, v7 la densità del substrato, v8 la pendenza salina della specie; ogni passo con la sua migrazione idempotente)<br>
       Perché una calibrazione che non sopravvive a un reload non esiste, la
       migrazione v4→v5 ha aggiunto <code>pot_states.gdd_accumulated</code>
       (nullable per design: <code>NULL</code> = non tracciato) e <strong>11
@@ -1728,8 +1728,9 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
     <h2 id="testing">7. Testing</h2>
 
     <p>
-      <code>fitosim</code> ha <strong>1366 test verdi</strong> (428 sub-test)
-      che girano in pochi secondi su laptop standard. La suite è la rete di
+      <code>fitosim</code> ha <strong>1424 test verdi</strong> (500 sub-test,
+      1430 con la demo end-to-end) che girano in circa nove secondi su laptop
+      standard. La suite è la rete di
       sicurezza primaria del refactoring.
     </p>
 
@@ -1882,8 +1883,8 @@ python -m pytest --cov=fitosim --cov-report=term-missing</code></pre>
     </table>
 
     <footer>
-      Generato per <code>fitosim</code> v0.1.0 · Documentazione tecnica per sviluppatori.<br>
-      Per documenti complementari vedere <code>docs/fitosim_user_manual.docx</code> (manuale utente), <code>docs/fitosim_status_report.docx</code> (status report), <code>docs/uml/</code> (diagrammi).
+      Generato per <code>fitosim</code> v0.31.0 · Documentazione tecnica per sviluppatori.<br>
+      Per documenti complementari vedere <code>docs/fitosim_user_manual.md</code> (manuale utente), <code>docs/fitosim_calibration_manual.md</code> e <code>docs/calibrazione_con_WH5X.md</code> (calibrazione), <code>docs/fitosim_status_report.md</code> (status report), <code>docs/uml/</code> (diagrammi); i PDF in <code>docs/pdf/</code>.
     </footer>
 
   </main>

@@ -23,6 +23,7 @@ il giardiniere.
 
 ## Stato del progetto
 
+- **Versione**: 0.31.0 (`pyproject.toml`, dal 2026-09-20; prima la serie `v0_NN` nei commit, fino a `v0_30`)
 - **1424 test verdi** (500 sub-test) nel core; la demo end-to-end usa matplotlib
 - **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
 - **Linguaggio**: Python ≥ 3.10
@@ -31,8 +32,8 @@ il giardiniere.
 - **Formato JSON di trasporto**: v3
 - **Fascia 1**: completa (modello idrico FAO-56 esteso)
 - **Fascia 2**: completa (5 tappe: sensori, chimica, architettura, Penman-Monteith, indoor)
-- **Fascia 3**: **in corso** — la fase A del *layer di feedback* (calibrazione multi-fonte) è implementata in fitosim
-- **Prossimo passo**: gerarchia di aggregazione (in The Pot) e calibrazione contro i dati reali del balcone
+- **Fascia 3**: **in corso** — la fase A del *layer di feedback* (calibrazione multi-fonte) è in fitosim; il modello è stato rivisto numero per numero il 18–20 settembre 2026 (Kn, CEC e densità, `p`, pendenza salina, dormienza), ogni costante con la fonte o dichiarata stima
+- **Prossimo passo**: la calibrazione sul sensore WH52, cinque vasi sul balcone dalla settimana del 28 settembre 2026 (`docs/calibrazione_con_WH5X.md`; lo strumento vive in The Pot)
 
 ```
 # Core (zero dipendenze esterne):
@@ -388,11 +389,16 @@ fitosim/
 │   ├── tappa5_B_selettore_demo.py
 │   ├── tappa5_C_garden_demo.py
 │   └── tappa5_E_appartamento_demo.py  # demo end-to-end appartamento indoor
-├── docs/
+├── docs/                        # i sorgenti sono i .md; i PDF in docs/pdf/
 │   ├── developer_documentation.html # doc tecnica per sviluppatori
-│   ├── fitosim_user_manual.docx     # manuale utente (anche .md/.pdf)
-│   ├── fitosim_status_report.docx   # report di status (anche .md/.pdf)
+│   ├── fitosim_user_manual.md       # manuale utente
+│   ├── fitosim_calibration_manual.md # manuale di calibrazione (fascia 3)
+│   ├── calibrazione_con_WH5X.md     # procedura e roadmap della calibrazione sul WH52
+│   ├── fitosim_status_report.md     # status report (aggiornamento in testa)
+│   ├── fitosim_canopy_design.md     # la chioma nel modello (H.1-c)
 │   ├── fitosim_feedback_layer_design.md  # design layer di feedback (fascia 3)
+│   ├── fitosim_root_modeling_design.md   # il modello radicale (progettato, non fatto)
+│   ├── scripts/06_convert_md_to_pdf.py   # md -> PDF con Chromium
 │   └── uml/
 │       ├── fitosim_packages.dot     # sorgente diagramma package
 │       ├── fitosim_packages.png
@@ -500,29 +506,52 @@ Cinque fonti, più la regola che le compone:
 | Lisimetro | pesata del vaso | Kc di catalogo (ground truth) |
 | **Precedenza** | le proposte delle altre | risolve i conflitti (scope prima della reliability) |
 
-Restano da fare la **gerarchia di aggregazione** vaso → cluster → globale
-(che vive in The Pot, non in fitosim) e la calibrazione vera e propria contro
-i dati reali del balcone milanese, dove la stazione Ecowitt raccoglie da mesi.
-Lo scopo resta trasformare fitosim da "libreria genericamente plausibile" a
-"libreria calibrata per il TUO balcone milanese". Progetto completo del layer
-in [`docs/fitosim_feedback_layer_design.md`](docs/fitosim_feedback_layer_design.md).
+A settembre 2026 la fascia 3 ha preso la forma concreta: la **chioma
+misurata** nel Kc e in Penman-Monteith (`docs/fitosim_canopy_design.md`), il
+WH52 letto dall'API Ecowitt con le sue unità e i suoi due pluviometri, la
+**procedura di calibrazione sul WH52** (`docs/calibrazione_con_WH5X.md`) con
+il suo strumento a riga di comando in The Pot — cinque vasi, due coppie di
+gemelli e un contrasto — e la revisione del modello numero per numero (18–20
+settembre: il Kn solo per eccesso di sali e senza il pH, CEC e densità dal
+catalogo di The Pot, `p` come prior da misurare nel dry-down dei gemelli, la
+pendenza salina per specie e per gruppo, la dormienza come suolo nudo). Da
+lì, la calibrazione vera e propria: rinvasi e prima ancora nella settimana
+del 28 settembre, la gerarchia di aggregazione vaso → cluster → globale in
+The Pot, e con i primi dati la decisione sul terzo punto dell'acqua (−1500
+kPa) nei componenti. Lo scopo resta trasformare fitosim da "libreria
+genericamente plausibile" a "libreria calibrata per il TUO balcone
+milanese". Progetto completo del layer in
+[`docs/fitosim_feedback_layer_design.md`](docs/fitosim_feedback_layer_design.md).
 
 ## Documentazione
 
 La documentazione del progetto vive in `docs/` e copre tre livelli di
 approfondimento.
 
-**Manuale utente** (`docs/fitosim_user_manual.docx`): la guida completa di
-17 capitoli più tre appendici, scritta in italiano con stile narrativo. È
-il punto di riferimento per imparare a usare la libreria, dai concetti
-fondamentali (capitoli 1-3) alle capacità avanzate del singolo vaso
-(4-9), dal dashboard operativo del balcone (10-16) alle FAQ (17). Le
-appendici contengono le specie e i substrati dimostrativi (il catalogo
-ufficiale è in The Pot), e un glossario dei termini agronomici.
+I sorgenti sono i file `.md` di `docs/` (dal 15 maggio 2026; i `.docx` di
+maggio non ci sono più); i PDF in `docs/pdf/` si rigenerano con
+`docs/scripts/06_convert_md_to_pdf.py`.
 
-**Status report** (`docs/fitosim_status_report.docx`): il riassunto
-quantitativo dello stato di sviluppo, con metriche, roadmap e storico delle
-consegne. Aggiornato ad ogni chiusura di tappa.
+**Manuale utente** (`docs/fitosim_user_manual.md`): la guida completa di
+19 capitoli più tre appendici, scritta in italiano con stile narrativo. È
+il punto di riferimento per imparare a usare la libreria da sola, dai
+concetti fondamentali (capitoli 1-3) alle capacità avanzate del singolo
+vaso (4-9), dal dashboard operativo del balcone (10-16) al selettore di
+evapotraspirazione e ai vasi indoor (17-18) alle FAQ (19). Le appendici
+contengono le specie e i substrati dimostrativi (il catalogo ufficiale è in
+The Pot) e un glossario dei termini agronomici. Non racconta ancora la
+chioma, la fenologia delle perenni e il catalogo di The Pot: un capitolo da
+scrivere dopo la prima calibrazione.
+
+**Manuale di calibrazione** (`docs/fitosim_calibration_manual.md`): i
+quattro livelli — sonda, substrato, specie, modello chimico — e come si
+tarano; **la procedura sul WH52** (`docs/calibrazione_con_WH5X.md`) è il
+piano operativo dei cinque vasi, con la roadmap dello strumento.
+
+**Status report** (`docs/fitosim_status_report.md`): la fotografia di
+maggio 2026 alla chiusura della fascia 2, con in testa l'aggiornamento del
+20 settembre 2026 — cosa è cambiato, il quadro dei numeri, lo storico delle
+consegne fino a oggi.
 
 **Documentazione per sviluppatori** (`docs/developer_documentation.html`):
 la guida ai contratti pubblici dei tre layer, ai moduli e alle convenzioni

@@ -2,7 +2,82 @@ __fitosim — Status Report__
 
 *Stato dello sviluppo della libreria di simulazione FAO-56*
 
-*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2)*
+*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, l'aggiornamento del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+
+# Aggiornamento al 20 settembre 2026
+
+Da maggio fitosim è cambiato in tre modi, e questo capitolo li racconta prima che il documento torni allo stato di allora.
+
+**È diventato il motore di un'applicazione.** The Pot (`../the-pot`, FastAPI e Postgres) monta fitosim come dipendenza editabile e ne usa il modello — tutto `science/`, il `Pot`, la `Species`, `WeatherDay`, le regole delle allerte, il client Ecowitt grezzo — attraverso un adattatore (`services/fitosim_adapter.py`) che traduce le sue righe di database nelle dataclass di fitosim. Dal 19 settembre **il catalogo ufficiale di specie, substrati e componenti è quello di The Pot** (369 schede con le fonti; 17 substrati derivati da 28 componenti): le cinque specie e i cinque substrati definiti in fitosim sono fixture per i test e gli esempi. Quello che The Pot non importa — `Garden`, la persistenza SQLite, la serializzazione JSON, i `Protocol` dei sensori, il client Open-Meteo — è lo **strato standalone**: 8 400 righe, il 36 % dei sorgenti, congelato per iscritto nel README dal 20 settembre; lo usano lo strumento di calibrazione e gli esempi. Il pianificatore (`domain/scheduler.py`) è stato tolto lo stesso giorno perché nessuno lo chiamava.
+
+**La fascia 3 ha la sua matematica** (luglio, `v0_21`–`v0_30`): il layer di feedback come funzioni pure — Kc dalla pendenza di asciugamento del sensore, ancoraggio fenologico doppio (annuali dai giorni o dai gradi-giorno, perenni dal calendario stagionale), riduzione del Kc in dormienza, calibrazione comportamentale dalle irrigazioni e dai giudizi sulle allerte, lisimetro come ground truth, regola di precedenza fra fonti — con lo schema SQLite v5 e il formato JSON v3 che la persistono. A settembre la **chioma misurata** (H.1-c: copertura e altezza della pianta nel Kc e in Penman-Monteith, schema v6), il WH52 letto dalla sezione giusta dell'API Ecowitt con le unità metriche, la history con il vento e i due pluviometri del GW2000, e la **procedura di calibrazione sul WH52** (`docs/calibrazione_con_WH5X.md`) con il suo strumento a riga di comando, che vive in The Pot: cinque vasi — due rosmarini gemelli, un basilico, due cassette gemelle di lattuga — pronti a partire la settimana del 28 settembre.
+
+**Il modello è stato rivisto numero per numero** (18–20 settembre), con la regola che ogni costante deve avere una fonte o essere dichiarata come stima da tarare:
+
+- il coefficiente nutrizionale Kn penalizza solo l'eccesso di sali, con la forma e la pendenza di FAO-56 eq. 83 (12 % di ET per mS/cm sopra il massimo; per gruppo in The Pot: ortive 9, agrumi 11, mediterranee 5, dalla tab. 23), applicato al Kcb nel dual-Kc; **il pH non entra più nel Kn** — agisce sulla nutrizione in settimane, non sulla traspirazione del giorno, e nel vaso è uno stato stimato — resta un'allerta;
+- la CEC e la densità dei substrati vengono dai componenti del catalogo, con la fonte, e il mix pesa la CEC sulla massa; il vaso pesa il tampone del pH con la sua densità vera (`Substrate.bulk_density_kg_l`, schema v7) invece di 0,4 kg/L per tutti;
+- la frazione di deplezione `p` resta il prior di FAO-56, letto per quello che vale sulla riserva a −10 kPa dei substrati (un setpoint a 2–4 kPa), e si misurerà nel dry-down dei vasi gemelli; intanto `calibrate_kc` inverte il Kc sui soli giorni senza stress, perché il Ks dell'inversione dipende da `p`;
+- la dormienza è il Kc del suolo nudo (0,20, il `Kc min` di FAO-56) e il riposo è il Kc dello stadio: via i due fattori 0,25 e 0,50 che non avevano una fonte; i sempreverdi di The Pot (mediterranee, conifere) riposano invece di dormire.
+
+Le decisioni, con i numeri misurati sul catalogo e sui test prima di cambiare, sono nei messaggi di commit del 20 settembre (A1–A5) e nei commenti dei moduli.
+
+__Il quadro al 20 settembre 2026__
+
+__Metrica__
+
+__Valore__
+
+__Note__
+
+Test verdi nel core
+
+1424
+
+500 sub-test; 1430 con la demo end-to-end (matplotlib); circa 9 secondi
+
+Righe di sorgente
+
+22 850
+
+science 8 230 (16 moduli), domain 6 110 (7), io 5 060 (4) \+ io/sensors 3 460 (8)
+
+Strato standalone
+
+8 400 righe
+
+garden, persistence, serialization, scheduling, openmeteo, io/sensors: congelato, 440 test
+
+Schema SQLite
+
+v8
+
+v5 fenologia e GDD (luglio), v6 chioma, v7 densità del substrato, v8 pendenza salina della specie
+
+Formato JSON
+
+v3
+
+esportazione fedele del giardino (luglio)
+
+Versione
+
+0.31.0
+
+`pyproject.toml`; continua la serie dei commit `v0_NN`, fermata a `v0_30` il 22 luglio
+
+Esempi
+
+29
+
+`scheduler_demo.py` tolto con il pianificatore
+
+Catalogo
+
+The Pot
+
+369 specie, 17 substrati, 28 componenti, con le fonti; in fitosim 5 \+ 5 \+ 9 fixture
+
+**I prossimi passi** sono, nell'ordine: la calibrazione sul WH52 (fase 0 dello strumento completa; rinvasi e prima ancora nella settimana del 28 settembre; da metà ottobre il dry-down dei gemelli per `p`), lo spostamento dello strumento sui dispositivi e sui modelli di The Pot (fasi 1–2), e con i primi dati la decisione sul terzo punto dell'acqua a −1500 kPa nei componenti del catalogo. Il lisimetro (`the-pot-lisimetro`) è rimandato perché costoso, non abbandonato: la sua stima di Kc entrerà nella regola di precedenza sopra la pendenza del sensore.
 
 # Executive summary
 
@@ -420,6 +495,38 @@ v0\_19\_6 (tag git)
 5 E
 
 Demo end-to-end appartamento invernale con quattro grafici PNG di analisi
+
+v0\_20 – v0\_20\_1 (15 maggio)
+
+sensori
+
+Spec sensori v1 (`Measurement` canonico); `shelter_level` sul vaso
+
+v0\_21 – v0\_30 (18–22 luglio)
+
+fascia 3, fase A
+
+Kc dalla pendenza del sensore; ancoraggio fenologico doppio e vocabolario botanico; dormienza; gradi-giorno; schema v5; JSON v3; calibrazione comportamentale; soglia dai giudizi; lisimetro; precedenza tra fonti
+
+5 settembre
+
+chioma (H.1-c)
+
+Copertura e altezza della pianta nel Kc e in Penman-Monteith; schema v6
+
+11–19 settembre
+
+Ecowitt e The Pot
+
+WH52 nella sua sezione con le unità metriche; history con il vento; i due pluviometri; il catalogo ufficiale è quello di The Pot; procedura e strumento di calibrazione sul WH52
+
+18–20 settembre
+
+modello
+
+Kn solo per eccesso di sali (eq. 83) e pH fuori dal Kn; CEC e densità dal catalogo (v7); `p` come prior e Kc senza stress; pendenza salina per specie (v8); dormienza = suolo nudo; via lo scheduler; versione 0.31.0
+
+Da settembre le consegne non hanno più un numero nel titolo del commit: la versione si alza in `pyproject.toml`, e il repository è condiviso con The Pot, che monta fitosim come dipendenza editabile.
 
 I tag git della tappa 5 corrispondono alle sotto-tappe progressive: ognuno aggiunge capacità senza rompere quelle precedenti, esattamente come avveniva con i pacchetti incrementali della tappa 4. Per integrare l’ultimo stato del codice nel repository, basta fare git checkout v0\_19\_6 (o checkout di main se il main è stato aggiornato). I quattro PNG prodotti dalla demo della sotto-tappa E vivono in examples/ (tappa5\_E\_andamento\_idrico.png, tappa5\_E\_bilancio\_per\_ambiente.png, tappa5\_E\_heatmap\_et.png, tappa5\_E\_metodi\_et.png) e mostrano in modo immediato il tipo di analisi che il modello indoor permette.
 
