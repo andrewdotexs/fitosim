@@ -2076,9 +2076,9 @@ class TestPotNutritionIntegration(unittest.TestCase):
         self.assertLess(et_stressed, et_optimal)
 
     def test_extreme_chemistry_stress_floor_effect(self):
-        # Stress massimo simultaneo (EC e pH entrambi molto fuori):
-        # Kn = KN_MIN_DEFAULT × PH_KN_MIN = 0.3 × 0.8 = 0.24, ET ridotta
-        # drasticamente.
+        # Stress salino massimo: Kn = KN_MIN_DEFAULT = 0.3, ET ridotta
+        # drasticamente. Il pH, per quanto fuori, non entra (A3,
+        # 2026-09-20): a 11 il vaso e' un'allerta, non un'ET piu' bassa.
         chem_species = self._make_basil_with_chemistry()
 
         pot_optimal = self._make_pot(chem_species)
@@ -2104,8 +2104,8 @@ class TestPotNutritionIntegration(unittest.TestCase):
         # Il rapporto è esattamente il Kn: stesso state_mm, quindi
         # stesso Ks, e nel single Kc il Kn moltiplica tutto l'ET.
         ratio = et_extreme / et_optimal
-        from fitosim.science.nutrition import KN_MIN_DEFAULT, PH_KN_MIN
-        self.assertAlmostEqual(ratio, KN_MIN_DEFAULT * PH_KN_MIN, places=9)
+        from fitosim.science.nutrition import KN_MIN_DEFAULT
+        self.assertAlmostEqual(ratio, KN_MIN_DEFAULT, places=9)
 
     # ----- Effetto materiale sul bilancio idrico -----
 

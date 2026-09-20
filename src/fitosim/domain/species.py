@@ -195,18 +195,18 @@ class Species:
         Range ottimale di conducibilità elettrica del substrato per la
         specie, in mS/cm a 25 °C. Aggiunto in tappa 3 della fascia 2.
         Quando l'EC del substrato è dentro o sotto questo intervallo,
-        il coefficiente nutrizionale Kn vale 1.0 dal lato della
-        salinità; scende sotto 1.0 solo sopra il massimo (stress
-        osmotico), con la pendenza di FAO-56 eq. 83
-        (`EC_STRESS_SLOPE_PCT_PER_MSCM`). Il minimo non entra nel Kn:
-        serve alle allerte di fertirrigazione. Tutti e quattro i
-        parametri chimici (i due EC e i due pH) devono essere
-        specificati insieme o nessuno.
+        il coefficiente nutrizionale Kn vale 1.0; scende sotto 1.0
+        solo sopra il massimo (stress osmotico), con la pendenza di
+        FAO-56 eq. 83 (`EC_STRESS_SLOPE_PCT_PER_MSCM`). Il minimo non
+        entra nel Kn: serve alle allerte di fertirrigazione. Tutti e
+        quattro i parametri chimici (i due EC e i due pH) devono
+        essere specificati insieme o nessuno.
     ph_optimal_min, ph_optimal_max : float | None, opzionali
-        Range ottimale di pH del substrato per la specie. Il fattore
-        pH-dipendente di Kn penalizza lievemente in entrambe le
-        direzioni, oltre la tolleranza di ±0.3 condivisa con le
-        allerte.
+        Range ottimale di pH del substrato per la specie. Serve
+        all'allerta `ph_out_of_range` (oltre una tolleranza di ±0.3),
+        non al Kn: dal 2026-09-20 (A3) il pH non riduce l'ET — agisce
+        sulla nutrizione in settimane, e nel vaso è uno stato
+        modellato, non misurato.
 
     Vincoli
     -------

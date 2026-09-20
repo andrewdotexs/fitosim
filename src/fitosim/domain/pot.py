@@ -1097,7 +1097,7 @@ class Pot:
             E_actual = Kp × Ke × ET_0  (quota di evaporazione superf.)
 
         dove Ks e Kn modulano solo Kcb: sono stress della pianta (idrico
-        il primo, chimico il secondo) e riducono la sua traspirazione,
+        il primo, salino il secondo) e riducono la sua traspirazione,
         come in FAO-56 eq. 84 dove il Ks salino moltiplica il Kcb. Ke ha
         già Kr, che modula la disponibilità della superficie, e non
         risente dello stato chimico: la pressione di vapore di una
@@ -1160,17 +1160,19 @@ class Pot:
         Coefficiente nutrizionale Kn dello stato chimico corrente.
 
         Calcolato da `science.nutrition.nutritional_factor` a partire
-        dall'EC e dal pH correnti del substrato e dai range ottimali
-        della specie. Vale 1.0 silenziosamente quando la specie non ha
-        il modello chimico configurato (catalogo legacy della fascia
-        1): l'estensione è inerte e retrocompatibile. Import lazy per
-        evitare cicli a livello di package.
+        dall'EC corrente del substrato e dal massimo del range della
+        specie. Il pH non entra (A3, 2026-09-20): è uno stato
+        modellato, non misurato, e agisce sulla crescita in settimane,
+        non sulla traspirazione del giorno — resta nelle allerte. Vale
+        1.0 silenziosamente quando la specie non ha il modello chimico
+        configurato (catalogo legacy della fascia 1): l'estensione è
+        inerte e retrocompatibile. Import lazy per evitare cicli a
+        livello di package.
         """
         from fitosim.science.nutrition import nutritional_factor
         return nutritional_factor(
             species=self.species,
             ec_substrate_mscm=self.ec_substrate_mscm,
-            ph_substrate=self.ph_substrate,
         )
 
     def current_et_c(self, et_0_mm: float, current_date: date) -> float:
@@ -1199,9 +1201,10 @@ class Pot:
           Ks viene dallo stato idrico del bulk substrato;
           Kp è il coefficiente di vaso (materiale/colore/esposizione);
           Kn è il fattore nutrizionale (`_current_kn`), calcolato da
-            science.nutrition.nutritional_factor a partire dall'EC e
-            dal pH correnti del substrato e dai range ottimali della
-            specie. Vale 1.0 silenziosamente quando la specie non ha
+            science.nutrition.nutritional_factor a partire dall'EC
+            corrente del substrato e dal massimo del range della
+            specie (il pH non entra, dal 2026-09-20: è un'allerta, non
+            un termine dell'ET). Vale 1.0 silenziosamente quando la specie non ha
             il modello chimico configurato — retrocompat totale con la
             fascia 1. Nel dual-Kc sta sul termine della pianta e non
             su Ke: lo stress chimico riduce la traspirazione, non

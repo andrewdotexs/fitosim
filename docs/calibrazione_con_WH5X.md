@@ -165,7 +165,8 @@ deriva di ciclo in ciclo è il segnale di accumulo che il coefficiente di lavagg
    — vasi annaffiati dall'alto — della scheda *Rosmarinus officinalis* dell'e-GRO Nutritional Monitoring Advisor 
    (Whipker, NC State: categoria EC A, 100–150 ppm N). È la grandezza interstiziale, non l'apparente del WH52: per 
    confrontarla con il sensore serve prima il livello 1. Il default del gruppo «aromatica» di The Pot, 1,0–2,0, la 
-   conteneva già.
+   conteneva già. Dal 2026-09-20 (A3) il Kn è **solo** questo fattore salino: il pH del vaso, che il WH52 non
+   misura e che nel modello converge al pH dell'acqua del giardino, non riduce più l'ET — resta un'allerta.
 
 Con una pianta nuova in substrato fresco e senza concime, per mesi la serie dell'EC sarà piatta e bassa. È il 
 comportamento atteso, ed è una linea di base preziosa: quando la fertirrigazione comincerà, ogni scostamento da lì 

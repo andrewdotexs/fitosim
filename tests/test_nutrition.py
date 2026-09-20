@@ -7,21 +7,21 @@ Strategia di test
 Il modulo nutrition è composto da funzioni pure che prendono numeri
 e restituiscono numeri. I test verificano:
 
-  1. **triangular_factor** (usata per il pH): la forma matematica
-     della funzione su tutti e cinque i rami (plateau interno,
-     plateau sinistro clampato, plateau destro clampato, rampa
-     sinistra, rampa destra). Casi al limite (boundary) compresi.
+  1. **triangular_factor** (la forma bilaterale, oggi non usata dal
+     Kn): la forma matematica della funzione su tutti e cinque i
+     rami (plateau interno, plateau sinistro clampato, plateau destro
+     clampato, rampa sinistra, rampa destra). Casi al limite
+     (boundary) compresi.
 
   2. **salinity_factor** (usata per l'EC): unilaterale. Vale 1 sotto
      e dentro il range, rampa e clamp solo sopra il massimo.
 
-  3. **nutritional_factor**: combinazione di EC e pH per specie
-     realistiche. Verifica della disabilitazione silenziosa per
-     specie senza modello chimico, del prodotto come combinazione
-     dei due fattori, dell'assenza di penalità per EC bassa (un
-     substrato fresco senza concime traspira come uno in range),
-     della pendenza FAO-56 sopra il massimo e della banda di
-     tolleranza del pH condivisa con le allerte.
+  3. **nutritional_factor**: il Kn per specie realistiche. Verifica
+     della disabilitazione silenziosa per specie senza modello
+     chimico, dell'assenza di penalità per EC bassa (un substrato
+     fresco senza concime traspira come uno in range), della pendenza
+     FAO-56 sopra il massimo, e — dal 2026-09-20 (A3) — che il pH
+     non entra: la sua tolleranza `PH_TOLERANCE` è delle allerte.
 
   4. **Validazione**: errori di input → ValueError con messaggi
      diagnostici.
@@ -33,8 +33,6 @@ from fitosim.domain.species import Species
 from fitosim.science.nutrition import (
     EC_STRESS_SLOPE_PCT_PER_MSCM,
     KN_MIN_DEFAULT,
-    PH_KN_MIN,
-    PH_STRESS_HALF_WIDTH,
     PH_TOLERANCE,
     nutritional_factor,
     salinity_factor,
@@ -293,7 +291,7 @@ class TestSalinityFactor(unittest.TestCase):
 
 class TestNutritionalFactor(unittest.TestCase):
     """
-    Combinazione EC + pH e disabilitazione silenziosa.
+    Il Kn dall'EC, e disabilitazione silenziosa.
     """
 
     def test_optimal_conditions_returns_one(self):
@@ -302,19 +300,17 @@ class TestNutritionalFactor(unittest.TestCase):
         kn = nutritional_factor(
             species=species,
             ec_substrate_mscm=1.3,    # dentro [1.0, 1.6]
-            ph_substrate=6.5,         # dentro [6.0, 7.0]
         )
         self.assertEqual(kn, 1.0)
 
-    def test_ec_stress_only(self):
-        # EC sopra il range, pH ottimale: Kn = ec_factor × 1.
+    def test_ec_stress(self):
+        # EC sopra il range: Kn = ec_factor.
         # EC=2.6: 1.0 mS/cm oltre il max 1.6; la rampa perde
         # EC_STRESS_SLOPE_PCT_PER_MSCM = 12 % per mS/cm → 0.88.
         species = _make_species_with_chemistry()
         kn = nutritional_factor(
             species=species,
             ec_substrate_mscm=2.6,
-            ph_substrate=6.5,
         )
         self.assertAlmostEqual(kn, 0.88, places=9)
 
@@ -328,10 +324,10 @@ class TestNutritionalFactor(unittest.TestCase):
         for ec in [1.6, 2.0, 3.0, 5.0, 9.0]:
             with self.subTest(ec=ec):
                 kn_narrow = nutritional_factor(
-                    species=narrow, ec_substrate_mscm=ec, ph_substrate=6.5,
+                    species=narrow, ec_substrate_mscm=ec,
                 )
                 kn_wide = nutritional_factor(
-                    species=wide, ec_substrate_mscm=ec, ph_substrate=6.5,
+                    species=wide, ec_substrate_mscm=ec,
                 )
                 self.assertAlmostEqual(kn_narrow, kn_wide, places=12)
                 expected = max(
@@ -347,17 +343,17 @@ class TestNutritionalFactor(unittest.TestCase):
         species = _make_species_with_chemistry()   # max 1.6
         floor_ec = 1.6 + (1.0 - KN_MIN_DEFAULT) * 100.0 / EC_STRESS_SLOPE_PCT_PER_MSCM
         just_below = nutritional_factor(
-            species=species, ec_substrate_mscm=floor_ec - 0.5, ph_substrate=6.5,
+            species=species, ec_substrate_mscm=floor_ec - 0.5,
         )
         at_floor = nutritional_factor(
-            species=species, ec_substrate_mscm=floor_ec, ph_substrate=6.5,
+            species=species, ec_substrate_mscm=floor_ec,
         )
         self.assertGreater(just_below, KN_MIN_DEFAULT)
         self.assertAlmostEqual(at_floor, KN_MIN_DEFAULT, places=9)
         # E una EC "alta ma comune" (2.2 con massimo 1.6, il vecchio
         # punto di clamp) oggi costa il 7 %, non il 70 %.
         self.assertAlmostEqual(
-            nutritional_factor(species=species, ec_substrate_mscm=2.2, ph_substrate=6.5),
+            nutritional_factor(species=species, ec_substrate_mscm=2.2),
             1.0 - 0.12 * 0.6, places=9,
         )
 
@@ -372,7 +368,6 @@ class TestNutritionalFactor(unittest.TestCase):
                 kn = nutritional_factor(
                     species=species,
                     ec_substrate_mscm=ec,
-                    ph_substrate=6.5,
                 )
                 self.assertEqual(kn, 1.0)
 
@@ -385,91 +380,48 @@ class TestNutritionalFactor(unittest.TestCase):
         kn = nutritional_factor(
             species=species,
             ec_substrate_mscm=0.0,
-            ph_substrate=6.5,
         )
         self.assertEqual(kn, 1.0)
 
-    def test_ec_below_range_does_not_mask_ph_stress(self):
-        # EC bassa e pH fuori range: resta solo il fattore pH.
-        # pH=8.0 → 0.93 (vedi test_ph_stress_only); ec_factor = 1.0.
-        species = _make_species_with_chemistry()
-        kn = nutritional_factor(
-            species=species,
-            ec_substrate_mscm=0.0,
-            ph_substrate=8.0,
-        )
-        self.assertAlmostEqual(kn, 0.93, places=9)
+    # ----- pH: non entra nel Kn (A3, 2026-09-20) -----
 
-    # ----- pH: banda di tolleranza, rampa lieve, pavimento -----
-
-    def test_ph_within_tolerance_band_no_penalty(self):
-        # Entro ±PH_TOLERANCE dal range il fattore pH vale 1: è la
-        # stessa banda in cui check_ph_out_of_range non emette allerte.
-        species = _make_species_with_chemistry()   # pH 6.0-7.0
-        for ph in [6.0 - PH_TOLERANCE, 5.8, 6.0, 6.5, 7.0, 7.2, 7.0 + PH_TOLERANCE]:
-            with self.subTest(ph=ph):
-                kn = nutritional_factor(
-                    species=species, ec_substrate_mscm=1.3, ph_substrate=ph,
+    def test_ph_is_not_an_input_of_kn(self):
+        # Il pH del vaso agisce sulla nutrizione in settimane, non sulla
+        # traspirazione del giorno; FAO-56 non ha un coefficiente per il
+        # pH; e nel vaso e' uno stato modellato da un default che nessuna
+        # sonda domestica misura. Il Kn non lo prende nemmeno come
+        # parametro: una specie con una scheda a pH 5.8-6.2 (e-GRO per
+        # rosmarino, basilico, salvia) ha lo stesso Kn di una a 6.0-7.0,
+        # e le due schede differiscono solo per l'allerta.
+        stretta = _make_species_with_chemistry(ph_min=5.8, ph_max=6.2)
+        larga = _make_species_with_chemistry(ph_min=6.0, ph_max=7.0)
+        for ec in [0.0, 1.3, 2.6]:
+            with self.subTest(ec=ec):
+                self.assertEqual(
+                    nutritional_factor(species=stretta, ec_substrate_mscm=ec),
+                    nutritional_factor(species=larga, ec_substrate_mscm=ec),
                 )
-                self.assertEqual(kn, 1.0)
+        with self.assertRaises(TypeError):
+            nutritional_factor(
+                species=larga, ec_substrate_mscm=1.3, ph_substrate=8.0,
+            )
 
-    def test_ph_stress_only(self):
-        # pH fuori range, EC ottimale: Kn = 1 × ph_factor.
-        # pH=8.0: 1.0 oltre il max 7.0, di cui 0.3 di tolleranza →
-        # 0.7 nella rampa di 2.0 → posizione 0.35.
-        # ph_factor = 1 - 0.35 × (1 - PH_KN_MIN) = 1 - 0.35 × 0.2 = 0.93
-        species = _make_species_with_chemistry()
-        kn = nutritional_factor(
-            species=species,
-            ec_substrate_mscm=1.3,
-            ph_substrate=8.0,
-        )
-        self.assertAlmostEqual(kn, 0.93, places=9)
+    def test_ph_tolerance_is_for_the_alerts(self):
+        # La banda resta nel modulo per le allerte: e' l'unico numero del
+        # modello chimico che riguarda il pH.
+        from fitosim.domain.alerts import PH_TOLERANCE as banda_delle_allerte
+        self.assertEqual(PH_TOLERANCE, 0.3)
+        self.assertIs(banda_delle_allerte, PH_TOLERANCE)
 
-    def test_ph_default_seven_on_narrow_sheet_is_mild(self):
-        # Il caso operativo: scheda a pH 5.8-6.2 (e-GRO per basilico,
-        # rosmarino, salvia) e vaso che parte dal default 7.0 perché
-        # nessuno ha misurato il pH. 0.8 sopra il massimo, 0.5 oltre la
-        # banda → 1 - 0.25 × 0.2 = 0.95: il 5 %, non il 28 % di prima.
-        species = _make_species_with_chemistry(ph_min=5.8, ph_max=6.2)
-        kn = nutritional_factor(
-            species=species, ec_substrate_mscm=1.3, ph_substrate=7.0,
-        )
-        self.assertAlmostEqual(kn, 0.95, places=9)
-
-    def test_ph_floor_is_ph_kn_min(self):
-        # Molto fuori in entrambe le direzioni: pavimento PH_KN_MIN, non
-        # KN_MIN_DEFAULT. Il pH è un modulatore lieve.
-        species = _make_species_with_chemistry()
-        for ph in [1.0, 3.0, 3.7, 9.3, 12.0, 14.0]:
-            with self.subTest(ph=ph):
-                kn = nutritional_factor(
-                    species=species, ec_substrate_mscm=1.3, ph_substrate=ph,
-                )
-                self.assertAlmostEqual(kn, PH_KN_MIN, places=9)
-
-    def test_combined_stress_multiplicative(self):
-        # Sia EC sia pH fuori range: Kn = ec_factor × ph_factor.
-        # EC=2.6 → 0.88, pH=8.0 → 0.93, Kn = 0.88 × 0.93 = 0.8184.
-        species = _make_species_with_chemistry()
-        kn = nutritional_factor(
-            species=species,
-            ec_substrate_mscm=2.6,
-            ph_substrate=8.0,
-        )
-        self.assertAlmostEqual(kn, 0.88 * 0.93, places=9)
-
-    def test_extreme_stress_floor(self):
-        # Stress massimo simultaneo: Kn = KN_MIN_DEFAULT × PH_KN_MIN
-        # = 0.3 × 0.8 = 0.24.
+    def test_floor_is_kn_min_default(self):
+        # Stress salino massimo: Kn = KN_MIN_DEFAULT = 0.3, e non piu'
+        # 0.3 x 0.8 = 0.24 con il pH.
         species = _make_species_with_chemistry()
         kn = nutritional_factor(
             species=species,
             ec_substrate_mscm=10.0,        # molto sopra
-            ph_substrate=12.0,             # molto sopra
         )
-        expected_floor = KN_MIN_DEFAULT * PH_KN_MIN
-        self.assertAlmostEqual(kn, expected_floor, places=9)
+        self.assertAlmostEqual(kn, KN_MIN_DEFAULT, places=9)
 
     def test_disabled_when_species_lacks_chemistry(self):
         # CRUCIALE: specie senza modello chimico → Kn = 1.0
@@ -478,30 +430,8 @@ class TestNutritionalFactor(unittest.TestCase):
         kn = nutritional_factor(
             species=species,
             ec_substrate_mscm=15.0,        # estremo
-            ph_substrate=10.0,             # estremo
         )
         self.assertEqual(kn, 1.0)
-
-    def test_acidophilic_species(self):
-        # Mirtillo: range pH 4.5-5.5 (acido). pH=5.0 è ottimale,
-        # pH=7.0 è fuori range.
-        myrtle = _make_species_with_chemistry(
-            ec_min=0.8, ec_max=1.4, ph_min=4.5, ph_max=5.5,
-        )
-        # pH ottimale
-        kn_optimal = nutritional_factor(
-            species=myrtle,
-            ec_substrate_mscm=1.0, ph_substrate=5.0,
-        )
-        self.assertEqual(kn_optimal, 1.0)
-        # pH 7.0 = 1.5 oltre max=5.5, meno 0.3 di tolleranza = 1.2
-        # nella rampa di 2.0 → posizione 0.6
-        # ph_factor = 1 - 0.6 × (1 - 0.8) = 0.88
-        kn_alkaline = nutritional_factor(
-            species=myrtle,
-            ec_substrate_mscm=1.0, ph_substrate=7.0,
-        )
-        self.assertAlmostEqual(kn_alkaline, 0.88, places=9)
 
     def test_kn_monotonic_decreasing_outside_range(self):
         # PROPRIETÀ FONDAMENTALE: Kn deve essere monotonamente
@@ -513,7 +443,7 @@ class TestNutritionalFactor(unittest.TestCase):
         kn_values = [
             nutritional_factor(
                 species=species,
-                ec_substrate_mscm=ec, ph_substrate=6.5,
+                ec_substrate_mscm=ec,
             )
             for ec in ec_values
         ]
@@ -590,20 +520,7 @@ class TestInputValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             nutritional_factor(
                 species=species,
-                ec_substrate_mscm=-0.5, ph_substrate=6.5,
-            )
-
-    def test_nutritional_invalid_ph_rejected(self):
-        species = _make_species_with_chemistry()
-        with self.assertRaises(ValueError):
-            nutritional_factor(
-                species=species,
-                ec_substrate_mscm=1.3, ph_substrate=15.0,
-            )
-        with self.assertRaises(ValueError):
-            nutritional_factor(
-                species=species,
-                ec_substrate_mscm=1.3, ph_substrate=-1.0,
+                ec_substrate_mscm=-0.5,
             )
 
 

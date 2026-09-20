@@ -350,25 +350,25 @@ class TestRulePhOutOfRange(unittest.TestCase):
         result = check_ph_out_of_range(pot, date(2026, 5, 15))
         self.assertIn("alcalino", result.message)
 
-    def test_tolerance_band_shared_with_kn(self):
-        # Allerta e Kn cominciano a "vedere" il pH fuori range nello
-        # stesso punto: dentro la banda nessuna allerta e Kn = 1, appena
-        # fuori allerta e Kn < 1. La banda è PH_TOLERANCE, condivisa.
-        from fitosim.science.nutrition import PH_TOLERANCE, nutritional_factor
+    def test_tolerance_band_is_the_alerts_and_kn_ignores_ph(self):
+        # La banda PH_TOLERANCE e' delle allerte: dentro nessuna allerta,
+        # appena fuori si'. Il Kn del vaso, dal 2026-09-20 (A3), non
+        # cambia con il pH: dentro o fuori la banda vale lo stesso, e
+        # con l'EC in range vale 1.
+        from fitosim.science.nutrition import PH_TOLERANCE
         eps = 1e-6
         for ph, outside in [
             (7.0 + PH_TOLERANCE - eps, False), (7.0 + PH_TOLERANCE + eps, True),
             (6.0 - PH_TOLERANCE + eps, False), (6.0 - PH_TOLERANCE - eps, True),
+            (9.0, True), (4.0, True),
         ]:
             with self.subTest(ph=ph):
                 pot = _make_pot(ph_substrate=ph)
                 alert = check_ph_out_of_range(pot, date(2026, 5, 15))
                 self.assertEqual(alert is not None, outside)
-                # EC in range (1.3): isola il fattore pH.
-                kn = nutritional_factor(
-                    species=pot.species, ec_substrate_mscm=1.3, ph_substrate=ph,
-                )
-                self.assertEqual(kn < 1.0, outside)
+                # EC in range (1.3): il Kn resta 1 qualunque sia il pH.
+                pot.salt_mass_meq = 1.3 * pot.water_volume_liters * 10
+                self.assertEqual(pot._current_kn(), 1.0)
 
 
 # =======================================================================

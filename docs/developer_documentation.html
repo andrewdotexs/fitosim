@@ -802,15 +802,18 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     <h3 id="science-nutrition"><code>science/nutrition.py</code> — Coefficiente nutrizionale Kn</h3>
 
     <p>
-      Modula la traspirazione in funzione dello stato chimico (EC, pH).
-      Eccesso di sali (stress osmotico) e pH fuori range riducono la
-      disponibilità idrica apparente per effetti fisiologici. L'EC
+      Modula la traspirazione in funzione dell'EC del substrato: l'eccesso
+      di sali (stress osmotico) riduce la disponibilità idrica apparente.
+      Il pH non entra (dal 2026-09-20): agisce sulla nutrizione in settimane,
+      non sulla traspirazione del giorno, FAO-56 non ha un coefficiente per
+      il pH, e nel vaso è uno stato stimato da un default che nessuna sonda
+      domestica misura — resta un'allerta (<code>ph_out_of_range</code>). L'EC
       <em>bassa</em> non riduce l'ET: è una carenza nutrizionale, che
       agisce sulla crescita in settimane ed è segnalata dalle allerte
       <code>ec_too_low</code> / <code>fertilization_due</code>.
     </p>
 
-    <p>Funzione: <code>nutritional_factor(species, ec_mscm, ph) → float</code>. Prodotto di due fattori: <code>salinity_factor</code> per l'EC (unilaterale: 1.0 sotto e dentro il range, sopra il massimo perde <code>EC_STRESS_SLOPE_PCT_PER_MSCM = 12</code> % per mS/cm fino al clamp a <code>KN_MIN_DEFAULT = 0.3</code>, ~5.8 mS/cm oltre; forma e scala di FAO-56 cap. 8 eq. 83 e tab. 23) e <code>triangular_factor</code> per il pH (trapezoidale: 1.0 dentro il range allargato di <code>PH_TOLERANCE = ±0.3</code>, la tolleranza delle allerte; rampe lineari di 2.0 unità ai due bordi; clamp a <code>PH_KN_MIN = 0.8</code>). Nel dual-Kc il Pot applica il Kn al termine <code>Ks·Kcb</code>, non a <code>Ke</code>.</p>
+    <p>Funzione: <code>nutritional_factor(species, ec_mscm) → float</code>: <code>salinity_factor</code> per l'EC (unilaterale: 1.0 sotto e dentro il range, sopra il massimo perde <code>EC_STRESS_SLOPE_PCT_PER_MSCM = 12</code> % per mS/cm fino al clamp a <code>KN_MIN_DEFAULT = 0.3</code>, ~5.8 mS/cm oltre; forma e scala di FAO-56 cap. 8 eq. 83 e tab. 23). Fino al 2026-09-20 c'era anche un fattore pH (<code>triangular_factor</code>, trapezoidale, clamp a 0.8): tolto, perché contato sul catalogo di The Pot toglieva il 2–10 % dell'ET a 236 specie su 369 dopo due mesi di acqua di rete, per un pH che è un default. <code>PH_TOLERANCE = ±0.3</code> resta nel modulo per l'allerta; <code>triangular_factor</code> resta come funzione generica. Nel dual-Kc il Pot applica il Kn al termine <code>Ks·Kcb</code>, non a <code>Ke</code>.</p>
 
     <!-- RADIATION -->
     <h3 id="science-radiation"><code>science/radiation.py</code> — Radiazione</h3>
@@ -1891,7 +1894,7 @@ python -m pytest --cov=fitosim --cov-report=term-missing</code></pre>
         <tr><td>K<sub>c</sub></td><td>Coefficiente colturale. Modula ET₀ in funzione della specie e dello stadio fenologico.</td></tr>
         <tr><td>K<sub>cb</sub> · K<sub>e</sub></td><td>Decomposizione dual-Kc: K<sub>cb</sub> traspirazione basale, K<sub>e</sub> evaporazione superficiale.</td></tr>
         <tr><td>K<sub>p</sub></td><td>Coefficiente di vaso. Modula ET<sub>c</sub> per materiale, colore, esposizione.</td></tr>
-        <tr><td>K<sub>n</sub></td><td>Coefficiente nutrizionale. Modula la traspirazione in funzione di EC e pH.</td></tr>
+        <tr><td>K<sub>n</sub></td><td>Coefficiente nutrizionale. Modula la traspirazione in funzione dell'EC (eccesso di sali, FAO-56 eq. 83); il pH non entra (dal 2026-09-20), resta un'allerta.</td></tr>
         <tr><td>K<sub>s</sub></td><td>Coefficiente di stress idrico. Riduce la traspirazione sotto la soglia RAW.</td></tr>
         <tr><td>θ<sub>FC</sub></td><td>Field Capacity. Contenuto idrico volumetrico al limite superiore (post drenaggio).</td></tr>
         <tr><td>θ<sub>PWP</sub></td><td>Permanent Wilting Point. Contenuto idrico al limite inferiore (pianta non riesce più ad estrarre acqua).</td></tr>

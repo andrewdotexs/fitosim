@@ -374,15 +374,20 @@ def check_ph_out_of_range(
 
     Soglie:
       - Tra range_min - PH_TOLERANCE e range_max + PH_TOLERANCE (±0.3):
-        nessuna allerta (margine di tolleranza). È la stessa banda
-        entro cui il fattore pH del Kn vale 1: allerte e Kn cominciano
-        a "vedere" il pH fuori range nello stesso punto.
+        nessuna allerta (margine di tolleranza).
       - Fuori del margine ma entro 0.7: warning.
       - Oltre 0.7 fuori range: critical.
 
     Severity sempre warning o critical (mai info: il pH fuori range è
     un problema nutrizionale che si aggrava in settimane e che nessun
-    sensore domestico misura, quindi va detto quando c'è).
+    sensore domestico misura, quindi va detto quando c'è). È l'unico
+    posto in cui il pH del vaso agisce, dal 2026-09-20 (A3): nel Kn
+    non entra più. Da sapere, per chi presenta l'allerta: il pH è uno
+    stato modellato che converge al pH dell'acqua del giardino — un
+    default, se nessuno l'ha misurato — e con acqua di rete a 7.5 a
+    regime «critical» tocca 145 delle 369 schede del catalogo di The
+    Pot; The Pot la mostra al massimo come warning finché il pH è
+    stimato.
     """
     if not pot.species.supports_chemistry_model:
         return None
