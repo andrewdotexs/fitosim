@@ -897,7 +897,19 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
       <code>estimate_kc_from_window</code>, <code>calibrate_kc</code> (mediana
       tra finestre). Restituisce <code>KcCalibrationResult</code>
       (<code>kc_estimate</code>, <code>n_windows</code>, <code>confidence</code>,
-      <code>window_estimates</code>).
+      <code>window_estimates</code>, <code>n_stress_days</code>).
+    </p>
+    <p>
+      Con una riserva: K<sub>s</sub> «letto dalla θ» dipende da <code>p</code>,
+      che è un prior di catalogo (FAO-56 tab. 22, definito su una riserva fino a
+      −1500 kPa e applicato dal 2026-09-19 a una che si ferma a −10 kPa). Un
+      <code>p</code> troppo piccolo attribuisce a K<sub>s</sub> un rallentamento che non
+      c'è e gonfia il K<sub>c</sub> — del 20 % in un dry-down all'84 % della TAW. Per
+      questo dal 2026-09-20 (A2) <code>calibrate_kc</code> inverte per default sui
+      soli giorni sopra la soglia (<code>stress_days="exclude"</code>: il K<sub>c</sub>
+      senza stress, com'è definito in FAO-56, indipendente da <code>p</code>) e conta
+      le transizioni escluse; <code>stress_days="model"</code> è il comportamento
+      di prima, da usare con un <code>p</code> misurato.
     </p>
 
     <!-- PHENOLOGY -->

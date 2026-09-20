@@ -73,13 +73,14 @@ Workflow tipico
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, Optional
 
 from fitosim.science.balance import stress_coefficient_ks
 from fitosim.science.substrate import (
     DEFAULT_DEPLETION_FRACTION,
     Substrate,
+    readily_available_water,
 )
 
 
@@ -621,8 +622,19 @@ def calibrate_substrate(
 #
 #   4. Stress idrico. Verso il fondo della curva Ks scende sotto 1 e
 #      l'asciugamento rallenta: ignorarlo porterebbe a sottostimare Kc.
-#      Calcolando Ks giorno per giorno dal θ osservato il problema è
-#      gestito esattamente.
+#      Calcolando Ks giorno per giorno dal θ osservato il problema
+#      sarebbe gestito esattamente — **se p fosse giusto**. Ma Ks
+#      dipende da `depletion_fraction`, che è un prior (FAO-56 tab. 22,
+#      definito su una riserva fino a −1500 kPa e applicato dal
+#      2026-09-19 a una riserva che si ferma a −10 kPa: vedi A2 in
+#      `readily_available_water`), e un p troppo piccolo attribuisce a
+#      Ks un rallentamento che non c'è, gonfiando Kc: sul drenante del
+#      rosmarino, Kc vero 0,85 senza stress e p creduto 0,40, la stima
+#      dà 0,92 a due terzi della TAW e 1,02 a 84 %. Per questo dal
+#      2026-09-20 `calibrate_kc` inverte **sui soli giorni sopra la
+#      soglia** (Ks = 1, com'è definito il Kc in FAO-56: senza stress)
+#      e conta quelli scartati; `stress_days="model"` è il comportamento
+#      di prima, per chi il p l'ha misurato.
 #
 #   5. Drenaggio residuo. Nelle ore successive a un'irrigazione
 #      abbondante il vaso perde acqua per gravità, non per ET: la
@@ -687,6 +699,12 @@ class KcCalibrationResult:
     notes : str
         Spiegazione in linguaggio naturale, pensata per essere mostrata
         all'utente insieme alla stima.
+    n_stress_days : int
+        Transizioni giornaliere sotto la soglia di stress (θ di inizio
+        giornata < θ_FC − p·TAW) lasciate fuori dall'inversione con
+        `stress_days="exclude"`. Zero con `"model"`. Tante: il vaso
+        vive sotto la soglia, e o p è troppo alto o il giardiniere
+        aspetta troppo.
     """
 
     kc_estimate: Optional[float]
@@ -694,6 +712,7 @@ class KcCalibrationResult:
     confidence: str
     window_estimates: tuple[float, ...]
     notes: str
+    n_stress_days: int = 0
 
 
 def find_drying_windows(
@@ -855,6 +874,49 @@ def estimate_kc_from_window(
     return kc
 
 
+def _comfort_prefix(
+    window: DryingWindow,
+    theta_series: list[float],
+    theta_alert: float,
+    min_days: int,
+    min_depletion: float,
+) -> tuple[Optional[DryingWindow], int]:
+    """
+    Il tratto iniziale di una finestra in cui Ks vale 1, e quante
+    transizioni restano fuori.
+
+    Una transizione è "senza stress" se il θ di inizio giornata — quello
+    su cui `estimate_kc_from_window` calcola Ks — è sopra la soglia. Le
+    finestre scendono, quindi il tratto senza stress è un prefisso: si
+    chiude alla prima giornata che parte sotto la soglia. Un'oscillazione
+    di rumore che riportasse θ sopra la soglia più avanti non lo riapre,
+    perché di quel tratto non si sa se la pianta stava già rallentando.
+
+    Il prefisso deve valere come finestra a sé (durata e calo minimi):
+    altrimenti non produce niente, e le sue transizioni si contano tutte
+    come scartate.
+    """
+    end = window.start_index
+    for i in range(window.start_index + 1, window.end_index + 1):
+        if theta_series[i - 1] < theta_alert:
+            break
+        end = i
+    dropped = window.end_index - end
+    n_days = end - window.start_index
+    depletion = theta_series[window.start_index] - theta_series[end]
+    if n_days < min_days or depletion < min_depletion:
+        return None, window.n_days
+    if dropped == 0:
+        return window, 0
+    return replace(
+        window,
+        end_index=end,
+        n_days=n_days,
+        theta_end=theta_series[end],
+        total_depletion_theta=depletion,
+    ), dropped
+
+
 def calibrate_kc(
     theta_series: list[float],
     et0_series: list[float],
@@ -867,6 +929,7 @@ def calibrate_kc(
     min_depletion: float = DEFAULT_MIN_WINDOW_DEPLETION,
     rise_tolerance: float = DEFAULT_RISE_TOLERANCE,
     known_water_input_days: Optional[Iterable[int]] = None,
+    stress_days: str = "exclude",
 ) -> KcCalibrationResult:
     """
     Stima il coefficiente colturale effettivo di un vaso dalla velocità
@@ -897,6 +960,16 @@ def calibrate_kc(
         Soglie di validità delle finestre.
     known_water_input_days : iterable[int], opzionale
         Giorni in cui il diario registra un apporto idrico.
+    stress_days : {"exclude", "model"}, opzionale
+        Che fare delle giornate che partono sotto la soglia di stress
+        (θ_FC − p·TAW). `"exclude"`, il default dal 2026-09-20 (A2):
+        ogni finestra si accorcia al suo tratto senza stress, dove Ks
+        vale 1 e il Kc è quello che FAO-56 definisce — senza stress —
+        e non dipende da p; le transizioni scartate si contano in
+        `n_stress_days`. `"model"`: si inverte tutta la finestra col Ks
+        del modello, che è esatto solo se p è quello vero; è la scelta
+        giusta quando p è stato misurato, non quando è il prior di
+        catalogo (vedi il punto 4 in testa alla sezione).
 
     Ritorna
     -------
@@ -905,7 +978,8 @@ def calibrate_kc(
     Solleva
     -------
     ValueError
-        Se le due serie hanno lunghezze diverse.
+        Se le due serie hanno lunghezze diverse, o se `stress_days` non
+        è una delle due scelte.
     """
     if len(theta_series) != len(et0_series):
         raise ValueError(
@@ -913,6 +987,11 @@ def calibrate_kc(
             f"({len(et0_series)}) devono avere la stessa lunghezza: "
             f"l'elemento i-esimo di et0_series è l'ET0 della giornata "
             f"che ha portato alla lettura i-esima di theta_series."
+        )
+    if stress_days not in ("exclude", "model"):
+        raise ValueError(
+            f"stress_days deve essere 'exclude' o 'model' "
+            f"(ricevuto {stress_days!r})."
         )
 
     windows = find_drying_windows(
@@ -923,8 +1002,24 @@ def calibrate_kc(
         known_water_input_days=known_water_input_days,
     )
 
+    n_stress_days = 0
+    if stress_days == "exclude":
+        theta_alert = substrate.theta_fc - readily_available_water(
+            substrate, depletion_fraction,
+        )
+        usable: list[DryingWindow] = []
+        for w in windows:
+            prefix, dropped = _comfort_prefix(
+                w, theta_series, theta_alert, min_days, min_depletion,
+            )
+            n_stress_days += dropped
+            if prefix is not None:
+                usable.append(prefix)
+    else:
+        usable = windows
+
     estimates: list[float] = []
-    for w in windows:
+    for w in usable:
         kc = estimate_kc_from_window(
             w, theta_series, et0_series, substrate, substrate_depth_mm,
             depletion_fraction=depletion_fraction, kp=kp,
@@ -935,6 +1030,13 @@ def calibrate_kc(
     n = len(estimates)
     confidence = _confidence_level(n)
 
+    stress_note = (
+        f"{n_stress_days} transizioni sotto la soglia di stress "
+        f"(p = {depletion_fraction:.2f}) lasciate fuori dall'inversione: "
+        f"il Kc e' quello senza stress. Per invertire anche quelle col "
+        f"Ks del modello, stress_days='model'."
+    ) if n_stress_days else ""
+
     if n == 0:
         notes = (
             "Nessuna finestra di asciugamento utilizzabile. Possibili "
@@ -942,9 +1044,12 @@ def calibrate_kc(
             "per lasciare tratti di asciugamento continui, oppure cali "
             "troppo piccoli rispetto al rumore del sensore."
         )
+        if stress_note:
+            notes = f"{notes} {stress_note}"
         return KcCalibrationResult(
             kc_estimate=None, n_windows=0, confidence=confidence,
             window_estimates=(), notes=notes,
+            n_stress_days=n_stress_days,
         )
 
     kc_estimate = _percentile(sorted(estimates), 50.0)
@@ -953,6 +1058,8 @@ def calibrate_kc(
         f"Stima da {n} finestra/e di asciugamento "
         f"({len(windows)} candidate)."
     ]
+    if stress_note:
+        notes_parts.append(stress_note)
     if confidence == "insufficient":
         notes_parts.append(
             "Numerosita' troppo bassa per una stima affidabile: usare "
@@ -965,7 +1072,7 @@ def calibrate_kc(
             f"max {max(estimates):.2f}): possibili apporti idrici non "
             f"registrati nel diario."
         )
-    if not notes_parts[1:]:
+    elif confidence != "insufficient":
         notes_parts.append("Dispersione contenuta, stima coerente.")
 
     return KcCalibrationResult(
@@ -974,4 +1081,5 @@ def calibrate_kc(
         confidence=confidence,
         window_estimates=tuple(estimates),
         notes=" ".join(notes_parts),
+        n_stress_days=n_stress_days,
     )

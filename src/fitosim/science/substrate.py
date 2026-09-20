@@ -84,6 +84,11 @@ class Substrate:
         pianta in vaso è il verso giusto. La calibrazione sul sensore
         (livello 2) ricava comunque i due estremi dai picchi e dalle
         valli osservati, qualunque sia la convenzione di partenza.
+        Due cose cambiano di senso con questa convenzione, e sono
+        scritte in `readily_available_water` (A2): la frazione p della
+        specie diventa un setpoint a pochi kPa, e θ_PWP non è un
+        pavimento fisico — sotto −10 kPa il vaso perde ancora acqua,
+        mentre il bilancio lo tiene fermo lì con ET zero.
     description : str, opzionale
         Nota libera per documentare composizione o comportamento tipico.
     rew_mm, tew_mm : float | None, opzionali
@@ -395,6 +400,28 @@ def readily_available_water(
     contenuto idrico del vaso scende oltre questo valore, l'algoritmo
     di irrigazione dovrebbe triggerare un'allerta, evitando di far
     arrivare la pianta ai regimi di stress.
+
+    **Cosa vale p su una riserva che si ferma a −10 kPa** (A2,
+    2026-09-20). Il p di FAO-56 (tab. 22) è una frazione della riserva
+    fino al punto di appassimento, −1500 kPa: con 0,3–0,6 lo stress in
+    un suolo comincia a tensioni di centinaia di kPa. Con la
+    convenzione dei substrati (`Substrate.theta_pwp` a −10 kPa, quella
+    del catalogo di The Pot) la TAW è la sola acqua fra −1 e −10 kPa,
+    e p·TAW sposta la soglia a pochi kPa: leggendo la ritenzione
+    log-lineare fra −1 e −10, p 0,3 è un setpoint a circa −2 kPa, 0,4
+    a −2,5, 0,5 a −3,2, 0,6 a −4, 1,0 a −10. Sono le tensioni a cui
+    irriga il vivaio professionale in torba (Lieth & Burger 1989;
+    Kiehl, Lieth & Burger 1992: crescita massima del crisantemo a
+    −1…−5 kPa; Raviv & Lieth 2008, setpoint −1…−10 secondo coltura e
+    substrato): giusto per una lattuga, il verso sbagliato per un
+    rosmarino in miscela minerale, che non asciuga mai. E il Ks arriva
+    a zero a −10 kPa, dove una pianta vera traspira ancora. La scelta
+    del 2026-09-20 è tenere il p FAO come prior — è la parte cauta —
+    e misurarlo nel dry-down dei vasi gemelli (`calibrate_kc` lo
+    esclude dall'inversione del Kc proprio perché è un prior);
+    l'alternativa strutturale, il terzo punto θ(−1500 kPa) sui
+    componenti, viene dopo i primi dati. Non c'è l'aggiustamento di
+    FAO-56 per la domanda, p + 0,04·(5 − ETc).
 
     Solleva ValueError se depletion_fraction è fuori da [0, 1].
     """

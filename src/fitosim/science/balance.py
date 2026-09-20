@@ -325,6 +325,10 @@ def stress_coefficient_ks(
         (raccomandazione generica FAO-56 per colture orticole comuni).
         Specie sensibili allo stress (lattughe, foglie tenere) usano
         0.3; xerofite come rosmarino o succulente tollerano 0.6-0.7.
+        Con θ_PWP a −10 kPa (la convenzione dei substrati, dal
+        2026-09-19) la rampa di Ks va da pochi kPa a −10 kPa, dove una
+        pianta vera traspira ancora: p è un prior da misurare, non il
+        p di FAO — vedi `readily_available_water` (A2).
 
     Ritorna
     -------

@@ -582,9 +582,12 @@ class TestCalibrateKc(unittest.TestCase):
 
     def test_dispersion_is_reported(self):
         # Due gruppi di cicli con consumi molto diversi (come se meta'
-        # delle finestre fosse contaminata): la nota lo segnala.
-        t1, e1 = self._multi_cycle_series(0.50, 5.0, 3, 5)
-        t2, e2 = self._multi_cycle_series(1.60, 5.0, 3, 5)
+        # delle finestre fosse contaminata): la nota lo segnala. A ET0
+        # 2,5 anche i cicli a Kc 1,6 restano sopra la soglia per i tre
+        # giorni minimi, cosi' l'esclusione dello stress (A2) non li
+        # butta via.
+        t1, e1 = self._multi_cycle_series(0.50, 2.5, 3, 5)
+        t2, e2 = self._multi_cycle_series(1.60, 2.5, 3, 5)
         result = calibrate_kc(
             t1 + t2, e1 + e2, UNIVERSAL_POTTING_SOIL, DEPTH_MM,
             depletion_fraction=0.40,
@@ -625,12 +628,18 @@ class TestCalibrateKc(unittest.TestCase):
         rise = theta[invisible_day] - theta[invisible_day - 1]
         self.assertLessEqual(rise, DEFAULT_RISE_TOLERANCE)
 
+        # La serie e' costruita col Ks del modello e attraversa la
+        # soglia: si inverte con `stress_days="model"`, che e' esatto
+        # quando p e' quello vero — qui lo e' per costruzione. Il
+        # limite che il test documenta e' l'irrigazione invisibile,
+        # non lo stress.
         naive = calibrate_kc(
             theta, et0, sub, DEPTH_MM, depletion_fraction=0.40,
+            stress_days="model",
         )
         corrected = calibrate_kc(
             theta, et0, sub, DEPTH_MM, depletion_fraction=0.40,
-            known_water_input_days=[invisible_day],
+            known_water_input_days=[invisible_day], stress_days="model",
         )
 
         # Senza diario: una finestra sola, l'acqua aggiunta non viene
@@ -640,6 +649,104 @@ class TestCalibrateKc(unittest.TestCase):
         # Col diario: due finestre pulite, entrambe recuperano il vero.
         self.assertEqual(corrected.n_windows, 2)
         self.assertAlmostEqual(corrected.kc_estimate, 0.90, places=6)
+
+
+class TestCalibrateKcStressDays(unittest.TestCase):
+    """
+    A2 (2026-09-20): il Kc si inverte sui soli giorni senza stress.
+
+    Il Ks dell'inversione dipende da p, che e' un prior di catalogo
+    (FAO-56 tab. 22, definito fino a −1500 kPa) applicato a una riserva
+    che si ferma a −10 kPa: se p e' troppo piccolo, il rallentamento che
+    Ks "spiega" non c'e', e il Kc si gonfia. Il default lascia fuori le
+    giornate che partono sotto la soglia e le conta.
+    """
+
+    def _no_stress_series(self, kc_true, et0, n_days):
+        """Una pianta che traspira piena fino in fondo (p vero = 1),
+        mentre il catalogo dice 0,40: e' il rosmarino nel drenante."""
+        theta, et0_series = [0.40], [0.0]
+        for _ in range(n_days):
+            theta.append(theta[-1] - kc_true * et0 / DEPTH_MM)
+            et0_series.append(et0)
+        return theta, et0_series
+
+    def test_a_wrong_p_inflates_kc_only_in_model_mode(self):
+        # Kc vero 0,85, nessuno stress, deplezione a 84 % della TAW.
+        theta, et0 = self._no_stress_series(0.85, 5.0, 8)
+        alert = UNIVERSAL_POTTING_SOIL.theta_fc - 0.40 * (
+            UNIVERSAL_POTTING_SOIL.theta_fc - UNIVERSAL_POTTING_SOIL.theta_pwp
+        )
+        self.assertLess(theta[-1], alert)
+        model = calibrate_kc(
+            theta, et0, UNIVERSAL_POTTING_SOIL, DEPTH_MM,
+            depletion_fraction=0.40, stress_days="model",
+        )
+        exclude = calibrate_kc(
+            theta, et0, UNIVERSAL_POTTING_SOIL, DEPTH_MM,
+            depletion_fraction=0.40,
+        )
+        # Col Ks del modello il Kc sale di oltre il 10 %; senza le
+        # giornate in stress torna quello vero.
+        self.assertGreater(model.kc_estimate, 0.85 * 1.10)
+        self.assertEqual(model.n_stress_days, 0)
+        self.assertAlmostEqual(exclude.kc_estimate, 0.85, places=6)
+        self.assertGreater(exclude.n_stress_days, 0)
+        self.assertIn("sotto la soglia di stress", exclude.notes)
+
+    def test_default_is_exclude_and_counts_the_days(self):
+        theta, et0 = self._no_stress_series(0.85, 5.0, 8)
+        result = calibrate_kc(
+            theta, et0, UNIVERSAL_POTTING_SOIL, DEPTH_MM,
+            depletion_fraction=0.40,
+        )
+        # Quattro giornate partono sopra la soglia di 0,30 (0,400,
+        # 0,368, 0,335, 0,303), le altre quattro sotto: quattro
+        # transizioni scartate.
+        self.assertEqual(result.n_stress_days, 4)
+        self.assertEqual(result.n_windows, 1)
+
+    def test_windows_entirely_in_comfort_are_untouched(self):
+        # Serie che non scende mai sotto la soglia: stesso esito nei due
+        # modi, nessuna transizione scartata, nessuna nota sullo stress.
+        theta, et0 = self._no_stress_series(0.85, 5.0, 3)
+        a = calibrate_kc(theta, et0, UNIVERSAL_POTTING_SOIL, DEPTH_MM,
+                         depletion_fraction=0.40)
+        b = calibrate_kc(theta, et0, UNIVERSAL_POTTING_SOIL, DEPTH_MM,
+                         depletion_fraction=0.40, stress_days="model")
+        self.assertAlmostEqual(a.kc_estimate, b.kc_estimate, places=9)
+        self.assertEqual(a.n_stress_days, 0)
+        self.assertNotIn("stress", a.notes)
+
+    def test_a_too_short_comfort_prefix_yields_nothing_but_is_counted(self):
+        # Consumo forte: la finestra parte sotto la soglia dal secondo
+        # giorno. Il prefisso senza stress dura meno di min_days, la
+        # finestra non da' una stima, e tutte le sue transizioni si
+        # contano fra quelle in stress.
+        theta, et0 = self._no_stress_series(2.0, 6.0, 6)
+        result = calibrate_kc(
+            theta, et0, UNIVERSAL_POTTING_SOIL, DEPTH_MM,
+            depletion_fraction=0.40,
+        )
+        self.assertIsNone(result.kc_estimate)
+        self.assertEqual(result.n_stress_days, 6)
+        self.assertIn("sotto la soglia di stress", result.notes)
+
+    def test_p_one_means_no_stress_days(self):
+        # Con p = 1 la soglia coincide con θ_PWP: niente da escludere.
+        theta, et0 = self._no_stress_series(0.85, 5.0, 8)
+        result = calibrate_kc(
+            theta, et0, UNIVERSAL_POTTING_SOIL, DEPTH_MM,
+            depletion_fraction=1.0,
+        )
+        self.assertEqual(result.n_stress_days, 0)
+        self.assertAlmostEqual(result.kc_estimate, 0.85, places=6)
+
+    def test_unknown_mode_rejected(self):
+        theta, et0 = self._no_stress_series(0.85, 5.0, 4)
+        with self.assertRaises(ValueError):
+            calibrate_kc(theta, et0, UNIVERSAL_POTTING_SOIL, DEPTH_MM,
+                         stress_days="ignore")
 
 
 if __name__ == "__main__":

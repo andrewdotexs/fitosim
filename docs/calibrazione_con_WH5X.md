@@ -254,6 +254,41 @@ Sulla serie giornaliera accumulata: prima `calibrate_substrate` per l'ancora, po
 proposte arrivano con un livello di confidenza; se accettate, `apply_kc_correction` produce la specie calibrata per 
 questo vaso, e la previsione successiva parte dai parametri corretti. Poi si ricomincia dal passo 3.
 
+Dal 2026-09-20 (A2) `calibrate_kc` inverte il Kc **sui soli giorni sopra la soglia di stress** e conta quelli
+lasciati fuori (`calibra` li stampa, con il `p` usato): il Ks dell'inversione dipende da `p`, che è un prior — vedi
+il passo 7 — e un `p` troppo piccolo attribuirebbe a Ks un rallentamento che non c'è, gonfiando il Kc del 20 % in un
+dry-down profondo. Il Kc è così quello di FAO-56, senza stress, e non dipende da `p`. Da sapere: `calibra` passa a
+`calibrate_kc` il substrato di catalogo, non quello appena stimato dall'ancora; le proposte restano confrontabili col
+modello com'è configurato, ma la soglia di stress e la conversione θ → mm sono quelle del catalogo.
+
+### 7. La soglia `p`, dal dry-down dei gemelli
+
+La frazione di deplezione `p` della specie (FAO-56 tab. 22, 0,30 la lattuga, 0,40 rosmarino e basilico) è definita
+su una riserva che arriva a −1500 kPa, e dal 2026-09-19 la applichiamo a una che si ferma a −10 kPa: `p × TAW` è un
+setpoint a pochi kPa (0,3 ≈ −2, 0,4 ≈ −2,5, 0,6 ≈ −4 kPa, leggendo la ritenzione log-lineare fra −1 e −10), il
+regime del vivaio in torba — giusto per la lattuga, troppo bagnato per un rosmarino in miscela minerale — e il Ks
+arriva a zero a −10 kPa, dove una pianta vera traspira ancora. Il 2026-09-20 si è deciso (A2) di tenere il `p` FAO
+come prior, che è la parte cauta, e di **misurarlo**, invece di riscalarlo con un fattore preso da curve di
+letteratura. La misura è dei gemelli:
+
+- **`rosmarino-1` si annaffia alla soglia, `rosmarino-2` no**: da metà ottobre lo si lascia asciugare almeno due
+  settimane (nel modello la sua TAW dura diciotto giorni a fine settembre), fino a foglie che a mezzogiorno perdono
+  turgore. Con le cassette lo stesso, `lattuga-1` alla soglia e `lattuga-2` tre-quattro giorni oltre: la lattuga lo
+  dice subito, e si recupera.
+- Il giorno in cui il calo giornaliero del vaso asciutto si stacca da quello del gemello bagnato — oltre il
+  pavimento per vaso che `gemelli` misura nei giorni in cui i due sono trattati uguali — è l'inizio dello stress:
+  `p_oss = (θ_FC − θ_stacco) / (θ_FC − θ_PWP)`, con gli estremi dell'ancora di quel vaso. Il gemello bagnato, nel
+  frattempo, dà il Kc senza confusione.
+- `p_oss` entra nella scheda della specie come `depletion_fraction` con la fonte «misurato, vaso X, ottobre 2026»,
+  e — se il gruppo si comporta come la specie — nel gruppo. Con `p` misurato, `calibrate_kc` può tornare a
+  invertire tutta la finestra (`stress_days="model"`).
+- Se lo stacco non arriva prima di θ_PWP, `p` di quella specie in quel substrato è 1: la banda −1…−10 kPa è tutta
+  riserva pronta, e il limite del vaso è il substrato, non la pianta. È il caso atteso per il rosmarino nel drenante.
+
+Dopo i primi dry-down si decide se aggiungere il terzo punto dell'acqua, `θ(−1500 kPa)`, ai componenti del
+catalogo: θ_PWP tornerebbe un pavimento fisico, `p` il `p` di FAO, e −10 kPa resterebbe il limite del substrato
+(`soglia = max(FC − p·TAW_FAO, θ₋₁₀)`). Un lavoro come quello della CEC, con le fonti, da fare con i dati in mano.
+
 ## Aspettative e calendario
 
 La confidenza cresce con il numero di cicli di irrigazione, non con i giorni:
@@ -268,10 +303,12 @@ La confidenza cresce con il numero di cicli di irrigazione, non con i giorni:
 Su un vaso outdoor a metà settembre l'evapotraspirazione cala, i cicli si allungano e i dati arrivano più lenti: cinque 
 cicli possono voler dire un mese o più, e in inverno la calibrazione di fatto si ferma. È il ritmo giusto, non un 
 problema: le proposte di bassa confidenza non vanno forzate. È anche il motivo dei cinque vasi (vedi la roadmap): con
-i numeri del modello, a Milano a fine settembre il rosmarino nel vaso alto (5,7 L, 19,5 cm di substrato) consumerebbe
-la sua RAW (29 mm) in venti giorni, il basilico la sua (20 mm) in nove, la lattuga in cassetta (13 cm) la sua (10–13
-mm) in cinque-sette. Per questo il rosmarino si annaffia a scadenza e non alla soglia: il ciclo si chiude
-all'irrigazione. I primi tre cicli, e la prima proposta di Kc, arriveranno dal basilico e dalle lattughe.
+i numeri del modello al 2026-09-20 (catalogo di The Pot, `p` di gruppo), a Milano a fine settembre il rosmarino nel
+vaso alto (5,7 L, 13,9 cm di substrato equivalente) consumerebbe la sua RAW (12 mm, p 0,40 su una TAW di 31) in sette
+giorni e la sua TAW intera in diciotto, il basilico la stessa RAW in sette, la lattuga in cassetta (12 cm) la sua
+(12,5 mm, p 0,30 su 42) in sei. Quella soglia è un setpoint da vivaio (passo 7), e per il rosmarino il ciclo si chiude
+all'irrigazione a scadenza, non alla soglia. I primi tre cicli, e la prima proposta di Kc, arriveranno dal basilico e
+dalle lattughe.
 
 Le metriche di successo restano quelle del manuale di calibrazione: RMSE della θ prevista contro quella osservata, 
 giorno per giorno. Sotto 0.02 è un buon risultato, 0.05 è marginale, oltre 0.08 il modello calibrato non è meglio del 
@@ -470,6 +507,11 @@ o `browser/` è della partita: con Docker fermo questi test girano lo stesso (86
 Prerequisiti assolti in fitosim: la history Ecowitt porta il vento (`EcowittSeriesPoint.wind_speed_m_s`), senza il
 quale la forzante osservata non si poteva ricostruire, e i due pluviometri uno per uno.
 
+Due ritocchi del 2026-09-20, dal punto della situazione su fitosim: il substrato dal catalogo porta anche **CEC e
+densità** (A1: le schede dei componenti le dichiarano con la fonte, il mix le eredita — la CEC pesata sulla massa —
+e il vaso tampona il pH con quello che ha dentro; nella calibrazione la chimica resta spenta), e `calibra` inverte il
+Kc **sui soli giorni sopra la soglia di stress**, contando quelli esclusi (A2, passo 7).
+
 Stato al 2026-09-19, sera: `scopri` elenca WH52, WN32P, WS90, WH40 e i cinque WH51 sui due gateway; i cinque
 workspace esistono e costruiscono il vaso dalle misure e dal catalogo di The Pot (vasi tondi su
 `drenante-mediterranea`: 5,67 L, 407 cm², FC 56,5 mm, PWP 25,9 mm, soglia 44,2 per i rosmarini e 41,8 per il
@@ -507,8 +549,9 @@ Criterio di uscita: un ciclo intero condotto dalla pagina, dall'ancora al confro
 ### Fase 3: la calibrazione, e dopo
 
 Non è codice. Dal terzo ciclo la prima proposta di Kc, da guardare con sospetto; dal quinto una utilizzabile; RMSE 
-della θ giornaliera come metrica, con le soglie del manuale. Quando `the-pot-lisimetro` sarà operativo, la sua stima di 
-Kc entra nella regola di precedenza allo scope di catalogo, sopra la pendenza del sensore.
+della θ giornaliera come metrica, con le soglie del manuale. Da metà ottobre il dry-down dei gemelli per la soglia
+`p` (passo 7). Quando `the-pot-lisimetro` sarà operativo, la sua stima di Kc entra nella regola di precedenza allo
+scope di catalogo, sopra la pendenza del sensore.
 
 ### Cosa resta fuori
 
