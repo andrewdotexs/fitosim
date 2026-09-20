@@ -23,11 +23,11 @@ il giardiniere.
 
 ## Stato del progetto
 
-- **1394 test verdi** (428 sub-test) nel core; la demo end-to-end usa matplotlib
+- **1424 test verdi** (500 sub-test) nel core; la demo end-to-end usa matplotlib
 - **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
 - **Linguaggio**: Python ≥ 3.10
 - **Dipendenze esterne nel core**: zero (solo standard library)
-- **Schema database**: SQLite v5 con migrazioni automatiche v1→…→v5
+- **Schema database**: SQLite v8 con migrazioni automatiche v1→…→v8
 - **Formato JSON di trasporto**: v3
 - **Fascia 1**: completa (modello idrico FAO-56 esteso)
 - **Fascia 2**: completa (5 tappe: sensori, chimica, architettura, Penman-Monteith, indoor)
@@ -37,9 +37,9 @@ il giardiniere.
 ```
 # Core (zero dipendenze esterne):
 $ python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
-================= 1394 passed, 428 subtests passed =================
+================= 1424 passed, 500 subtests passed =================
 
-# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1400 test.
+# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1430 test.
 ```
 
 ## Cosa fa
@@ -292,6 +292,36 @@ HTTP-JSON, fixtures CSV) che implementano i `Protocol` definiti in
 per il substrato (parametrizzato per WH51 e WH52), e `EcowittAmbientSensor`
 per il microclima delle stanze indoor (WN31).
 
+### Il modello e lo strato standalone
+
+Dal 2026-09-19 fitosim è il motore di **The Pot**, e The Pot importa il
+modello: tutto `science/`, e di `domain/` il `Pot`, la `Species`, `WeatherDay`,
+`Room.LightExposure` e le regole di `alerts`; di `io/` il solo client Ecowitt
+grezzo (`io/ecowitt.py`). Il resto è lo **strato standalone** — la libreria
+usata da sola, com'era prima dell'app:
+
+| modulo | righe | chi lo usa |
+|---|---|---|
+| `domain/garden.py` | 1 400 | lo strumento di calibrazione, gli esempi |
+| `io/persistence.py` (SQLite) | 2 200 | lo strumento di calibrazione, gli esempi |
+| `io/serialization.py` (JSON) | 800 | gli esempi |
+| `domain/scheduling.py` | 170 | `Garden`, lo strumento |
+| `io/openmeteo.py` | 550 | lo strumento (previsione e archivio), gli esempi |
+| `io/sensors/*` (i `Protocol` e i cinque adapter) | 3 500 | gli esempi |
+
+Sono 8 400 righe e 440 test: **congelati** dal 2026-09-20 (B3). Non prendono
+funzionalità nuove — quelle vanno nel modello, dove l'app le vede — e la
+loro sorte si decide dopo la fase 2 della calibrazione, quando lo strumento
+passerà sui modelli dell'app e lo strato resterà agli esempi. Il
+pianificatore (`domain/scheduler.py`) è stato tolto lo stesso giorno (B1):
+nessuno lo chiamava, e la proiezione dell'app in `idrica_service` fa lo
+stesso anello con lo stesso `Pot.apply_step`, sapendo anche le dosi del
+diario, i concimi secchi e il microclima della stanza. Due client Open-Meteo
+restano per scelta (B2): quello di fitosim è sincrono, minimo, e ha
+l'archivio ERA5 che serve ai gradi-giorno; quello di The Pot (`previsione.py`)
+è asincrono e legge le orarie, l'«adesso» e i codici del cielo per
+l'interfaccia. Si sovrappongono su quattro colonne giornaliere.
+
 ### Le entità di dominio
 
 Il diagramma delle classi qui sotto mostra le entità principali con le loro
@@ -322,8 +352,7 @@ fitosim/
 │   │   ├── room.py         # Room, IndoorMicroclimate (tappa 5-D)
 │   │   ├── weather.py      # WeatherDay (tappa 5-C)
 │   │   ├── alerts.py       # Sistema di allerte (tappa 4)
-│   │   ├── scheduling.py   # ScheduledEvent, WeatherDayForecast
-│   │   └── scheduler.py    # Pianificatore irrigazione (fascia 1)
+│   │   └── scheduling.py   # ScheduledEvent, WeatherDayForecast
 │   ├── science/            # modello matematico FAO-56 esteso
 │   │   ├── substrate.py    # Substrate, BaseMaterial, mix
 │   │   ├── balance.py      # bilancio idrico FAO-56
@@ -352,7 +381,7 @@ fitosim/
 │           ├── openmeteo.py    # adapter Open-Meteo (meteo)
 │           ├── http_json.py    # adapter generico per gateway ESP32
 │           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 1449 test verdi (core)
+├── tests/                  # 1424 test verdi (core)
 ├── examples/               # esempi e demo end-to-end
 │   ├── tappa4_complete_demo.py        # demo Garden + persistenza + allerte
 │   ├── tappa5_A_penman_monteith_demo.py

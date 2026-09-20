@@ -396,7 +396,6 @@
             <li><a href="#domain-weather"><code>weather</code></a></li>
             <li><a href="#domain-garden"><code>garden</code></a></li>
             <li><a href="#domain-scheduling"><code>scheduling</code></a></li>
-            <li><a href="#domain-scheduler"><code>scheduler</code></a></li>
             <li><a href="#domain-alerts"><code>alerts</code></a></li>
           </ul>
         </li>
@@ -543,8 +542,7 @@ domain/
 ├── room          (standalone)
 ├── alerts        ← pot
 ├── pot           ← species, substrate, science.*
-├── garden        ← pot, room, scheduling, alerts, scheduler
-├── scheduler     ← pot, scheduling
+├── garden        ← pot, room, scheduling, alerts
 └── (alerts.py)   ← pot
 
 io/
@@ -1360,45 +1358,14 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
       </div>
     </div>
 
-    <!-- SCHEDULER -->
-    <h3 id="domain-scheduler"><code>domain/scheduler.py</code> — Pianificatore irrigazione</h3>
-
+    <!-- SCHEDULER, tolto il 2026-09-20 (B1) -->
     <p>
-      Trasforma il modello da descrittivo a <em>prescrittivo</em>: data una
-      previsione, raccomanda quando e quanto irrigare ciascun vaso.
+      <strong>Il pianificatore</strong> (<code>domain/scheduler.py</code>, fino al 2026-09-20) è stato tolto: nessuno lo chiamava
+      da quando The Pot ha la sua proiezione in <code>idrica_service</code> — un anello che chiama lo stesso
+      <code>Pot.apply_step</code>, ma sa anche le dosi del diario, i concimi secchi e il microclima della stanza — e la dose la
+      dà lo strumento «acqua». La proiezione dello strumento di calibrazione usa <code>Garden.forecast</code>, che resta.
     </p>
 
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind enum">enum</span>
-        <span class="api-name">IrrigationReason</span>
-      </div>
-      <div class="api-body">
-        <ul class="api-fields">
-          <li><code>CURRENTLY_IN_ALERT</code>, <code>PREDICTED_ALERT</code></li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind fn">function</span>
-        <span class="api-name">plan_irrigations(inventory, forecast, latitude_deg, today, horizon_days=-1) → IrrigationPlan</span>
-      </div>
-      <div class="api-body">
-        <p>Algoritmo: simulazione forward con stato proiettato (non mutabile). Quando <code>state_mm &lt; alert_mm</code>, programma un evento di ripristino a FC.</p>
-      </div>
-    </div>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind dc">dataclass (frozen)</span>
-        <span class="api-name">IrrigationPlan</span>
-      </div>
-      <div class="api-body">
-        <p>Utility: <code>events_for_date</code>, <code>events_for_pot</code>, <code>days_with_events</code>, <code>total_liters_on_date</code>, <code>pots_with_events</code>, <code>is_empty</code>.</p>
-      </div>
-    </div>
 
     <!-- ALERTS -->
     <h3 id="domain-alerts"><code>domain/alerts.py</code> — Sistema di allerte</h3>

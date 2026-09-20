@@ -1,6 +1,23 @@
 """
 Client per l'API Open-Meteo: dati meteorologici reali per fitosim.
 
+DUE CLIENT, PER SCELTA (B2, 2026-09-20)
+---------------------------------------
+
+The Pot ha il suo client Open-Meteo (`services/previsione.py` più
+`meteo_service`): asincrono, con la cache dell'app, e legge sette
+colonne giornaliere, le orarie, il blocco «adesso» e i codici WMO del
+cielo, perché serve all'interfaccia oltre che al modello. Questo resta
+per lo strato standalone — gli esempi e lo strumento di calibrazione —
+ed è l'unico dei due con l'**archivio** ERA5 (`fetch_daily_archive`),
+che serve ai gradi-giorno di un vaso piantato prima dell'osservazione.
+Si sovrappongono su quattro colonne giornaliere (minima, massima,
+pioggia, ET₀ FAO). Non si unificano: due lavori diversi, e unire il
+trasporto sincrono di una libreria senza dipendenze con quello
+asincrono di un'app costerebbe più di quattro colonne. Il modulo è
+congelato con il resto dello strato standalone (README, «Il modello e
+lo strato standalone»).
+
 NOTA SULLA NUOVA ASTRAZIONE DELLA FASCIA 2
 ------------------------------------------
 

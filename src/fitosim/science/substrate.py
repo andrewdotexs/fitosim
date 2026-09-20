@@ -917,7 +917,6 @@ class MixComponent:
 def compose_substrate(
     components: list[MixComponent],
     name: str = "custom mix",
-    depletion_fraction: float | None = None,
     fraction_tolerance: float = 0.001,
 ) -> Substrate:
     """
@@ -928,6 +927,11 @@ def compose_substrate(
     rispetto a misure dirette in laboratorio, adeguata per il dominio
     del giardinaggio domestico.
 
+    Fino al 2026-09-20 accettava anche `depletion_fraction`, e lo
+    passava a `Substrate`, che non ha quel campo: la frazione di
+    deplezione è della specie, non del substrato, e chi la passava
+    riceveva un TypeError. Tolto (B4).
+
     Parametri
     ---------
     components : list[MixComponent]
@@ -936,9 +940,6 @@ def compose_substrate(
     name : str, opzionale
         Nome del Substrate risultante. Se non specificato, viene usato
         "custom mix".
-    depletion_fraction : float, opzionale
-        Frazione di depletion per il Substrate risultante. Se omesso,
-        usa il default del catalogo (DEFAULT_DEPLETION_FRACTION).
     fraction_tolerance : float, opzionale
         Tolleranza sulla somma delle frazioni. Default 0.001 (0.1%).
 
@@ -988,16 +989,5 @@ def compose_substrate(
     theta_fc = sum(c.fraction * c.material.theta_fc for c in components)
     theta_pwp = sum(c.fraction * c.material.theta_pwp for c in components)
 
-    # Costruisce il Substrate. depletion_fraction usa il default del
-    # catalogo se non specificato — è un parametro del modello FAO-56
-    # legato alla specie più che al substrato, quindi mantenere il
-    # default è la scelta più sicura.
-    kwargs = {
-        "name": name,
-        "theta_fc": theta_fc,
-        "theta_pwp": theta_pwp,
-    }
-    if depletion_fraction is not None:
-        kwargs["depletion_fraction"] = depletion_fraction
-    return Substrate(**kwargs)
+    return Substrate(name=name, theta_fc=theta_fc, theta_pwp=theta_pwp)
 

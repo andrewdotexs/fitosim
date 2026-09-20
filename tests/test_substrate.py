@@ -601,6 +601,20 @@ class TestComposeSubstrateValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             compose_substrate(components=[])
 
+    def test_depletion_fraction_is_not_a_substrate_parameter(self):
+        # B4 (2026-09-20): la firma accettava `depletion_fraction` e lo
+        # passava a Substrate, che non ce l'ha — un TypeError per chi lo
+        # usava. La frazione di deplezione e' della specie. Il parametro
+        # non c'e' piu', e la chiamata lo dice subito.
+        from fitosim.science.substrate import (
+            BIONDA_PEAT, PERLITE, MixComponent, compose_substrate,
+        )
+        ricetta = [MixComponent(BIONDA_PEAT, 0.7), MixComponent(PERLITE, 0.3)]
+        with self.assertRaises(TypeError):
+            compose_substrate(ricetta, depletion_fraction=0.4)
+        mix = compose_substrate(ricetta, name="70/30")
+        self.assertFalse(hasattr(mix, "depletion_fraction"))
+
     def test_fractions_must_sum_to_one(self):
         # Somma 0.7 (mancano il 30%): rifiutata.
         from fitosim.science.substrate import (

@@ -561,11 +561,14 @@ scope di catalogo, sopra la pendenza del sensore.
 fitosim resta una libreria: nessuna interfaccia e nessun gateway dentro `src/fitosim/`, solo la matematica e gli
 adapter. La risoluzione sub-giornaliera. I livelli 1 e 4 del manuale. Dipendenze oltre quelle che `the-pot` già ha.
 
-Due decisioni aperte trovate controllando il `domain` di fitosim contro The Pot, fuori da questo lavoro: il
-**pianificatore doppio** (`domain/scheduler.py` di fitosim e la proiezione di `idrica_service`, che non lo usa) e i
-**due client Open-Meteo** (`io/openmeteo.py` e `previsione.py`, che The Pot preferisce per l'asincrono, la cache e
-i campi dell'interfaccia). Garden, persistenza SQLite e serializzazione di fitosim li usano solo lo strumento e gli
-esempi: restano, congelati.
+Due decisioni trovate controllando il `domain` di fitosim contro The Pot, e prese il 2026-09-20 (blocco B): il
+**pianificatore** di fitosim (`domain/scheduler.py`) è stato tolto, perché nessuno lo chiamava e la proiezione di
+`idrica_service` fa lo stesso anello con lo stesso `Pot.apply_step` sapendo di più; i **due client Open-Meteo**
+(`io/openmeteo.py` e `previsione.py`) restano per scelta — quello di fitosim ha l'archivio ERA5 per i gradi-giorno,
+quello di The Pot le orarie, l'«adesso» e i codici del cielo per l'interfaccia. Garden, persistenza SQLite,
+serializzazione e i `Protocol` dei sensori di fitosim li usano solo lo strumento e gli esempi: sono lo strato
+standalone, congelato per iscritto nel README, e la loro sorte si decide dopo la fase 2, quando lo strumento
+passerà sui modelli dell'app.
 
 ## Riferimenti
 
