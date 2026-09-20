@@ -716,10 +716,9 @@ def fao56_stage_from_growth_stages(
     del catalogo hanno infatti kc_late ≈ kc_initial, quindi la scelta
     non introduce distorsioni.
 
-    La riduzione di Kc durante la dormienza vera (un sempreverde
-    dormiente traspira molto meno di uno in ripresa) è un raffinamento
-    successivo, deliberatamente fuori da questo passaggio perché
-    cambierebbe i numeri del bilancio idrico e non solo il vocabolario.
+    Questo è tutto quello che il riposo fa al Kc: lo porta allo stadio
+    INITIAL quando è da solo. La dormienza — la pianta senza foglie —
+    ha un passo in più, in `effective_kc`: il Kc del suolo nudo.
     """
     stage_set = set(stages)
     if stage_set & {GrowthStage.FRUITING, GrowthStage.FLOWERING}:
@@ -729,7 +728,7 @@ def fao56_stage_from_growth_stages(
     return PhenologicalStage.INITIAL
 
 # =======================================================================
-#  Riduzione del Kc in dormienza
+#  Il Kc in dormienza e in riposo
 # =======================================================================
 #
 # Il problema
@@ -739,74 +738,66 @@ def fao56_stage_from_growth_stages(
 # perenne in vaso passa metà dell'anno in dormienza o riposo, e in quello
 # stato consuma molta meno acqua di quando è in piena attività.
 #
-# Senza questa correzione il modello sbagliava in modo evidente sul
-# limone: a gennaio, in riposo con i frutti appesi, gli veniva attribuito
-# lo stesso Kc di piena attività estiva.
+# Due stati, due fisiche
+# ----------------------
+# **Dormienza**: la pianta è senza foglie o ferma (un acero, un'ortensia,
+# una succulenta in riposo invernale). La traspirazione è zero e resta
+# l'evaporazione dal substrato: il Kc è quello del suolo nudo. FAO-56 lo
+# dice per la stagione non vegetativa (cap. 6: il Kc di un suolo senza
+# vegetazione è il Kc ini del suolo nudo, fig. 29, che con ET₀ sotto 1
+# mm/giorno e bagnature ogni 10–20 giorni vale 0,2–0,4) e lo quantifica
+# come `Kc min` = 0,15–0,20, il minimo per suolo nudo asciutto (eq. 76).
+# Per un vaso domestico, bagnato ogni due-tre settimane d'inverno, vale il
+# capo basso: `KC_BARE_SOIL_FLOOR` = 0,20.
 #
-# Il pavimento evaporativo (la parte che è facile sbagliare)
-# ----------------------------------------------------------
-# Kc è il rapporto ET_coltura / ET₀, e mette insieme DUE flussi:
-# traspirazione della pianta ed evaporazione dalla superficie del
-# substrato. In dormienza la traspirazione crolla, ma l'evaporazione
-# resta: il substrato nudo continua a perdere acqua.
+# **Riposo**: la pianta tiene le foglie e rallenta (un agrume, un olivo,
+# un rosmarino, un ficus d'inverno). Traspira ancora, e consuma meno
+# perché l'ET₀ è bassa, non perché il suo Kc crolli: FAO-56 tab. 12 dà
+# agli agrumi 0,70 / 0,65 / 0,70 e all'olivo 0,65 / 0,70 / 0,70 lungo
+# tutto l'anno, alle conifere 1,0 (con la nota sul controllo stomatico).
+# In riposo vale quindi il Kc dello stadio che il calendario dà — il
+# `kc_initial` della specie quando il riposo è da solo, il MID se insieme
+# porta frutti o fiori, com'è per gli agrumi.
 #
-# Quindi il Kc di dormienza NON può tendere a zero. Ha un pavimento
-# fisico dato dalla sola evaporazione, che per un vaso domestico (dove
-# la superficie è interamente esposta) vale circa 0.20 secondo i valori
-# di Kc_ini per suolo nudo di FAO-56 con bagnature poco frequenti.
+# Sbagliare la dormienza sarebbe pericoloso nella direzione peggiore: un
+# modello che dice "la pianta dormiente non consuma nulla" non
+# suggerirebbe mai di irrigare, e le perenni in vaso muoiono anche di sete
+# invernale, non solo di marciume. Da qui il pavimento, mai zero.
 #
-# Sbagliare questo punto sarebbe pericoloso nella direzione peggiore:
-# un modello che dice "la pianta dormiente non consuma nulla" non
-# suggerirebbe mai di irrigare, e le perenni in vaso muoiono anche di
-# sete invernale, non solo di marciume.
+# Storia (A5, 2026-09-20)
+# -----------------------
+# Fino al 2026-09-20 c'erano due fattori sul `kc_mid`, 0,25 in dormienza
+# e 0,50 in riposo, «stime ragionevoli, non misure». Contati sul catalogo
+# di The Pot: il 0,25 non agiva mai (0,15–0,21 su ogni gruppo, sotto il
+# pavimento, che faceva tutto lui), e il 0,50 coincideva con il
+# `kc_initial` che lo stadio dava già — tranne per gli agrumi a gennaio,
+# che dimezzava a 0,375 dove FAO dice 0,70. Due costanti senza fonte, una
+# inerte e una nel verso sbagliato: tolte.
 #
-# Nel dual-Kc il pavimento NON si applica: lì l'evaporazione è già
-# contabilizzata a parte da Ke, e Kcb è traspirazione pura, quindi può
-# scendere liberamente.
-#
-# I valori
-# --------
-# Sono stime ragionevoli, non misure: la fascia 3 li taterà contro i
-# dati reali. La riduzione si calcola sul kc_mid della specie, cioè
-# sulla sua attività di picco, perché "dormienza" significa proprio
-# "una frazione della piena attività" a prescindere da quale stadio
-# FAO-56 la macchina degli stadi avrebbe altrimenti scelto.
+# Nel dual-Kc l'evaporazione è già contabilizzata a parte da Ke, e il
+# Kcb in dormienza è quello del suolo nudo di FAO-56, il capo basso del
+# `Kc min` di eq. 76: `KCB_BARE_SOIL` = 0,15.
 
 KC_BARE_SOIL_FLOOR = 0.20
-"""Kc minimo di un vaso in dormienza: sola evaporazione dal substrato."""
+"""Kc di un vaso in dormienza: sola evaporazione dal substrato (FAO-56
+`Kc min` per suolo nudo asciutto, eq. 76; Kc ini del suolo nudo con ET₀
+bassa e bagnature rade, fig. 29)."""
 
-DORMANCY_KC_FACTOR = 0.25
-"""Frazione del kc_mid in dormienza profonda (gemme chiuse, metabolismo
-quasi fermo)."""
-
-REST_KC_FACTOR = 0.50
-"""Frazione del kc_mid in riposo leggero (attività ridotta, chioma
-presente e funzionante)."""
+KCB_BARE_SOIL = 0.15
+"""Kcb di un vaso in dormienza nel dual-Kc: il capo basso del `Kc min` di
+FAO-56 eq. 76, la sola diffusione residua di un suolo nudo asciutto."""
 
 
-def dormancy_kc_factor(
-    growth_stages: tuple[GrowthStage, ...],
-) -> float | None:
+def is_dormant(growth_stages: tuple[GrowthStage, ...]) -> bool:
     """
-    Fattore di riduzione del Kc per gli stadi botanici indicati.
+    Vero se fra gli stadi botanici c'è la dormienza.
 
-    Ritorna `None` quando nessuna riduzione si applica, così il
-    chiamante distingue "nessuna riduzione" da "riduzione pari a 1.0".
-
-    Gli stadi possono essere simultanei: la presenza di dormienza o
-    riposo determina la riduzione a prescindere da cosa altro la
-    pianta stia facendo. Un limone a gennaio è in riposo *e* porta
-    frutti, ma il suo metabolismo è quello di una pianta in riposo.
-
-    Il germogliamento non riceve riduzione: la pianta è in ripresa
-    attiva, e la chioma ancora piccola è già rappresentata dal Kc
-    dello stadio iniziale.
+    Gli stadi possono essere simultanei: la dormienza vince su tutto,
+    perché una pianta senza foglie non traspira qualunque altra cosa il
+    calendario le attribuisca. Il riposo no: non riduce il Kc oltre
+    quello che lo stadio FAO-56 già dà (vedi il commento in testa).
     """
-    if GrowthStage.DORMANCY in growth_stages:
-        return DORMANCY_KC_FACTOR
-    if GrowthStage.REST in growth_stages:
-        return REST_KC_FACTOR
-    return None
+    return GrowthStage.DORMANCY in growth_stages
 
 
 def effective_kc(
@@ -815,22 +806,17 @@ def effective_kc(
     growth_stages: tuple[GrowthStage, ...] | None = None,
 ) -> float:
     """
-    Kc della specie con la riduzione di dormienza applicata.
+    Kc della specie nello stadio, con la dormienza applicata.
 
-    Senza `growth_stages` (o con stadi di piena attività) coincide con
-    `kc_for_stage`: il comportamento delle annuali è invariato.
-
-    In dormienza o riposo restituisce una frazione del kc_mid, mai
-    inferiore al pavimento evaporativo `KC_BARE_SOIL_FLOOR` — perché
-    il substrato continua a evaporare anche quando la pianta è ferma.
+    Senza `growth_stages` (o senza dormienza) coincide con
+    `kc_for_stage`: il comportamento delle annuali è invariato, e una
+    perenne in riposo prende il Kc dello stadio che il calendario le
+    dà. In dormienza restituisce `KC_BARE_SOIL_FLOOR`: il substrato
+    continua a evaporare anche quando la pianta è ferma.
     """
-    base = kc_for_stage(species, stage)
-    if growth_stages is None:
-        return base
-    factor = dormancy_kc_factor(growth_stages)
-    if factor is None:
-        return base
-    return max(KC_BARE_SOIL_FLOOR, species.kc_mid * factor)
+    if growth_stages is not None and is_dormant(growth_stages):
+        return KC_BARE_SOIL_FLOOR
+    return kc_for_stage(species, stage)
 
 
 def effective_kcb(
@@ -839,27 +825,22 @@ def effective_kcb(
     growth_stages: tuple[GrowthStage, ...] | None = None,
 ) -> float:
     """
-    Kcb (traspirazione basale) con la riduzione di dormienza applicata.
+    Kcb (traspirazione basale) con la dormienza applicata.
 
-    Come `effective_kc` ma **senza pavimento evaporativo**: nel modello
-    dual-Kc l'evaporazione dalla superficie è contabilizzata a parte da
-    Ke, quindi Kcb è traspirazione pura e in dormienza può scendere
-    liberamente verso valori molto bassi.
+    Come `effective_kc`, ma in dormienza vale `KCB_BARE_SOIL`: nel
+    modello dual-Kc l'evaporazione dalla superficie è contabilizzata a
+    parte da Ke, e la pianta senza foglie non traspira.
 
     Richiede una specie con i Kcb valorizzati (`supports_dual_kc`).
     """
+    if growth_stages is not None and is_dormant(growth_stages):
+        return KCB_BARE_SOIL
     base_map = {
         PhenologicalStage.INITIAL: species.kcb_initial,
         PhenologicalStage.MID_SEASON: species.kcb_mid,
         PhenologicalStage.LATE_SEASON: species.kcb_late,
     }
-    base = base_map[stage]
-    if growth_stages is None:
-        return base
-    factor = dormancy_kc_factor(growth_stages)
-    if factor is None:
-        return base
-    return species.kcb_mid * factor
+    return base_map[stage]
 
 
 def kc_for_stage(species: Species, stage: PhenologicalStage) -> float:
@@ -895,8 +876,8 @@ def potential_et_c(
     si preferisce `actual_et_c`, che include la riduzione per stress.
 
     Passando `growth_stages` (la vista botanica alla data corrente) il
-    Kc viene ridotto se la pianta è in dormienza o riposo. Omettendolo
-    il comportamento è quello storico, senza riduzione.
+    Kc scende a quello del suolo nudo se la pianta è in dormienza.
+    Omettendolo il comportamento è quello storico, senza riduzione.
 
     L'unità di misura di ritorno è la stessa di et_0 (tipicamente mm/giorno).
     """
@@ -926,8 +907,8 @@ def actual_et_c(
     di stress parte prima che per il rosmarino (p=0.60), a parità di
     substrato.
 
-    Passando `growth_stages` il Kc viene ridotto in dormienza o riposo
-    (vedi `effective_kc`). Ks e la riduzione di dormienza sono
+    Passando `growth_stages` il Kc scende a quello del suolo nudo in
+    dormienza (vedi `effective_kc`). Ks e la dormienza sono
     indipendenti e si moltiplicano: una perenne dormiente in substrato
     asciutto consuma poco per entrambe le ragioni.
     """

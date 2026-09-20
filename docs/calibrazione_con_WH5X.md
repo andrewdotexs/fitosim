@@ -487,7 +487,9 @@ database. Prerequisito, chiuso lo stesso giorno: l'adapter non passava la fenolo
 annuale a giorni dall'impianto (un rosmarino piantato ad aprile era in stadio finale da luglio per sempre; un vaso
 senza data, Kc iniziale per sempre). Ora le perenni ricevono il calendario stagionale di `fenologia.py` e la
 riduzione in riposo e dormienza di fitosim; chi è cosa lo dice la scheda (`[care] ciclo_vita`) o il gruppo.
-Sull'anno, a Milano: rosmarino da Kc 0,60 fisso a 0,85 in stagione e 0,42 in riposo, +31 %.
+Sull'anno, a Milano: rosmarino da Kc 0,60 fisso a 0,85 in stagione e 0,40 in riposo (il suo `kc_initial`: dal
+2026-09-20, A5, il riposo è lo stadio del calendario senza fattori, e la dormienza è il Kc del suolo nudo, 0,20),
++31 %.
 - **Gradi-giorno.** Le annuali con le soglie in scheda (`[care.gradi_giorno]`: basilico 10 / 240 / 840, lattuga
 4 / 165 / 440, stime derivate da FAO-56 e dichiarate in Fonti) leggono lo stadio dal calore: a `setup` i
 gradi-giorno fra `planting_date` e ieri dall'archivio Open-Meteo, poi li accumula fitosim dalla forzante

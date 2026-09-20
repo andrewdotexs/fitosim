@@ -3047,11 +3047,13 @@ class TestPotPhenologyViews(unittest.TestCase):
         self.assertEqual(pot.gdd_accumulated, 0.0)
         self.assertEqual(pot.phenology_method(), PhenologyMethod.SEASONAL)
 
-    def test_citrus_winter_consumption_drops_with_dormancy(self):
-        # A parita' di ET0, un limone in riposo invernale deve
-        # consumare nettamente meno che in piena attivita' estiva.
-        # Prima della riduzione di dormienza i due valori erano
-        # identici, perche' entrambi i mesi mappavano su MID_SEASON.
+    def test_evergreen_citrus_winter_drop_comes_from_et0_not_kc(self):
+        # Un limone tiene le foglie e a gennaio porta frutti: a parita'
+        # di ET0 consuma come a luglio (FAO-56 tab. 12: agrumi 0,70 /
+        # 0,65 / 0,70 tutto l'anno), e consuma meno d'inverno perche'
+        # l'ET0 di Milano a gennaio e' un decimo di quella di luglio.
+        # Fino al 2026-09-20 (A5) un fattore 0,5 sul riposo lo
+        # dimezzava a parita' di ET0.
         from fitosim.domain.species import CITRUS
         winter_pot = self._pot(CITRUS, date(2020, 4, 1), label="inverno")
         summer_pot = self._pot(CITRUS, date(2020, 4, 1), label="estate")
@@ -3061,17 +3063,32 @@ class TestPotPhenologyViews(unittest.TestCase):
         et_summer = summer_pot.current_et_c(
             et_0_mm=2.0, current_date=date(2026, 7, 15),
         )
-        self.assertLess(et_winter, et_summer * 0.75)
+        self.assertAlmostEqual(et_winter, et_summer, places=9)
+        milano_gennaio = winter_pot.current_et_c(
+            et_0_mm=0.5, current_date=date(2026, 1, 15),
+        )
+        milano_luglio = summer_pot.current_et_c(
+            et_0_mm=4.9, current_date=date(2026, 7, 15),
+        )
+        self.assertLess(milano_gennaio, milano_luglio * 0.15)
 
     def test_dormant_pot_still_loses_water(self):
         # Il pavimento evaporativo: anche in dormienza il substrato
         # evapora, quindi il consumo non e' mai nullo. Un modello che
         # dicesse il contrario non suggerirebbe mai di irrigare
-        # d'inverno.
-        from fitosim.domain.species import CITRUS
-        pot = self._pot(CITRUS, date(2020, 4, 1))
+        # d'inverno. Una specie senza foglie a gennaio: il Kc e' quello
+        # del suolo nudo, e l'ET e' positiva.
+        from dataclasses import replace
+
+        from fitosim.domain.species import CITRUS, GrowthStage
+        calendario = list(CITRUS.phenology_calendar)
+        calendario[0] = (GrowthStage.DORMANCY,)
+        caduca = replace(CITRUS, common_name="caduca",
+                         phenology_calendar=tuple(calendario))
+        pot = self._pot(caduca, date(2020, 4, 1))
         et = pot.current_et_c(et_0_mm=2.0, current_date=date(2026, 1, 15))
         self.assertGreater(et, 0.0)
+        self.assertLess(et, pot.current_et_c(et_0_mm=2.0, current_date=date(2026, 7, 15)))
 
     def test_perennial_consumes_less_water_in_winter(self):
         # Verifica end-to-end: a parità di ET0, lo stesso vaso perenne

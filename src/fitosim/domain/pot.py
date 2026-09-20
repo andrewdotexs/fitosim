@@ -1108,10 +1108,10 @@ class Pot:
         """
         from fitosim.science.balance import stress_coefficient_ks
         stage = self.current_stage(current_date)
-        # Kcb per lo stadio corrente, ridotto se la pianta è in
-        # dormienza o riposo. Qui NON si applica il pavimento
-        # evaporativo: nel dual-Kc l'evaporazione è già contabilizzata
-        # separatamente da Ke, quindi Kcb è traspirazione pura.
+        # Kcb per lo stadio corrente; in dormienza quello del suolo
+        # nudo (KCB_BARE_SOIL): nel dual-Kc l'evaporazione è già
+        # contabilizzata separatamente da Ke, quindi Kcb è traspirazione
+        # pura, e una pianta senza foglie non traspira.
         kcb = effective_kcb(
             self.species, stage, self.growth_stages(current_date),
         )
@@ -1226,9 +1226,9 @@ class Pot:
         from fitosim.science.balance import stress_coefficient_ks
         stage = self.current_stage(current_date)
         kc = kc_from_cover(
-            # Vista botanica: abilita la riduzione del Kc quando la
-            # pianta è in dormienza o riposo. Per le annuali non
-            # produce mai riduzione, quindi è inerte.
+            # Vista botanica: in dormienza il Kc è quello del suolo
+            # nudo. Per le annuali non produce mai riduzione, quindi è
+            # inerte; il riposo agisce solo tramite lo stadio.
             effective_kc(self.species, stage, self.growth_stages(current_date)),
             self.canopy_cover_fraction,
             self.cover_height_m,
