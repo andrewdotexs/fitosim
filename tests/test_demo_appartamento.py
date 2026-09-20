@@ -9,6 +9,7 @@ round-trip persistenza funzioni correttamente.
 
 import os
 import subprocess
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -19,9 +20,11 @@ EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 DEMO_SCRIPT = EXAMPLES_DIR / "tappa5_E_appartamento_demo.py"
 PROJECT_ROOT = EXAMPLES_DIR.parent
 SRC_DIR = PROJECT_ROOT / "src"
+# La cartella dei PNG per questi test, una per sessione.
+_TMP_OUTPUT = Path(tempfile.mkdtemp(prefix="fitosim_demo_"))
 
 
-def _run_demo_script() -> subprocess.CompletedProcess:
+def _run_demo_script(output_dir: Path | None = None) -> subprocess.CompletedProcess:
     """
     Esegue lo script di demo come subprocess. Importante: parte
     dall'ambiente di sistema esistente (os.environ.copy) e ci aggiunge
@@ -50,6 +53,9 @@ def _run_demo_script() -> subprocess.CompletedProcess:
     # carattere fuori dal range ASCII.
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    # I PNG vanno in una cartella temporanea, non in examples/: un giro di
+    # test non deve lasciare file modificati nel working tree.
+    env["FITOSIM_DEMO_OUTPUT_DIR"] = str(output_dir or _TMP_OUTPUT)
 
     return subprocess.run(
         [sys.executable, str(DEMO_SCRIPT)],
@@ -89,7 +95,7 @@ class TestDemoAppartamentoExecution(unittest.TestCase):
             "tappa5_E_heatmap_et.png",
         ]
         for png_name in expected_pngs:
-            png_path = EXAMPLES_DIR / png_name
+            png_path = _TMP_OUTPUT / png_name
             with self.subTest(png=png_name):
                 self.assertTrue(
                     png_path.exists(),

@@ -1,0 +1,12 @@
+# Fine riga: LF nel repository e nel checkout, su ogni macchina (D, 2026-09-21).
+# Con core.autocrlf=true su Windows ogni commit avvisava «LF will be replaced by
+# CRLF»: qui si decide una volta per tutte, e PyCharm non se ne accorge.
+* text=auto eol=lf
+
+# Binari: mai toccare i byte.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.docx binary
+*.db binary
+*.sqlite binary

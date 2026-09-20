@@ -68,6 +68,7 @@ fitosim stesso.
 """
 
 from datetime import date, datetime, timedelta, timezone
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import tempfile
@@ -736,8 +737,12 @@ print("e persistente tra le sessioni del dashboard.")
 
 stampa_sezione("Generazione grafici di analisi")
 
-# Directory di output: stessa dello script.
-output_dir = Path(__file__).parent
+# Directory di output: quella dello script, salvo `FITOSIM_DEMO_OUTPUT_DIR`.
+# I PNG sono un prodotto della demo, non un asset del repository (dal
+# 2026-09-21 non sono tracciati): i test la fanno scrivere in una cartella
+# temporanea, così un giro di test non lascia file modificati in examples/.
+output_dir = Path(os.environ.get("FITOSIM_DEMO_OUTPUT_DIR") or Path(__file__).parent)
+output_dir.mkdir(parents=True, exist_ok=True)
 
 # Palette di colori coerente per i cinque vasi (uno per vaso).
 colori_per_vaso = {
