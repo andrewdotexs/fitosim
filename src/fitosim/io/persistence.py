@@ -124,7 +124,12 @@ from fitosim.science.substrate import (
 # Versione 6 (H.1-c di The Pot): tre colonne facoltative sulla tabella
 # pots per le misure della pianta (altezza, larghezza e altezza della
 # chioma), che entrano nel coefficiente colturale e in Penman-Monteith.
-SCHEMA_VERSION = 6
+#
+# Versione 7 (A1, 2026-09-20): la colonna facoltativa bulk_density_kg_l
+# sulla tabella substrates, la densità apparente con cui il vaso pesa
+# il tampone del pH. NULL vuol dire «non dichiarata» e vale la densità
+# fissa di sempre.
+SCHEMA_VERSION = 7
 
 
 # =======================================================================
@@ -212,6 +217,7 @@ SCHEMA_STATEMENTS: List[str] = [
         tew_mm              REAL,
         cec_meq_per_100g    REAL,
         ph_typical          REAL,
+        bulk_density_kg_l   REAL,
         is_mixture          INTEGER NOT NULL DEFAULT 0
     )
     """,
@@ -674,6 +680,9 @@ class GardenPersistence:
             if current < 6:
                 self._migrate_v5_to_v6()
                 current = 6
+            if current < 7:
+                self._migrate_v6_to_v7()
+                current = 7
             # Aggiorna la versione registrata.
             self._conn.execute(
                 "INSERT INTO schema_metadata (version) VALUES (?)",
@@ -793,6 +802,26 @@ class GardenPersistence:
                     self._conn.execute(
                         f"ALTER TABLE pots ADD COLUMN {column} REAL"
                     )
+
+    def _migrate_v6_to_v7(self) -> None:
+        """
+        Migrazione dalla versione 6 alla versione 7.
+
+        Cambiamento (A1, 2026-09-20): la colonna facoltativa
+        `bulk_density_kg_l` sulla tabella substrates, la densità
+        apparente a secco con cui `Pot.substrate_dry_mass_kg` pesa il
+        tampone del pH. I substrati già salvati restano NULL — «non
+        dichiarata» — e il vaso si comporta come prima, con la densità
+        fissa di 0,4 kg/L.
+
+        Idempotente e difensiva come le precedenti: salta la colonna se
+        c'è già, e la tabella se manca.
+        """
+        if self._table_exists("substrates"):
+            if not self._column_exists("substrates", "bulk_density_kg_l"):
+                self._conn.execute(
+                    "ALTER TABLE substrates ADD COLUMN bulk_density_kg_l REAL"
+                )
 
     def _migrate_v4_to_v5(self) -> None:
         """
@@ -1115,6 +1144,7 @@ class GardenPersistence:
                         theta_fc = ?, theta_pwp = ?, description = ?,
                         rew_mm = ?, tew_mm = ?,
                         cec_meq_per_100g = ?, ph_typical = ?,
+                        bulk_density_kg_l = ?,
                         is_mixture = ?
                     WHERE id = ?
                     """,
@@ -1123,6 +1153,7 @@ class GardenPersistence:
                         substrate.description,
                         substrate.rew_mm, substrate.tew_mm,
                         substrate.cec_meq_per_100g, substrate.ph_typical,
+                        substrate.bulk_density_kg_l,
                         1 if is_mixture else 0,
                         substrate_id,
                     ),
@@ -1139,14 +1170,15 @@ class GardenPersistence:
                     INSERT INTO substrates (
                         name, theta_fc, theta_pwp, description,
                         rew_mm, tew_mm, cec_meq_per_100g, ph_typical,
-                        is_mixture
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        bulk_density_kg_l, is_mixture
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         substrate.name, substrate.theta_fc,
                         substrate.theta_pwp, substrate.description,
                         substrate.rew_mm, substrate.tew_mm,
                         substrate.cec_meq_per_100g, substrate.ph_typical,
+                        substrate.bulk_density_kg_l,
                         1 if is_mixture else 0,
                     ),
                 )
@@ -1205,6 +1237,7 @@ class GardenPersistence:
                 rew_mm=row["rew_mm"], tew_mm=row["tew_mm"],
                 cec_meq_per_100g=row["cec_meq_per_100g"],
                 ph_typical=row["ph_typical"],
+                bulk_density_kg_l=row["bulk_density_kg_l"],
             )
 
         # Mistura: ricostruisci la ricetta e ricalcola i parametri.
@@ -1227,6 +1260,7 @@ class GardenPersistence:
             rew_mm=row["rew_mm"], tew_mm=row["tew_mm"],
             cec_meq_per_100g=row["cec_meq_per_100g"],
             ph_typical=row["ph_typical"],
+            bulk_density_kg_l=row["bulk_density_kg_l"],
         )
 
     def _load_substrate_components(

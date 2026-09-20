@@ -117,6 +117,20 @@ class Substrate:
 
         Quando lasciato None, il pH iniziale del Pot ricade sul valore
         neutro 7.0 (vedi gerarchia di inizializzazione in `Pot.__init__`).
+    bulk_density_kg_l : float | None, opzionale
+        Densità apparente a secco del substrato, in kg per litro di
+        volume apparente. Serve a `Pot.substrate_dry_mass_kg`, cioè al
+        peso del substrato nel tampone del pH (`ph_after_mixing`): il
+        tampone vale CEC × massa secca, e la massa secca di un litro di
+        torba (0,15–0,25 kg) non è quella di un litro di terriccio con
+        sabbia e pomice (0,5–0,6) né di sabbia pura (1,5). Senza questo
+        campo la massa viene da una densità fissa di 0,4 kg/L
+        (`TYPICAL_SUBSTRATE_DENSITY_KG_PER_L`), che per la torba è il
+        doppio e per la sabbia un quarto del vero. Il catalogo di The Pot
+        la deriva dalla ricetta come media pesata sui volumi delle
+        densità sfuse dei componenti; la CEC del miscuglio, invece, è
+        una media pesata **sulla massa** (la CEC è per grammo), e le due
+        arrivano insieme.
 
     Vincoli
     -------
@@ -150,6 +164,10 @@ class Substrate:
     # lo usa come default per l'inizializzazione del ph_substrate
     # invece del neutro 7.0.
     ph_typical: float | None = None
+    # Densità apparente a secco, kg/L. Quando c'è, la massa secca del
+    # substrato nel vaso — il peso del tampone del pH — la usa al posto
+    # della densità fissa di `fertigation.TYPICAL_SUBSTRATE_DENSITY_KG_PER_L`.
+    bulk_density_kg_l: float | None = None
 
     def __post_init__(self) -> None:
         # Controllo di consistenza fisica sui due parametri idrici.
@@ -203,6 +221,18 @@ class Substrate:
                     f"{self.ph_typical} è fuori scala chimica (0, 14). "
                     f"I substrati reali tipicamente stanno in [3, 9]. "
                     f"Verifica il valore."
+                )
+
+        # Validazione della densità apparente: positiva, e sotto i 3 kg/L.
+        # I substrati stanno fra 0,08 (sfagno) e 1,6 (sabbia, ghiaia);
+        # il limite alto cattura le unità sbagliate (g/L, kg/m³).
+        if self.bulk_density_kg_l is not None:
+            if not 0.0 < self.bulk_density_kg_l <= 3.0:
+                raise ValueError(
+                    f"Substrato '{self.name}': bulk_density_kg_l="
+                    f"{self.bulk_density_kg_l} è fuori range plausibile "
+                    f"(0, 3]. La densità apparente va in kg per litro: "
+                    f"0,1 perlite, 0,2 torba, 0,4 terriccio, 1,5 sabbia."
                 )
 
     @property

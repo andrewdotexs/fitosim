@@ -380,6 +380,14 @@ kPa). Dal 2026-09-19 il catalogo ufficiale è solo quello di The Pot, con questa
 che ne esce è più piccola: il modello annaffia prima, che per un vaso è il verso giusto. Per la calibrazione
 conta poco comunque, perché l'ancora rimette i due estremi sulla scala della sonda.
 
+Dal 2026-09-20 (A1) le stesse schede portano anche la **CEC** e la **densità** del mix: i componenti dichiarano
+la capacità di scambio con la fonte, il seed la deriva pesandola sulla massa (la CEC è per grammo: la sabbia
+pesa tanto e scambia niente), la densità sui volumi. Il drenante viene 24 meq/100 g a 0,57 kg/L, la cassetta 41
+a 0,35, una torba pura 120 a 0,20. Prima arrivavano a fitosim CEC 10 e 0,4 kg/L per qualunque substrato — la
+sabbia — e in cinque annaffiate d'acqua di rete a 7,5 il pH del modello andava da 6,5 a 7,1; con i numeri veri
+si ferma a 6,8, e la torba a 6,7. Nella calibrazione la chimica resta spenta (`chemistry_model`), ma è il vaso
+dell'app che da qui tampona con quello che ha dentro.
+
 Quattro cose da sapere, tutte scritte anche nei `config.json`:
 
 - **Per una perenne la data d'impianto non entra nel modello** (il calendario fenologico segue il mese). Le

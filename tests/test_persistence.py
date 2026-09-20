@@ -323,6 +323,94 @@ class TestCatalogSubstrate(unittest.TestCase):
         self.assertEqual(retrieved.theta_fc, 0.42)
         self.assertEqual(retrieved.cec_meq_per_100g, 55.0)
 
+    def test_bulk_density_survives_for_pure_and_mixture(self):
+        # A1: la densità apparente si salva e si rilegge, per il substrato
+        # puro e per la mistura (dove è un parametro «di mistura», come
+        # CEC e pH, che compose_substrate non ricalcola).
+        torba = Substrate(
+            name="torba", theta_fc=0.75, theta_pwp=0.35,
+            bulk_density_kg_l=0.20,
+        )
+        self.persistence.register_substrate(torba)
+        self.assertEqual(
+            self.persistence.get_substrate("torba").bulk_density_kg_l, 0.20,
+        )
+        # Senza densità resta None: il vaso usa la densità fissa.
+        self.persistence.register_substrate(_make_universal_substrate())
+        self.assertIsNone(
+            self.persistence.get_substrate("terriccio universale").bulk_density_kg_l,
+        )
+
+        pomice = _make_pomice()
+        akadama = _make_akadama()
+        self.persistence.register_base_material(pomice)
+        self.persistence.register_base_material(akadama)
+        components = [
+            MixComponent(material=pomice, fraction=0.4),
+            MixComponent(material=akadama, fraction=0.6),
+        ]
+        composed = compose_substrate(components, name="bonsai mix")
+        pesato = Substrate(
+            name=composed.name, theta_fc=composed.theta_fc,
+            theta_pwp=composed.theta_pwp, bulk_density_kg_l=0.64,
+        )
+        self.persistence.register_substrate(pesato, components=components)
+        self.assertEqual(
+            self.persistence.get_substrate("bonsai mix").bulk_density_kg_l, 0.64,
+        )
+
+    def test_v6_database_migrates_to_v7(self):
+        # Un database v6 (substrates senza la colonna) migra, e i suoi
+        # substrati risultano NULL — «densità non dichiarata» — che è
+        # esattamente come si comportavano.
+        import os
+        import sqlite3
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            conn = sqlite3.connect(tmp_path)
+            conn.execute("""
+                CREATE TABLE schema_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version INTEGER NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE substrates (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name                TEXT NOT NULL UNIQUE,
+                    theta_fc            REAL NOT NULL,
+                    theta_pwp           REAL NOT NULL,
+                    description         TEXT NOT NULL DEFAULT '',
+                    rew_mm              REAL,
+                    tew_mm              REAL,
+                    cec_meq_per_100g    REAL,
+                    ph_typical          REAL,
+                    is_mixture          INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            conn.execute(
+                "INSERT INTO substrates (name, theta_fc, theta_pwp) "
+                "VALUES ('vecchio', 0.4, 0.1)"
+            )
+            conn.execute("INSERT INTO schema_metadata (version) VALUES (6)")
+            conn.commit()
+            conn.close()
+
+            with GardenPersistence(tmp_path) as p:
+                cursor = p._conn.execute("PRAGMA table_info(substrates)")
+                cols = [r["name"] for r in cursor.fetchall()]
+                self.assertIn("bulk_density_kg_l", cols)
+                self.assertIsNone(p.get_substrate("vecchio").bulk_density_kg_l)
+                # Idempotente: riapplicarla non deve sollevare.
+                p._migrate_v6_to_v7()
+                cursor = p._conn.execute("PRAGMA table_info(substrates)")
+                cols = [r["name"] for r in cursor.fetchall()]
+                self.assertEqual(cols.count("bulk_density_kg_l"), 1)
+        finally:
+            os.unlink(tmp_path)
+
 
 # =======================================================================
 #  Famiglia 3: garden round-trip

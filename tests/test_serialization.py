@@ -280,6 +280,25 @@ class TestRoundTripBasic(unittest.TestCase):
         self.assertEqual(substrate2.rew_mm, 8.0)
         self.assertEqual(substrate2.tew_mm, 18.0)
 
+    def test_substrate_bulk_density_round_trip(self):
+        # A1: la densità apparente sopravvive al giro, e un JSON scritto
+        # prima del campo si rilegge con None (la densità fissa di prima).
+        leggero = Substrate(
+            name="torba", theta_fc=0.75, theta_pwp=0.35,
+            bulk_density_kg_l=0.20,
+        )
+        g = Garden(name="balcone")
+        g.add_pot(_make_basic_pot(substrate=leggero))
+        g2 = import_garden_json(export_garden_json(g))
+        self.assertEqual(
+            g2.get_pot("basilico-1").substrate.bulk_density_kg_l, 0.20,
+        )
+
+        vecchio = _make_universal_dict()
+        self.assertNotIn("bulk_density_kg_l", vecchio)
+        from fitosim.io.serialization import _dict_to_substrate
+        self.assertIsNone(_dict_to_substrate(vecchio, {}).bulk_density_kg_l)
+
     def test_channel_mapping_round_trip(self):
         # La mappa label → channel_id è preservata dal round-trip JSON.
         g = Garden(name="balcone")

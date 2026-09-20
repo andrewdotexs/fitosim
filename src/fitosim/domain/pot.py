@@ -960,23 +960,36 @@ class Pot:
         `pot_volume_l × active_depth_fraction` (la frazione attiva
         tiene conto dello strato superficiale eventualmente non popolato
         da radici, modellato in tappa 4 della fascia 1). La massa secca
-        si ottiene moltiplicando per la densità tipica dei terricci da
-        giardinaggio domestico (0.4 kg/L). Per un vaso da 2 L con
-        active_depth_fraction=1 si ottiene 0.8 kg, valore di riferimento
-        usato negli esempi della docstring del modulo
-        `science/fertigation.py`.
+        si ottiene moltiplicando per la densità apparente del substrato
+        (`Substrate.bulk_density_kg_l`) quando la dichiara — il catalogo
+        di The Pot la deriva dalla ricetta — e altrimenti per la densità
+        tipica dei terricci da giardinaggio domestico (0.4 kg/L). Per un
+        vaso da 2 L con active_depth_fraction=1 e senza densità si
+        ottiene 0.8 kg, valore di riferimento usato negli esempi della
+        docstring del modulo `science/fertigation.py`.
 
-        Nota: questa è una stima a partire dal volume, non un dato
-        misurato. Per il giardiniere che pesa effettivamente il substrato
-        prima di rinvasare, il valore reale potrebbe differire di qualche
-        decina di percento dalla stima. È un'approssimazione coerente
-        con la filosofia di fitosim di "modello semplice ma calibrabile".
+        La differenza non è di dettaglio: un litro di torba pesa 0,2 kg,
+        uno di terriccio con sabbia e pomice 0,57, uno di sabbia 1,5. La
+        massa entra nel tampone del pH moltiplicata per la CEC, e con
+        la densità fissa una torba tamponava la metà del dovuto e una
+        sabbia il quadruplo.
+
+        Nota: anche con la densità dichiarata è una stima a partire dal
+        volume, non un dato misurato. Per il giardiniere che pesa
+        effettivamente il substrato prima di rinvasare, il valore reale
+        potrebbe differire di qualche decina di percento dalla stima
+        (la densità sfusa varia con l'umidità e il costipamento). È
+        un'approssimazione coerente con la filosofia di fitosim di
+        "modello semplice ma calibrabile".
         """
         from fitosim.science.fertigation import (
             TYPICAL_SUBSTRATE_DENSITY_KG_PER_L,
         )
         active_volume_l = self.pot_volume_l * self.active_depth_fraction
-        return active_volume_l * TYPICAL_SUBSTRATE_DENSITY_KG_PER_L
+        density = self.substrate.bulk_density_kg_l
+        if density is None:
+            density = TYPICAL_SUBSTRATE_DENSITY_KG_PER_L
+        return active_volume_l * density
 
     @property
     def kp(self) -> float:

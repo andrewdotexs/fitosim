@@ -341,7 +341,7 @@ fitosim/
 │   │   ├── lysimeter.py               # pesata -> Kc (ground truth)
 │   │   └── calibration_resolution.py  # precedenza tra fonti
 │   └── io/                 # adapter di acquisizione e persistenza
-│       ├── persistence.py  # SQLite, schema v5
+│       ├── persistence.py  # SQLite, schema v7
 │       ├── serialization.py # JSON formato v3
 │       └── sensors/
 │           ├── protocols.py    # SoilSensor, EnvironmentSensor (Protocol)
@@ -352,7 +352,7 @@ fitosim/
 │           ├── openmeteo.py    # adapter Open-Meteo (meteo)
 │           ├── http_json.py    # adapter generico per gateway ESP32
 │           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 1394 test verdi (core)
+├── tests/                  # 1449 test verdi (core)
 ├── examples/               # esempi e demo end-to-end
 │   ├── tappa4_complete_demo.py        # demo Garden + persistenza + allerte
 │   ├── tappa5_A_penman_monteith_demo.py

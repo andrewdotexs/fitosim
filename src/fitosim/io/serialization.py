@@ -315,6 +315,7 @@ def _substrate_to_dict(
         "tew_mm": substrate.tew_mm,
         "cec_meq_per_100g": substrate.cec_meq_per_100g,
         "ph_typical": substrate.ph_typical,
+        "bulk_density_kg_l": substrate.bulk_density_kg_l,
         "is_mixture": components is not None,
     }
     if components is not None:
@@ -367,6 +368,7 @@ def _dict_to_substrate(
             tew_mm=data.get("tew_mm"),
             cec_meq_per_100g=data.get("cec_meq_per_100g"),
             ph_typical=data.get("ph_typical"),
+            bulk_density_kg_l=data.get("bulk_density_kg_l"),
         )
 
     # Mistura: ricostruisci la ricetta e ricalcola i parametri.
@@ -403,6 +405,7 @@ def _dict_to_substrate(
         tew_mm=data.get("tew_mm"),
         cec_meq_per_100g=data.get("cec_meq_per_100g"),
         ph_typical=data.get("ph_typical"),
+        bulk_density_kg_l=data.get("bulk_density_kg_l"),
     )
 
 

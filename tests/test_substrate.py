@@ -910,5 +910,54 @@ class TestSubstratePhTypical(unittest.TestCase):
         self.assertEqual(s.ph_typical, 4.8)
 
 
+# =======================================================================
+#  A1 (2026-09-20): densità apparente del substrato
+# =======================================================================
+
+class TestSubstrateBulkDensity(unittest.TestCase):
+    """
+    `bulk_density_kg_l` è il peso di un litro di substrato secco: entra
+    nella massa con cui il vaso pesa il tampone del pH. Facoltativo, e
+    validato come la CEC: positivo, e sotto un limite che cattura le
+    unità sbagliate.
+    """
+
+    def test_default_is_none(self):
+        s = Substrate(name="generico", theta_fc=0.40, theta_pwp=0.10)
+        self.assertIsNone(s.bulk_density_kg_l)
+
+    def test_declared_value_is_kept(self):
+        s = Substrate(name="torba", theta_fc=0.75, theta_pwp=0.35,
+                      bulk_density_kg_l=0.20)
+        self.assertEqual(s.bulk_density_kg_l, 0.20)
+
+    def test_sand_is_heavy_but_plausible(self):
+        s = Substrate(name="sabbia", theta_fc=0.12, theta_pwp=0.03,
+                      bulk_density_kg_l=1.5)
+        self.assertEqual(s.bulk_density_kg_l, 1.5)
+
+    def test_zero_rejected(self):
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      bulk_density_kg_l=0.0)
+
+    def test_negative_rejected(self):
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      bulk_density_kg_l=-0.4)
+
+    def test_wrong_unit_rejected(self):
+        # 400 è 0,4 kg/L scritto in g/L: fuori dal range (0, 3].
+        with self.assertRaises(ValueError):
+            Substrate(name="invalido", theta_fc=0.40, theta_pwp=0.10,
+                      bulk_density_kg_l=400.0)
+
+    def test_immutable(self):
+        s = Substrate(name="test", theta_fc=0.40, theta_pwp=0.10,
+                      bulk_density_kg_l=0.4)
+        with self.assertRaises(Exception):  # FrozenInstanceError
+            s.bulk_density_kg_l = 0.5
+
+
 if __name__ == "__main__":
     unittest.main()

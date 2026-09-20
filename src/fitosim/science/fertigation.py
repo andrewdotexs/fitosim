@@ -93,6 +93,12 @@ EC_TO_MEQ_PER_LITER = 10.0
 # 0.4 come valore di riferimento per il calcolo della massa secca
 # del substrato a partire dal volume del vaso, che entra come peso
 # del substrato nella formula del buffering del pH.
+#
+# È il ripiego per un substrato che non dichiara la sua densità
+# (`Substrate.bulk_density_kg_l`): quando la dichiara — il catalogo di
+# The Pot la deriva dalla ricetta — `Pot.substrate_dry_mass_kg` usa
+# quella, perché fra la torba (0,2) e la sabbia (1,5) c'è un fattore
+# sette, e il tampone del pH è proporzionale alla massa.
 TYPICAL_SUBSTRATE_DENSITY_KG_PER_L = 0.4
 
 

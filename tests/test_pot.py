@@ -1614,6 +1614,77 @@ class TestPotChemistryState(unittest.TestCase):
 
 
 # =======================================================================
+#  A1 (2026-09-20): la massa secca del substrato pesa con la densità vera
+# =======================================================================
+#
+# Il tampone del pH vale CEC × massa secca, e la massa secca era sempre
+# volume × 0,4 kg/L: una torba (0,2) tamponava il doppio del dovuto per
+# unità di CEC, una sabbia (1,5) un quarto. Con `bulk_density_kg_l` sul
+# substrato il vaso pesa quello che ha dentro; senza, come prima.
+
+class TestSubstrateDryMass(unittest.TestCase):
+
+    def _pot(self, substrate: Substrate, **overrides) -> Pot:
+        defaults = dict(
+            label="massa",
+            species=BASIL,
+            substrate=substrate,
+            pot_volume_l=5.0,
+            pot_diameter_cm=22.0,
+            location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1),
+        )
+        defaults.update(overrides)
+        return Pot(**defaults)
+
+    def test_without_density_the_fixed_value_stands(self):
+        # Retrocompatibilità: nessuna densità dichiarata, 0,4 kg/L.
+        from fitosim.science.fertigation import (
+            TYPICAL_SUBSTRATE_DENSITY_KG_PER_L,
+        )
+        s = Substrate(name="ignoto", theta_fc=0.40, theta_pwp=0.10)
+        pot = self._pot(s)
+        self.assertAlmostEqual(
+            pot.substrate_dry_mass_kg,
+            5.0 * TYPICAL_SUBSTRATE_DENSITY_KG_PER_L,
+        )
+
+    def test_declared_density_is_used(self):
+        # Un drenante per mediterranee del catalogo di The Pot: 0,5725
+        # kg/L dalla ricetta. Cinque litri pesano 2,86 kg, non 2,0.
+        s = Substrate(name="drenante", theta_fc=0.405, theta_pwp=0.185,
+                      bulk_density_kg_l=0.5725)
+        pot = self._pot(s)
+        self.assertAlmostEqual(pot.substrate_dry_mass_kg, 5.0 * 0.5725)
+
+    def test_active_depth_fraction_still_applies(self):
+        # La frazione attiva riduce la massa come riduceva prima.
+        s = Substrate(name="torba", theta_fc=0.75, theta_pwp=0.35,
+                      bulk_density_kg_l=0.20)
+        pot = self._pot(s, active_depth_fraction=0.8)
+        self.assertAlmostEqual(pot.substrate_dry_mass_kg, 5.0 * 0.8 * 0.20)
+
+    def test_a_light_substrate_buffers_less_than_the_fixed_density_said(self):
+        # La conseguenza sul modello: a parità di CEC per grammo, una
+        # torba da 0,2 kg/L ha metà del tampone che la densità fissa le
+        # attribuiva, e la stessa annaffiata la sposta di più.
+        pesante = Substrate(name="fisso", theta_fc=0.75, theta_pwp=0.35,
+                            cec_meq_per_100g=120.0, ph_typical=6.0)
+        leggera = Substrate(name="vero", theta_fc=0.75, theta_pwp=0.35,
+                            cec_meq_per_100g=120.0, ph_typical=6.0,
+                            bulk_density_kg_l=0.20)
+        a = self._pot(pesante)
+        b = self._pot(leggera)
+        for pot in (a, b):
+            pot.apply_fertigation_step(
+                volume_l=1.0, ec_mscm=0.5, ph=7.5,
+                current_date=date(2026, 5, 1),
+            )
+        self.assertGreater(b.ph_substrate, a.ph_substrate)
+        self.assertLess(b.ph_substrate, 7.5)
+
+
+# =======================================================================
 #  Sotto-tappa C tappa 3 fascia 2: metodi di fertirrigazione del Pot
 # =======================================================================
 
