@@ -1020,13 +1020,16 @@ class Pot:
         """I tre serbatoi come quantità, in milligrammi."""
         return NutrientAmounts(self.nutrient_n_mg, self.nutrient_p_mg, self.nutrient_k_mg)
 
-    def _set_nutrient_pools(self, pools: NutrientAmounts) -> None:
+    def set_nutrient_pools(self, pools: NutrientAmounts) -> None:
         """Scrive i serbatoi, ristretti alla massa salina: la loro somma
-        in milliequivalenti non può superarla."""
+        in milliequivalenti non può superarla. È la porta per chi porta uno
+        stato da fuori (una partenza stimata, una persistenza)."""
         coherent = clamp_to_salts(pools, self.salt_mass_meq)
         self.nutrient_n_mg = coherent.n_mg
         self.nutrient_p_mg = coherent.p_mg
         self.nutrient_k_mg = coherent.k_mg
+
+    _set_nutrient_pools = set_nutrient_pools
 
     @property
     def fc_water_volume_l(self) -> float:
