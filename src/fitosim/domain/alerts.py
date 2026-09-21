@@ -105,6 +105,9 @@ class AlertCategory(Enum):
     EC_TOO_HIGH = "ec_too_high"
     EC_TOO_LOW = "ec_too_low"
     PH_OUT_OF_RANGE = "ph_out_of_range"
+    # La riserva nutritiva (il colore dei sali, 2026-09-22): i serbatoi
+    # N, P, K rispetto al piano della specie, col *quale* manca.
+    NUTRIENT_LOW = "nutrient_low"
 
 
 # =======================================================================
@@ -443,6 +446,68 @@ def check_ph_out_of_range(
     )
 
 
+# Le soglie della riserva nutritiva: sotto un quarto della carica piena
+# «da concimare», sotto un decimo è urgente. Un quarto è quello che resta
+# a tre o quattro giorni dalla concimazione seguente su un piano
+# quindicinale (vedi `science/nutrients.py`): l'avviso arriva in tempo.
+NUTRIENT_RESERVE_INFO_FRACTION = 0.25
+NUTRIENT_RESERVE_WARNING_FRACTION = 0.10
+
+NUTRIENT_NAMES = {"n": "azoto (N)", "p": "fosforo (P₂O₅)", "k": "potassio (K₂O)"}
+
+
+def check_nutrient_low(
+    pot: Pot, current_date: date,
+) -> Optional[Alert]:
+    """
+    Allerta se la riserva nutritiva è bassa rispetto al piano della
+    specie: sotto `NUTRIENT_RESERVE_INFO_FRACTION` della carica piena è
+    un'informazione, sotto `NUTRIENT_RESERVE_WARNING_FRACTION` un
+    avvertimento. Dice quale nutriente manca di più e, se il vaso ha
+    fatto un passo, fra quanti giorni il serbatoio si svuota.
+
+    Niente allerta senza un piano (la specie non dichiara bersagli), nei
+    mesi in cui il piano non chiede niente, e durante la carica iniziale
+    del substrato (il rinvaso l'ha già concimato).
+    """
+    found = pot.nutrient_reserve(current_date)
+    if found is None:
+        return None
+    if pot.starter_charge_until is not None and current_date <= pot.starter_charge_until:
+        return None
+    if found.fraction >= NUTRIENT_RESERVE_INFO_FRACTION:
+        return None
+    severity = (
+        AlertSeverity.WARNING
+        if found.fraction < NUTRIENT_RESERVE_WARNING_FRACTION
+        else AlertSeverity.INFO
+    )
+    days_left = pot.nutrient_days_left(current_date)
+    when = (
+        f" Al ritmo di oggi si svuota fra {days_left:.0f} giorni."
+        if days_left is not None and days_left >= 1
+        else ""
+    )
+    return Alert(
+        alert_id=_make_alert_id(
+            pot.label, AlertCategory.NUTRIENT_LOW, current_date,
+        ),
+        severity=severity,
+        pot_label=pot.label,
+        category=AlertCategory.NUTRIENT_LOW,
+        message=(
+            f"Riserva nutritiva del vaso '{pot.label}' al "
+            f"{found.fraction * 100:.0f} % di quello che il piano vuole: "
+            f"manca soprattutto {NUTRIENT_NAMES[found.limiting]}.{when}"
+        ),
+        recommended_action=(
+            f"Concima il vaso '{pot.label}' con un prodotto ricco di "
+            f"{NUTRIENT_NAMES[found.limiting]}, alla dose del piano."
+        ),
+        triggered_date=current_date,
+    )
+
+
 # =======================================================================
 #  Tuple di tutte le regole
 # =======================================================================
@@ -455,4 +520,5 @@ ALL_RULES: Tuple[Callable[[Pot, date], Optional[Alert]], ...] = (
     check_ec_too_low,
     check_fertilization_due,
     check_ph_out_of_range,
+    check_nutrient_low,
 )

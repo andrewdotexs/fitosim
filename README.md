@@ -23,8 +23,8 @@ il giardiniere.
 
 ## Stato del progetto
 
-- **Versione**: 0.31.0 (`pyproject.toml`, dal 2026-09-20; prima la serie `v0_NN` nei commit, fino a `v0_30`)
-- **1424 test verdi** (500 sub-test) nel core; la demo end-to-end usa matplotlib
+- **Versione**: 0.32.0 (`pyproject.toml`, dal 2026-09-22: i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
+- **1457 test verdi** (510 sub-test) nel core; la demo end-to-end usa matplotlib
 - **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
 - **Linguaggio**: Python ≥ 3.10
 - **Dipendenze esterne nel core**: zero (solo standard library)
@@ -363,6 +363,7 @@ fitosim/
 │   │   ├── pot_physics.py  # Kp, geometrie del vaso
 │   │   ├── saucer.py       # modello sottovaso
 │   │   ├── nutrition.py    # coefficiente Kn (tappa 3)
+│   │   ├── nutrients.py    # i serbatoi N, P, K: il colore dei sali (2026-09-22)
 │   │   ├── fertigation.py  # applicazione fertirrigazione
 │   │   ├── radiation.py    # radiazione solare astronomica
 │   │   ├── calibration.py             # sensore: ancora + pendenza  [fascia 3, fase A]

@@ -34,7 +34,7 @@ campo redundant e gli permette di evolvere automaticamente nel tempo.
 """
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from enum import Enum
 from typing import Optional
 
@@ -76,6 +76,18 @@ from fitosim.science.et0 import (
     compute_et,
 )
 from fitosim.science.indoor import estimate_indoor_radiation
+from fitosim.science.nutrients import (
+    TRANSPIRATION_SHARE_SINGLE_KC,
+    ZERO,
+    NutrientAmounts,
+    NutrientReserve,
+    clamp_to_salts,
+    daily_uptake,
+    full_charge_mg,
+    leached,
+    reserve,
+    temperature_gate,
+)
 from fitosim.science.phenology import growing_degree_days
 from fitosim.science.pot_physics import (
     PotColor,
@@ -372,6 +384,24 @@ class FertigationResult:
 
 
 @dataclass(frozen=True)
+class NutrientStepResult:
+    """
+    Quello che i serbatoi nutritivi hanno fatto in un passo di bilancio
+    (il colore dei sali, 2026-09-22): la traspirazione della pianta del
+    giorno in litri, quanto ha mangiato di N, P₂O₅ e K₂O in
+    milligrammi, il cancello della temperatura applicato (0–1), e i
+    serbatoi dopo. `uptake` è zero, e i serbatoi restano, quando la
+    specie non ha un piano.
+    """
+
+    event_date: date
+    transpiration_l: float
+    uptake: NutrientAmounts
+    temperature_gate: float
+    pools_after: NutrientAmounts
+
+
+@dataclass(frozen=True)
 class FullStepResult:
     """
     Esito aggregato di un passo completo del vaso (sotto-tappa C tappa 3).
@@ -398,6 +428,9 @@ class FullStepResult:
     balance_result: "BalanceStepResult"
     rainfall_result: Optional[FertigationResult] = None
     fertigation_result: Optional[FertigationResult] = None
+    # I serbatoi nutritivi (2026-09-22): sempre presente, anche senza
+    # piano (allora l'assorbimento è zero).
+    nutrient_result: Optional[NutrientStepResult] = None
 
 
 @dataclass
@@ -599,6 +632,30 @@ class Pot:
     # precedenza; quando lascia il default si usa il ph_typical del
     # Substrate; in ultima istanza si ricade sul neutro 7.0.
     ph_substrate: float = -1.0
+    # ----- I serbatoi nutritivi: il colore dei sali (2026-09-22) -----
+    # Azoto, fosforo (come P₂O₅) e potassio (come K₂O) presenti nel
+    # vaso, in milligrammi: le unità delle etichette. Seguono la massa
+    # salina — entrano con le concimazioni, escono col drenaggio nella
+    # proporzione dei sali e con la pianta, ogni giorno, alla
+    # concentrazione che il piano della specie vuole
+    # (`science/nutrients.py`). La loro somma in milliequivalenti non
+    # supera mai `salt_mass_meq`. Zero per un vaso senza storia; per
+    # uno che ne ha, il chiamante li persiste e li ripassa.
+    nutrient_n_mg: float = 0.0
+    nutrient_p_mg: float = 0.0
+    nutrient_k_mg: float = 0.0
+    # I micronutrienti dati, col giorno dell'ultima volta: bandierine,
+    # non serbatoi («ferro dato il 12/4»).
+    micronutrients_given: dict[str, date] = field(default_factory=dict)
+    # La carica iniziale del substrato: fino a questa data il vaso
+    # è partito pieno col rinvaso (`apply_starter_charge`), e chi legge
+    # la riserva può dirlo. None = nessuna carica in corso.
+    starter_charge_until: Optional[date] = None
+    # L'ultimo passo nutritivo, per chi vuole i numeri del giorno senza
+    # tenersi il risultato: non è stato, non si persiste.
+    last_nutrient_step: Optional["NutrientStepResult"] = field(
+        default=None, repr=False, compare=False,
+    )
     # ----- Coordinate geografiche per Penman-Monteith (tappa 5 sotto-tappa C) -----
     # Latitudine e quota del sito sul livello del mare. Sono opzionali
     # perché il vecchio metodo apply_balance_step (che riceve ET₀ già
@@ -777,6 +834,16 @@ class Pot:
                 f"Verifica il valore passato al costruttore o il "
                 f"ph_typical del substrato '{self.substrate.name}'."
             )
+        for nome, valore in (
+            ("nutrient_n_mg", self.nutrient_n_mg),
+            ("nutrient_p_mg", self.nutrient_p_mg),
+            ("nutrient_k_mg", self.nutrient_k_mg),
+        ):
+            if valore < 0:
+                raise ValueError(
+                    f"Vaso '{self.label}': {nome}={valore} non può essere "
+                    f"negativo: un serbatoio vuoto è zero, non un debito."
+                )
         if self.salt_mass_meq < 0:
             raise ValueError(
                 f"Vaso '{self.label}': salt_mass_meq="
@@ -945,6 +1012,110 @@ class Pot:
             return 0.0
         meq_per_liter = self.salt_mass_meq / self.water_volume_liters
         return meq_per_liter / 10.0
+
+    # ----- I serbatoi nutritivi (il colore dei sali) -----
+
+    @property
+    def nutrient_pools(self) -> NutrientAmounts:
+        """I tre serbatoi come quantità, in milligrammi."""
+        return NutrientAmounts(self.nutrient_n_mg, self.nutrient_p_mg, self.nutrient_k_mg)
+
+    def _set_nutrient_pools(self, pools: NutrientAmounts) -> None:
+        """Scrive i serbatoi, ristretti alla massa salina: la loro somma
+        in milliequivalenti non può superarla."""
+        coherent = clamp_to_salts(pools, self.salt_mass_meq)
+        self.nutrient_n_mg = coherent.n_mg
+        self.nutrient_p_mg = coherent.p_mg
+        self.nutrient_k_mg = coherent.k_mg
+
+    @property
+    def fc_water_volume_l(self) -> float:
+        """L'acqua del vaso a capacità di campo, in litri."""
+        return self.fc_mm * self.surface_area_m2
+
+    def nutrient_targets(self, current_date: date) -> Optional[NutrientAmounts]:
+        """
+        La concentrazione che il piano della specie vuole nel mese di
+        `current_date`, in mg/L di N, P₂O₅ e K₂O — o None se la specie
+        non ha un piano.
+        """
+        targets = self.species.nutrient_targets_mg_per_l
+        if targets is None:
+            return None
+        return NutrientAmounts.from_tuple(targets[current_date.month - 1])
+
+    def nutrient_reserve(self, current_date: date) -> Optional[NutrientReserve]:
+        """
+        La riserva nutritiva di oggi: la frazione della carica piena
+        occupata dal serbatoio più vuoto fra quelli che il piano oggi
+        chiede, e quale. None senza piano, o nei mesi in cui il piano
+        non chiede niente (senza un bersaglio non c'è una mancanza).
+        """
+        targets = self.nutrient_targets(current_date)
+        if targets is None:
+            return None
+        return reserve(self.nutrient_pools, targets, self.fc_water_volume_l)
+
+    def nutrient_days_left(self, current_date: date) -> Optional[float]:
+        """
+        Fra quanti giorni il serbatoio limitante si svuota al ritmo
+        dell'ultimo passo: la riserva in giorni, come quella idrica.
+        None senza un piano, senza un passo, o se oggi non si mangia.
+        """
+        step = self.last_nutrient_step
+        found = self.nutrient_reserve(current_date)
+        if step is None or found is None:
+            return None
+        rate = step.uptake.get(found.limiting)
+        if rate <= 0:
+            return None
+        return self.nutrient_pools.get(found.limiting) / rate
+
+    def add_nutrients(
+        self,
+        amounts: NutrientAmounts,
+        *,
+        salt_meq: Optional[float] = None,
+    ) -> None:
+        """
+        Versa nel vaso dei nutrienti senza acqua: la quota del giorno
+        di un concime secco, o una correzione. `salt_meq` è la massa
+        salina che accompagna quei nutrienti (un concime porta anche
+        sali che non sono N, P o K); senza, si aggiunge il loro
+        equivalente in milliequivalenti, così i serbatoi restano dentro
+        i sali.
+        """
+        added_meq = amounts.total_meq if salt_meq is None else salt_meq
+        if added_meq < 0:
+            raise ValueError(f"Vaso '{self.label}': salt_meq={salt_meq} non può essere negativo.")
+        self.salt_mass_meq += max(added_meq, amounts.total_meq)
+        self._set_nutrient_pools(self.nutrient_pools.plus(amounts))
+
+    def record_micronutrients(self, symbols: "tuple[str, ...] | list[str]", when: date) -> None:
+        """Segna che questi micronutrienti sono stati dati il giorno `when`."""
+        for symbol in symbols:
+            self.micronutrients_given[str(symbol)] = when
+
+    def apply_starter_charge(self, weeks: int, current_date: date) -> None:
+        """
+        La carica iniziale del substrato, col rinvaso: il vaso parte con
+        i serbatoi alla carica piena del mese in cui il piano chiede di
+        più (il substrato è concimato per quelle settimane, non per la
+        stagione del vaso), e i sali corrispondenti. Senza piano non c'è
+        una carica da dare: si segna solo fino a quando.
+        """
+        if weeks <= 0:
+            raise ValueError(f"Vaso '{self.label}': weeks={weeks} deve essere positivo.")
+        self.starter_charge_until = current_date + timedelta(weeks=weeks)
+        targets = self.species.nutrient_targets_mg_per_l
+        if targets is None:
+            return
+        peak = NutrientAmounts(*(max(month[i] for month in targets) for i in range(3)))
+        charge = full_charge_mg(peak, self.fc_water_volume_l)
+        missing = NutrientAmounts(
+            *(max(0.0, charge.get(x) - self.nutrient_pools.get(x)) for x in ("n", "p", "k"))
+        )
+        self.add_nutrients(missing)
 
     @property
     def substrate_dry_mass_kg(self) -> float:
@@ -1246,9 +1417,15 @@ class Pot:
         et_0_mm: float,
         water_input_mm: float,
         current_date: date,
+        t_mean_c: Optional[float] = None,
     ) -> BalanceStepResult:
         """
-        Esegue un passo di bilancio idrico (giornaliero) sul vaso.
+        Esegue un passo di bilancio idrico (giornaliero) sul vaso — e,
+        se la specie ha un piano nutrizionale, il passo dei serbatoi:
+        la pianta mangia alla sua traspirazione (`science/nutrients`),
+        e `t_mean_c` — la temperatura media del giorno, facoltativa —
+        chiude il cancello col freddo. Il risultato del passo nutritivo
+        resta in `last_nutrient_step`.
 
         Aggiorna `state_mm` (e, se il sottovaso è presente,
         `saucer_state_mm`) in-place e restituisce il `BalanceStepResult`
@@ -1334,9 +1511,11 @@ class Pot:
                 et_0_mm=et_0_mm, current_date=current_date,
                 kn=self._current_kn(),
             )
+            transpiration_mm = max(0.0, et_c_mm - soil_evap_mm)
         else:
             et_c_mm = self.current_et_c(et_0_mm, current_date)
             soil_evap_mm = 0.0  # non usato nel cammino single Kc
+            transpiration_mm = et_c_mm * TRANSPIRATION_SHARE_SINGLE_KC
 
         result = water_balance_step_mm(
             current_mm=self.state_mm,
@@ -1373,7 +1552,56 @@ class Pot:
                 tew_mm=self.substrate.tew_mm,  # type: ignore[arg-type]
             )
 
+        # === Passo 7: la pianta mangia (il colore dei sali) ===
+        self.last_nutrient_step = self._apply_nutrient_uptake(
+            transpiration_mm=transpiration_mm,
+            current_date=current_date,
+            t_mean_c=t_mean_c,
+        )
+
         return result
+
+    def _apply_nutrient_uptake(
+        self,
+        transpiration_mm: float,
+        current_date: date,
+        t_mean_c: Optional[float],
+    ) -> "NutrientStepResult":
+        """
+        L'assorbimento del giorno: la traspirazione della pianta in
+        litri alla concentrazione del piano, per la frazione di
+        alimentazione della specie e il cancello del freddo, mai più di
+        quello che c'è. Toglie dai serbatoi e dalla massa salina i
+        milliequivalenti corrispondenti: il concime è sale, e la pianta
+        se lo mangia. Senza piano non toglie niente.
+        """
+        transpiration_l = transpiration_mm * self.surface_area_m2
+        targets = self.nutrient_targets(current_date)
+        gate = temperature_gate(t_mean_c)
+        if targets is None:
+            return NutrientStepResult(
+                event_date=current_date,
+                transpiration_l=transpiration_l,
+                uptake=ZERO,
+                temperature_gate=gate,
+                pools_after=self.nutrient_pools,
+            )
+        uptake = daily_uptake(
+            transpiration_l,
+            targets,
+            feed_fraction=self.species.nutrient_feed_fraction,
+            t_mean_c=t_mean_c,
+            available=self.nutrient_pools,
+        )
+        self.salt_mass_meq = max(0.0, self.salt_mass_meq - uptake.total_meq)
+        self._set_nutrient_pools(self.nutrient_pools.minus(uptake))
+        return NutrientStepResult(
+            event_date=current_date,
+            transpiration_l=transpiration_l,
+            uptake=uptake,
+            temperature_gate=gate,
+            pools_after=self.nutrient_pools,
+        )
 
     def update_from_sensor(
         self,
@@ -1851,11 +2079,14 @@ class Pot:
             # già ET₀, lo passiamo direttamente.
             et_0_for_legacy_method = et_result.value_mm
 
-        # Delega al vecchio apply_balance_step per il bilancio idrico.
+        # Delega al vecchio apply_balance_step per il bilancio idrico,
+        # con la temperatura media del giorno per il cancello
+        # dell'assorbimento nutritivo.
         legacy_result = self.apply_balance_step(
             et_0_mm=et_0_for_legacy_method,
             water_input_mm=water_input_mm,
             current_date=current_date,
+            t_mean_c=(weather.t_min + weather.t_max) / 2.0,
         )
 
         # Accumulo dei gradi-giorno della giornata appena simulata.
@@ -2087,11 +2318,17 @@ class Pot:
         ec_mscm: float,
         ph: float,
         current_date: date,
+        nutrients_mg_per_l: Optional[NutrientAmounts] = None,
     ) -> "FertigationResult":
         """
         Applica un evento di fertirrigazione al vaso, aggiornando in-place
         sia lo stato idrico (state_mm, drainage) sia lo stato chimico
-        (salt_mass_meq, ph_substrate).
+        (salt_mass_meq, ph_substrate) — e i serbatoi nutritivi, se la
+        soluzione dichiara la sua concentrazione (`nutrients_mg_per_l`,
+        in mg/L di N, P₂O₅, K₂O): entrano `volume × concentrazione`, ed
+        escono col drenaggio nella proporzione dei sali (il nitrato un
+        po' di più). Una soluzione senza concentrazione dichiarata —
+        l'acqua, la pioggia — non porta nutrienti, ma dilava lo stesso.
 
         È il duale chimico di `apply_balance_step` per il bilancio idrico:
         prende un singolo evento (volume di soluzione, EC, pH) e
@@ -2187,6 +2424,18 @@ class Pot:
         # Aggiornamento degli stati chimici ai valori finali.
         self.salt_mass_meq = chemistry_result.salt_mass_after_meq
         self.ph_substrate = chemistry_result.ph_after
+
+        # I serbatoi nutritivi: dentro con l'etichetta, fuori col
+        # drenaggio nella frazione con cui sono usciti i sali.
+        added = nutrients_mg_per_l.scaled(volume_l) if nutrients_mg_per_l is not None else ZERO
+        pools = self.nutrient_pools.plus(added)
+        total_before_drain = salt_before + chemistry_result.salt_mass_added_meq
+        if chemistry_result.salt_mass_drained_meq > 0 and total_before_drain > 0:
+            drained_fraction = min(
+                1.0, chemistry_result.salt_mass_drained_meq / total_before_drain,
+            )
+            pools = pools.minus(leached(pools, drained_fraction))
+        self._set_nutrient_pools(pools)
 
         return FertigationResult(
             event_date=current_date,
@@ -2313,6 +2562,8 @@ class Pot:
         fertigation_ec_mscm: float = 0.0,
         fertigation_ph: float = 7.0,
         rainfall_volume_l: float = 0.0,
+        fertigation_nutrients_mg_per_l: Optional[NutrientAmounts] = None,
+        t_mean_c: Optional[float] = None,
     ) -> "FullStepResult":
         """
         Orchestratore completo del passo giornaliero del vaso: combina
@@ -2373,13 +2624,19 @@ class Pot:
             volume_l=0).
         rainfall_volume_l : float, opzionale
             Volume di pioggia raccolta (default 0 = niente pioggia).
+        fertigation_nutrients_mg_per_l : NutrientAmounts, opzionale
+            La concentrazione della soluzione in N, P₂O₅, K₂O (mg/L):
+            i serbatoi nutritivi si riempiono di `volume × concentrazione`.
+        t_mean_c : float, opzionale
+            La temperatura media del giorno, per il cancello del freddo
+            sull'assorbimento nutritivo.
 
         Ritorna
         -------
         FullStepResult
             Record che aggrega il BalanceStepResult del bilancio idrico
             e gli eventuali FertigationResult di pioggia e/o
-            fertirrigazione applicati.
+            fertirrigazione applicati, più il passo dei serbatoi.
         """
         rainfall_result = None
         fertigation_result = None
@@ -2398,6 +2655,7 @@ class Pot:
                 ec_mscm=fertigation_ec_mscm,
                 ph=fertigation_ph,
                 current_date=current_date,
+                nutrients_mg_per_l=fertigation_nutrients_mg_per_l,
             )
 
         # Step 3: bilancio idrico giornaliero. Il water_input_mm
@@ -2407,6 +2665,7 @@ class Pot:
             et_0_mm=et_0_mm,
             water_input_mm=0.0,
             current_date=current_date,
+            t_mean_c=t_mean_c,
         )
 
         return FullStepResult(
@@ -2414,6 +2673,7 @@ class Pot:
             balance_result=balance_result,
             rainfall_result=rainfall_result,
             fertigation_result=fertigation_result,
+            nutrient_result=self.last_nutrient_step,
         )
 
     def apply_step_from_weather(
@@ -2426,6 +2686,7 @@ class Pot:
         rainfall_volume_l: float = 0.0,
         latitude_deg: Optional[float] = None,
         elevation_m: Optional[float] = None,
+        fertigation_nutrients_mg_per_l: Optional[NutrientAmounts] = None,
     ) -> "FullStepResult":
         """
         Orchestratore completo del passo giornaliero a partire dai dati
@@ -2483,6 +2744,7 @@ class Pot:
                 ec_mscm=fertigation_ec_mscm,
                 ph=fertigation_ph,
                 current_date=current_date,
+                nutrients_mg_per_l=fertigation_nutrients_mg_per_l,
             )
 
         # Step 3: bilancio idrico tramite il nuovo metodo che orchestra
@@ -2501,4 +2763,5 @@ class Pot:
             balance_result=balance_result,
             rainfall_result=rainfall_result,
             fertigation_result=fertigation_result,
+            nutrient_result=self.last_nutrient_step,
         )

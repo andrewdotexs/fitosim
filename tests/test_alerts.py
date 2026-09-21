@@ -379,8 +379,9 @@ class TestAllRules(unittest.TestCase):
     """Test sulla tuple ALL_RULES e applicazione integrata."""
 
     def test_all_rules_count(self):
-        # Cinque regole nella sotto-tappa E.
-        self.assertEqual(len(ALL_RULES), 5)
+        # Cinque regole nella sotto-tappa E, la sesta con i serbatoi
+        # nutritivi (2026-09-22).
+        self.assertEqual(len(ALL_RULES), 6)
 
     def test_optimal_pot_no_alerts_from_any_rule(self):
         # Vaso in condizioni ottimali: nessuna regola scatta.

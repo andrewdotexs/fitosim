@@ -346,6 +346,22 @@ class Species:
     # consolidato in letteratura della T_base; è un punto di
     # calibrazione della fascia 3.
     t_cap_c: float | None = None
+    # ----- Il piano nutrizionale (il colore dei sali, 2026-09-22) -----
+    # Che concentrazione la pianta vuole nella soluzione del vaso, mese
+    # per mese: dodici terne (N, P₂O₅, K₂O) in mg/L, gennaio–dicembre.
+    # È il piano di The Pot (`piano_nutritivo.serie_della_specie`: il
+    # profilo nutritivo per le fasi della scheda, coi cancelli e le
+    # rampe) portato in concentrazione. None → il vaso non ha serbatoi
+    # nutritivi: il modello dei sali va avanti come prima.
+    nutrient_targets_mg_per_l: tuple[tuple[float, float, float], ...] | None = None
+    # Che parte della traspirazione è concime e non acqua (0–1):
+    # l'intervallo tipico fra le annaffiature diviso la cadenza delle
+    # concimazioni; 1 per chi fertirriga a ogni annaffiatura. Vedi
+    # `science/nutrients.py`.
+    nutrient_feed_fraction: float = 1.0
+    # I micronutrienti che contano per questa specie (simboli: «Fe»,
+    # «Mg», …), per le bandierine datate del vaso.
+    micronutrients: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         # Validazione dei Kc: scorriamo la terna con zip per un
@@ -452,6 +468,28 @@ class Species:
                     f"(0, 100]: è la percentuale di ET persa per mS/cm sopra "
                     f"il massimo (FAO-56 tab. 23: da 3.6 a 33 per dS/m di ECe)."
                 )
+
+        # Il piano nutrizionale: dodici mesi, niente sotto zero, e una
+        # frazione di alimentazione fra 0 e 1.
+        if self.nutrient_targets_mg_per_l is not None:
+            if len(self.nutrient_targets_mg_per_l) != 12:
+                raise ValueError(
+                    f"Specie '{self.common_name}': nutrient_targets_mg_per_l deve "
+                    f"avere esattamente 12 terne (gennaio-dicembre), "
+                    f"ricevute {len(self.nutrient_targets_mg_per_l)}."
+                )
+            for month, targets in enumerate(self.nutrient_targets_mg_per_l, start=1):
+                if len(targets) != 3 or any(v < 0 for v in targets):
+                    raise ValueError(
+                        f"Specie '{self.common_name}': nutrient_targets_mg_per_l del "
+                        f"mese {month} deve essere una terna (N, P2O5, K2O) non "
+                        f"negativa, ricevuto {targets!r}."
+                    )
+        if not 0.0 < self.nutrient_feed_fraction <= 1.0:
+            raise ValueError(
+                f"Specie '{self.common_name}': nutrient_feed_fraction="
+                f"{self.nutrient_feed_fraction} deve stare in (0, 1]."
+            )
 
         # Coerenza dell'ancoraggio fenologico: una perenne senza
         # calendario non saprebbe in che stadio si trova, perché per
