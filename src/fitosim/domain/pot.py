@@ -89,6 +89,7 @@ from fitosim.science.nutrients import (
     temperature_gate,
 )
 from fitosim.science.phenology import growing_degree_days
+from fitosim.science.soil_ec import EcUpdateResult, pore_water_ec
 from fitosim.science.pot_physics import (
     PotColor,
     PotMaterial,
@@ -656,6 +657,11 @@ class Pot:
     last_nutrient_step: Optional["NutrientStepResult"] = field(
         default=None, repr=False, compare=False,
     )
+    # ----- La sonda EC (2026-09-22) -----
+    # Il fattore per vaso che porta la lettura apparente della sonda
+    # (Hilhorst su Topp, `science/soil_ec.py`) sull'EC della soluzione:
+    # uno finché nessuno lo tara a capacità di campo.
+    ec_sensor_factor: float = 1.0
     # ----- Coordinate geografiche per Penman-Monteith (tappa 5 sotto-tappa C) -----
     # Latitudine e quota del sito sul livello del mare. Sono opzionali
     # perché il vecchio metodo apply_balance_step (che riceve ET₀ già
@@ -844,6 +850,11 @@ class Pot:
                     f"Vaso '{self.label}': {nome}={valore} non può essere "
                     f"negativo: un serbatoio vuoto è zero, non un debito."
                 )
+        if self.ec_sensor_factor <= 0:
+            raise ValueError(
+                f"Vaso '{self.label}': ec_sensor_factor={self.ec_sensor_factor} "
+                f"deve essere positivo: è quanto moltiplicare la lettura della sonda."
+            )
         if self.salt_mass_meq < 0:
             raise ValueError(
                 f"Vaso '{self.label}': salt_mass_meq="
@@ -1604,6 +1615,59 @@ class Pot:
             uptake=uptake,
             temperature_gate=gate,
             pools_after=self.nutrient_pools,
+        )
+
+    def update_from_ec_sensor(
+        self,
+        bulk_ec_mscm: float,
+        *,
+        theta: Optional[float] = None,
+        temperature_c: float = 25.0,
+    ) -> Optional[EcUpdateResult]:
+        """
+        Allinea la massa salina a una lettura EC della sonda (2026-09-22),
+        come `update_from_sensor` allinea l'acqua a una lettura di θ.
+
+        La sonda legge l'EC **apparente** del substrato; qui diventa l'EC
+        della soluzione con Hilhorst su Topp (`science/soil_ec.py`) —
+        con il θ misurato insieme, o quello del vaso adesso — e col
+        fattore del vaso (`ec_sensor_factor`), e da lei la massa salina:
+        `salt = EC × 10 × acqua`, l'inverso di `ec_substrate_mscm`. I
+        serbatoi nutritivi la seguono nella stessa proporzione — se la
+        sonda dice che i sali sono il doppio, lo è anche quello che il
+        modello ha contato dentro, non sapendo altro — e restano dentro i
+        sali. None se il substrato è troppo asciutto perché la lettura
+        dica qualcosa, o il vaso non ha acqua: allora non si tocca niente.
+        """
+        from fitosim.science.fertigation import EC_TO_MEQ_PER_LITER
+
+        theta_effettivo = self.state_theta if theta is None else theta
+        solution = pore_water_ec(
+            bulk_ec_mscm,
+            theta_effettivo,
+            temperature_c=temperature_c,
+            factor=self.ec_sensor_factor,
+        )
+        water_l = self.water_volume_liters
+        if solution is None or water_l <= 0:
+            return None
+        before = self.salt_mass_meq
+        predicted = self.ec_substrate_mscm
+        after = solution * EC_TO_MEQ_PER_LITER * water_l
+        ratio = after / before if before > 0 else 1.0
+        self.salt_mass_meq = after
+        pools = self.nutrient_pools
+        if before > 0:
+            pools = pools.scaled(ratio)
+        self.set_nutrient_pools(pools)
+        return EcUpdateResult(
+            observed_bulk_ec_mscm=bulk_ec_mscm,
+            theta=theta_effettivo,
+            predicted_solution_ec_mscm=predicted,
+            observed_solution_ec_mscm=solution,
+            salt_mass_before_meq=before,
+            salt_mass_after_meq=after,
+            ratio=ratio,
         )
 
     def update_from_sensor(

@@ -4,7 +4,9 @@ __fitosim — Status Report__
 
 *Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
 
-# Aggiornamento al 22 settembre 2026 — il colore dei sali
+# Aggiornamento al 22 settembre 2026 — il colore dei sali, e la sonda che lo corregge
+
+**La sonda EC** (0.33.0, `science/soil_ec.py`, `Pot.update_from_ec_sensor`): una sonda nel vaso legge la conducibilità *apparente* del substrato, non quella della soluzione su cui stanno le soglie; le due stanno fra loro come l'acqua sta nel vaso. Il modello di **Hilhorst** (2000) — σ_p = ε_p σ_b / (ε_b − ε_σb=0), con la permittività apparente da **Topp** (1980) invertita per bisezione, quella dell'acqua con la temperatura, l'intercetta 4,1 dei suoli — porta la lettura sull'EC della soluzione, e **un fattore per vaso** (`ec_sensor_factor`, tarato a capacità di campo con `factor_at_field_capacity`: subito dopo un'annaffiata a fondo la soluzione è quella della vasca) chiude il conto sul substrato vero. Da lì la massa salina si allinea (`salt = EC × 10 × acqua`, come la WH51 allinea l'acqua) e i serbatoi nutritivi la seguono in proporzione, restando dentro i sali. Un substrato troppo asciutto perché la corrente passi non dice niente, e non tocca niente. Dieci test.
 
 Il bilancio dei sali sapeva *quanto* sale c'è nel vaso; da oggi sa anche *che cosa*, e quanto la pianta ne mangia. `science/nutrients.py` (versione 0.32.0) mette accanto alla massa salina tre serbatoi — azoto, fosforo come P₂O₅, potassio come K₂O, in milligrammi per vaso, le unità delle etichette — che **seguono la massa salina**: entrano con la concimazione (`volume × concentrazione`, o la quota del giorno di un secco), escono col drenaggio nella stessa frazione dei sali (il nitrato un quinto in più), e la loro somma in milliequivalenti non supera mai `salt_mass_meq`. Il pezzo nuovo è **la domanda del giorno**: la pianta mangia il flusso di massa della sua traspirazione (Kcb × Ks × ET₀, la sola pianta) alla concentrazione che il piano della specie vuole quel mese, per una *frazione di alimentazione* — l'intervallo fra le annaffiature sulla cadenza delle concimazioni: 1 per chi fertirriga sempre, circa 0,7 per un liquido ogni due settimane — e col cancello del freddo (rampa 8–12 °C, pavimento 10 %). Quello che mangia lo toglie anche dai sali: è la «metà mangiata» di The Pot fatta giorno per giorno. La `Species` porta il piano (`nutrient_targets_mg_per_l`, dodici terne), la frazione e i micronutrienti che contano; il `Pot` ha i tre serbatoi, le bandierine datate dei micro, la carica iniziale del substrato (`apply_starter_charge`), la **riserva** — la frazione della carica piena occupata dal serbatoio più vuoto fra quelli che il piano chiede, col *quale* («al 40 %, manca soprattutto azoto») e i giorni che restano — e la sesta allerta, `nutrient_low`. I rilasci dei concimi secchi hanno la loro cinetica per classe (`daily_release_fraction`): il rivestito con la temperatura (Q10 = 2 intorno a 21 °C, la scheda Osmocote), l'organico con temperatura e umidità (Hartz 2000), il granulare solubile con l'acqua. Il vincolo di taratura è il **bilancio annuale** (`tests/test_nutrients.py`): un vaso di profilo medio concimato secondo il suo piano — un liquido ogni quattordici giorni, l'acqua quando serve, sei millimetri di pioggia ogni nove giorni — mangia il 90 % di quello che riceve, il resto lo porta via la pioggia, e finisce l'anno senza accumulo; chi mangia meno di quel che riceve accumula. Tutto retrocompatibile: senza piano i serbatoi restano a zero e il modello è quello di prima. 33 test nuovi, 1457 nel core.
 
@@ -35,7 +37,7 @@ __Note__
 
 Test verdi nel core
 
-1457
+1467
 
 500 sub-test; 1430 con la demo end-to-end (matplotlib); circa 9 secondi
 
@@ -65,7 +67,7 @@ esportazione fedele del giardino (luglio)
 
 Versione
 
-0.32.0
+0.33.0
 
 `pyproject.toml`; continua la serie dei commit `v0_NN`, fermata a `v0_30` il 22 luglio
 
