@@ -1178,6 +1178,10 @@ La differenza tra fisico e standard è particolarmente significativa per specie 
 
 Quando vuoi sapere quale formula sta usando il selettore per un dato vaso in una data giornata, puoi chiamare compute\_et direttamente con gli stessi argomenti che il Pot userebbe, e ispezionare il campo method del risultato. Più operativamente, la demo dell'appartamento (sotto-tappa 5-E) produce una heatmap PNG che mostra giorno per giorno e vaso per vaso quale metodo è stato usato, ed è un buon punto di partenza per costruire la stessa visualizzazione nel tuo dashboard.
 
+## La forma oraria e i blocchi
+
+Dal 29 settembre 2026 (A7) le due Penman-Monteith prendono un parametro `hours`: con 24 sono quelle di sempre, con 1 sono la forma oraria di FAO-56 (eq. 53), e la radiazione netta e il flusso nel suolo vanno dati sul blocco. Di norma non le chiami tu: `domain.blocks.et0_for_blocks` prende i `WeatherBlock` di un giorno e per ciascuno calcola l'ET₀ con la stessa gerarchia del selettore — Penman-Monteith fisico se la specie ha resistenza stomatica e altezza, standard altrimenti — con la R_a del blocco, la radiazione netta del blocco, G di giorno e di notte e il rapporto notturno R_s/R_so dalle 2–3 ore prima del tramonto; i blocchi notturni che escono negativi valgono zero. Se ai blocchi manca umidità, vento o radiazione, calcola l'ET₀ del giorno come farebbe il selettore e la ripartisce sui blocchi in proporzione alla R_a: il totale non cambia. Il Penman-Monteith fisico dà ET, non ET₀: il `Pot` la riporta a «ET₀ equivalente» dividendo per il Kc dello stadio, come fa il cammino giornaliero. Il capitolo 3 dice come il vaso usa questi blocchi.
+
 # 18 — Vasi indoor: Room, microclima e sensore WN31
 
 Fino al capitolo 17 il manuale ha trattato implicitamente vasi outdoor: vasi che vivono sul balcone o in giardino, ricevono pioggia, sono esposti al sole e al vento, e il loro bilancio idrico è alimentato dai dati meteo esterni. Per i vasi indoor — quelli che vivono dentro casa, in salotto, in cucina, in camera da letto — il quadro è completamente diverso: non ricevono pioggia, il vento è quello eventualmente generato da un ventilatore, l'umidità relativa è quella della stanza non quella del balcone, la temperatura è quella della stanza, e la radiazione solare è una piccola frazione di quella outdoor che dipende dalla posizione del vaso rispetto alle finestre.
@@ -1368,6 +1372,10 @@ Sì. Una pianta indoor vive un microclima completamente diverso da quello estern
 
 La ricalibrazione completa via calibrate\_substrate ha senso una volta a stagione, perché i parametri “veri” del vaso evolvono lentamente nel tempo (il substrato si compatta, perde struttura, viene parzialmente sostituito al rinvaso). Una ricalibrazione settembre-ottobre con i dati raccolti durante l’estate è un’ottima cadenza pratica. Tra una ricalibrazione e l’altra, il feedback loop giornaliero (update\_all\_from\_sensors) corregge il drift di breve periodo.
 
+## Posso far girare il modello a ore invece che a giorni?
+
+Sì, dal 29 settembre 2026 (A7), con `Pot.apply_blocks_from_weather`: gli passi i `WeatherBlock` di un giorno — un'ora l'uno dalla stazione, una o tre dalla previsione, in ora solare del sito — più la longitudine e il fuso standard, e il vaso avanza blocco per blocco. Quello che cambia: l'ET₀ è quella oraria di FAO-56, Ks è valutato sullo stato del momento, pioggia e irrigazioni entrano all'ora in cui accadono, e l'allerta ha un'ora (`alert_hour`). Quello che non cambia: Kc, stadio, gradi-giorno e nutrienti restano del giorno, e un solo blocco di 24 ore dà esattamente il passo giornaliero. Sui millimetri della settimana la differenza è di pochi punti percentuali; sull'ora dell'allerta e sul drenaggio di un litro dato la sera invece che la mattina, no. Il capitolo 3 e l'esempio `examples/confronto_et0_risoluzione_temporale.py` (una settimana di luglio e una di gennaio) lo mostrano coi numeri.
+
 # Appendice A — Catalogo delle specie pre-definite
 
 fitosim include cinque specie pre-configurate, importabili da fitosim.domain.species. Ognuna ha i suoi coefficienti colturali, la sua frazione di esaurimento, le durate dei suoi stadi fenologici, e (per quelle abilitate al modello chimico) i range di EC e pH ottimali.
@@ -1441,6 +1449,10 @@ TAW (total available water): differenza theta\_FC − theta\_PWP, l’acqua “u
 Kp (coefficiente di vaso): fattore moltiplicativo specifico del contenitore (materiale, colore, esposizione) che modula l’evapotraspirazione del singolo vaso. Estensione non standard di FAO-56, specifica del giardinaggio in vaso.
 
 Kn (coefficiente nutrizionale): fattore moltiplicativo che modula la traspirazione della pianta in funzione dello stato chimico del substrato. Vaso in range chimico ottimale ha Kn=1. Sopra il massimo di EC della specie il Kn perde il 12% per ogni mS/cm in più (la pendenza del coefficiente di stress salino di FAO-56, eq. 83), fino a un pavimento di 0.30. Il pH non entra nel Kn (dal 2026-09-20): agisce sulla nutrizione in settimane, non sulla traspirazione del giorno, e nel vaso è uno stato stimato, non misurato; resta un’allerta, oltre una tolleranza di ±0.3. L’EC sotto il range non riduce l’ET (una soluzione povera di sali non ostacola l’assorbimento d’acqua): è una carenza nutrizionale, segnalata dalle allerte fertilization\_due ed ec\_too\_low. Nel dual-Kc il Kn agisce sulla traspirazione (Kcb) e non sull’evaporazione dal substrato (Ke). Estensione di tappa 3 fascia 2.
+
+Blocco (A7): una fetta del giorno, da un'ora a dodici, in ora solare del sito, con il suo meteo (`WeatherBlock`) o la sua ET₀ e la sua acqua in entrata (`BalanceBlock`). I blocchi di un giorno lo coprono tutto, contigui, da 0 a 24; il giorno intero è il blocco di 24 ore, e il passo giornaliero di sempre ne è il caso particolare.
+
+Ora dell'allerta (alert\_hour): nel giorno a blocchi, la fine del primo blocco in cui l'acqua è scesa sotto la soglia della specie; 0 se il giorno è cominciato già sotto, None se non è successo. È l'informazione che il passo giornaliero non può dare.
 
 EC (conducibilità elettrica): misura della concentrazione di sali disciolti nella soluzione del substrato, espressa in mS/cm. Indicatore della disponibilità di nutrienti e dello stress salino. Range tipici 1.0-2.0 mS/cm per la maggior parte delle specie domestiche.
 

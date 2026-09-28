@@ -24,7 +24,7 @@ il giardiniere.
 ## Stato del progetto
 
 - **Versione**: 0.34.0 (`pyproject.toml`, dal 2026-09-29: il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
-- **1519 test verdi** (515 sub-test) nel core; la demo end-to-end usa matplotlib
+- **1520 test verdi** (515 sub-test) nel core; la demo end-to-end usa matplotlib
 - **Il giorno fatto di blocchi** (A7, 2026-09-29): il vaso avanza a blocchi di ore dentro il giorno — `Pot.apply_blocks_from_weather`, `domain/blocks.py` con le nove decisioni e le fonti; il passo giornaliero è il caso di un blocco di 24 ore, con gli stessi numeri
 - **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
 - **Linguaggio**: Python ≥ 3.10
@@ -33,15 +33,15 @@ il giardiniere.
 - **Formato JSON di trasporto**: v3
 - **Fascia 1**: completa (modello idrico FAO-56 esteso)
 - **Fascia 2**: completa (5 tappe: sensori, chimica, architettura, Penman-Monteith, indoor)
-- **Fascia 3**: **in corso** — la fase A del *layer di feedback* (calibrazione multi-fonte) è in fitosim; il modello è stato rivisto numero per numero il 18–20 settembre 2026 (Kn, CEC e densità, `p`, pendenza salina, dormienza), ogni costante con la fonte o dichiarata stima
+- **Fascia 3**: **in corso** — la fase A del *layer di feedback* (calibrazione multi-fonte) è in fitosim; il modello è stato rivisto numero per numero il 18–20 settembre 2026 (Kn, CEC e densità, `p`, pendenza salina, dormienza), ogni costante con la fonte o dichiarata stima; il 29 settembre il vaso ha imparato ad avanzare a blocchi di ore dentro il giorno (A7)
 - **Prossimo passo**: la calibrazione sul sensore WH52, cinque vasi sul balcone dalla settimana del 28 settembre 2026 (`docs/calibrazione_con_WH5X.md`; lo strumento vive in The Pot)
 
 ```
 # Core (zero dipendenze esterne):
 $ python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
-================= 1424 passed, 500 subtests passed =================
+================= 1520 passed, 515 subtests passed =================
 
-# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1525 test.
+# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1526 test.
 ```
 
 ## Cosa fa
@@ -387,12 +387,13 @@ fitosim/
 │           ├── openmeteo.py    # adapter Open-Meteo (meteo)
 │           ├── http_json.py    # adapter generico per gateway ESP32
 │           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 1424 test verdi (core)
+├── tests/                  # 1520 test verdi (core)
 ├── examples/               # esempi e demo end-to-end
 │   ├── tappa4_complete_demo.py        # demo Garden + persistenza + allerte
 │   ├── tappa5_A_penman_monteith_demo.py
 │   ├── tappa5_B_selettore_demo.py
 │   ├── tappa5_C_garden_demo.py
+│   ├── confronto_et0_risoluzione_temporale.py  # ET₀ a 24 h, 6 h, 4 h e 1 h; il vaso a giorni e a blocchi, luglio e gennaio
 │   └── tappa5_E_appartamento_demo.py  # demo end-to-end appartamento indoor
 ├── docs/                        # i sorgenti sono i .md; i PDF in docs/pdf/
 │   ├── developer_documentation.html # doc tecnica per sviluppatori

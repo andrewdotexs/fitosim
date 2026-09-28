@@ -2,32 +2,15 @@ __fitosim — Status Report__
 
 *Stato dello sviluppo della libreria di simulazione FAO-56*
 
-*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
 
-# Aggiornamento al 22 settembre 2026 — il colore dei sali, e la sonda che lo corregge
-
-**La sonda EC** (0.33.0, `science/soil_ec.py`, `Pot.update_from_ec_sensor`): una sonda nel vaso legge la conducibilità *apparente* del substrato, non quella della soluzione su cui stanno le soglie; le due stanno fra loro come l'acqua sta nel vaso. Il modello di **Hilhorst** (2000) — σ_p = ε_p σ_b / (ε_b − ε_σb=0), con la permittività apparente da **Topp** (1980) invertita per bisezione, quella dell'acqua con la temperatura, l'intercetta 4,1 dei suoli — porta la lettura sull'EC della soluzione, e **un fattore per vaso** (`ec_sensor_factor`, tarato a capacità di campo con `factor_at_field_capacity`: subito dopo un'annaffiata a fondo la soluzione è quella della vasca) chiude il conto sul substrato vero. Da lì la massa salina si allinea (`salt = EC × 10 × acqua`, come la WH51 allinea l'acqua) e i serbatoi nutritivi la seguono in proporzione, restando dentro i sali. Un substrato troppo asciutto perché la corrente passi non dice niente, e non tocca niente. Dieci test.
-
-Il bilancio dei sali sapeva *quanto* sale c'è nel vaso; da oggi sa anche *che cosa*, e quanto la pianta ne mangia. `science/nutrients.py` (versione 0.32.0) mette accanto alla massa salina tre serbatoi — azoto, fosforo come P₂O₅, potassio come K₂O, in milligrammi per vaso, le unità delle etichette — che **seguono la massa salina**: entrano con la concimazione (`volume × concentrazione`, o la quota del giorno di un secco), escono col drenaggio nella stessa frazione dei sali (il nitrato un quinto in più), e la loro somma in milliequivalenti non supera mai `salt_mass_meq`. Il pezzo nuovo è **la domanda del giorno**: la pianta mangia il flusso di massa della sua traspirazione (Kcb × Ks × ET₀, la sola pianta) alla concentrazione che il piano della specie vuole quel mese, per una *frazione di alimentazione* — l'intervallo fra le annaffiature sulla cadenza delle concimazioni: 1 per chi fertirriga sempre, circa 0,7 per un liquido ogni due settimane — e col cancello del freddo (rampa 8–12 °C, pavimento 10 %). Quello che mangia lo toglie anche dai sali: è la «metà mangiata» di The Pot fatta giorno per giorno. La `Species` porta il piano (`nutrient_targets_mg_per_l`, dodici terne), la frazione e i micronutrienti che contano; il `Pot` ha i tre serbatoi, le bandierine datate dei micro, la carica iniziale del substrato (`apply_starter_charge`), la **riserva** — la frazione della carica piena occupata dal serbatoio più vuoto fra quelli che il piano chiede, col *quale* («al 40 %, manca soprattutto azoto») e i giorni che restano — e la sesta allerta, `nutrient_low`. I rilasci dei concimi secchi hanno la loro cinetica per classe (`daily_release_fraction`): il rivestito con la temperatura (Q10 = 2 intorno a 21 °C, la scheda Osmocote), l'organico con temperatura e umidità (Hartz 2000), il granulare solubile con l'acqua. Il vincolo di taratura è il **bilancio annuale** (`tests/test_nutrients.py`): un vaso di profilo medio concimato secondo il suo piano — un liquido ogni quattordici giorni, l'acqua quando serve, sei millimetri di pioggia ogni nove giorni — mangia il 90 % di quello che riceve, il resto lo porta via la pioggia, e finisce l'anno senza accumulo; chi mangia meno di quel che riceve accumula. Tutto retrocompatibile: senza piano i serbatoi restano a zero e il modello è quello di prima. 33 test nuovi, 1457 nel core.
-
-# Aggiornamento al 29 settembre 2026
-
-Da maggio fitosim è cambiato in tre modi, e questo capitolo li racconta prima che il documento torni allo stato di allora.
-
-**È diventato il motore di un'applicazione.** The Pot (`../the-pot`, FastAPI e Postgres) monta fitosim come dipendenza editabile e ne usa il modello — tutto `science/`, il `Pot`, la `Species`, `WeatherDay`, le regole delle allerte, il client Ecowitt grezzo — attraverso un adattatore (`services/fitosim_adapter.py`) che traduce le sue righe di database nelle dataclass di fitosim. Dal 19 settembre **il catalogo ufficiale di specie, substrati e componenti è quello di The Pot** (369 schede con le fonti; 17 substrati derivati da 28 componenti): le cinque specie e i cinque substrati definiti in fitosim sono fixture per i test e gli esempi. Quello che The Pot non importa — `Garden`, la persistenza SQLite, la serializzazione JSON, i `Protocol` dei sensori, il client Open-Meteo — è lo **strato standalone**: 8 400 righe, il 36 % dei sorgenti, congelato per iscritto nel README dal 20 settembre; lo usano lo strumento di calibrazione e gli esempi. Il pianificatore (`domain/scheduler.py`) è stato tolto lo stesso giorno perché nessuno lo chiamava.
-
-**La fascia 3 ha la sua matematica** (luglio, `v0_21`–`v0_30`): il layer di feedback come funzioni pure — Kc dalla pendenza di asciugamento del sensore, ancoraggio fenologico doppio (annuali dai giorni o dai gradi-giorno, perenni dal calendario stagionale), riduzione del Kc in dormienza, calibrazione comportamentale dalle irrigazioni e dai giudizi sulle allerte, lisimetro come ground truth, regola di precedenza fra fonti — con lo schema SQLite v5 e il formato JSON v3 che la persistono. A settembre la **chioma misurata** (H.1-c: copertura e altezza della pianta nel Kc e in Penman-Monteith, schema v6), il WH52 letto dalla sezione giusta dell'API Ecowitt con le unità metriche, la history con il vento e i due pluviometri del GW2000, e la **procedura di calibrazione sul WH52** (`docs/calibrazione_con_WH5X.md`) con il suo strumento a riga di comando, che vive in The Pot: cinque vasi — due rosmarini gemelli, un basilico, due cassette gemelle di lattuga — pronti a partire la settimana del 28 settembre.
-
-**Il modello è stato rivisto numero per numero** (18–20 settembre), con la regola che ogni costante deve avere una fonte o essere dichiarata come stima da tarare:
-
-- il coefficiente nutrizionale Kn penalizza solo l'eccesso di sali, con la forma e la pendenza di FAO-56 eq. 83 (12 % di ET per mS/cm sopra il massimo; per gruppo in The Pot: ortive 9, agrumi 11, mediterranee 5, dalla tab. 23), applicato al Kcb nel dual-Kc; **il pH non entra più nel Kn** — agisce sulla nutrizione in settimane, non sulla traspirazione del giorno, e nel vaso è uno stato stimato — resta un'allerta;
-- la CEC e la densità dei substrati vengono dai componenti del catalogo, con la fonte, e il mix pesa la CEC sulla massa; il vaso pesa il tampone del pH con la sua densità vera (`Substrate.bulk_density_kg_l`, schema v7) invece di 0,4 kg/L per tutti;
-- la frazione di deplezione `p` resta il prior di FAO-56, letto per quello che vale sulla riserva a −10 kPa dei substrati (un setpoint a 2–4 kPa), e si misurerà nel dry-down dei vasi gemelli; intanto `calibrate_kc` inverte il Kc sui soli giorni senza stress, perché il Ks dell'inversione dipende da `p`;
-- la dormienza è il Kc del suolo nudo (0,20, il `Kc min` di FAO-56) e il riposo è il Kc dello stadio: via i due fattori 0,25 e 0,50 che non avevano una fonte; i sempreverdi di The Pot (mediterranee, conifere) riposano invece di dormire.
-
-Le decisioni, con i numeri misurati sul catalogo e sui test prima di cambiare, sono nei messaggi di commit del 20 settembre (A1–A5) e nei commenti dei moduli.
+# Aggiornamento al 29 settembre 2026 — il giorno fatto di blocchi
 
 **Il giorno fatto di blocchi** (29 settembre, A7). Il vaso sa avanzare a blocchi di ore dentro il giorno: `Pot.apply_blocks_from_weather` calcola l'ET₀ di ogni blocco con la forma oraria di Penman-Monteith (FAO-56 eq. 53, R_a e R_n del blocco, G di giorno e di notte), valuta Ks sullo stato del momento e fa entrare pioggia e irrigazioni alla loro ora; il giorno resta l'unità di Kc, stadio, gradi-giorno e nutrienti, e il passo giornaliero è il caso di un blocco di 24 ore, con gli stessi numeri. Misurato su una settimana vera di settembre a Milano: la somma delle ore sta +3 % sopra la giornaliera FAO (+7 % sopra quella di fitosim, che usa e°(T_mean)); Ks a ore vale −1,4 % di ET_c; un litro alle 20 invece che «al mattino» tiene 2,5 mm in più nel vaso; l'allerta ha un'ora. Le nove decisioni (Kc costante nel giorno, D_e a blocchi, tasso capillare riscalato, notte a zero, forma FAO-56 e non ASCE-EWRI, …) sono nel docstring di `domain/blocks.py`, con le fonti. Lo strumento di calibrazione non cambia: confronta cali giornalieri.
+
+**L'esempio delle stagioni** (`examples/confronto_et0_risoluzione_temporale.py`, con quattro grafici se matplotlib c'è): Hargreaves e Penman-Monteith a 24 h, 6 h, 4 h e 1 h su due settimane vere di Milano — la canicola del 13–19 luglio 2026 e la nebbia del 12–18 gennaio — con lo stesso rosmarino in un mix drenante, a giorni e a blocchi. Il segno dello scarto fra la giornaliera FAO e la somma delle ore non è fisso (−3.5 % d'estate, +2.8 % a settembre); nella nebbia le due procedure divergono per il pavimento di R_s/R_so che la forma oraria ha e la giornaliera no (+21 % la 24 h, +12 % Hargreaves, su 2.7 mm in sette giorni); d'estate l'allerta arriva «il 16/07 dalle 15:00» e un litro dato alle 20 invece che alle 8 tiene 4.6 mm in più nel vaso, un quarto della riserva utile; d'inverno 2.6 mm in una settimana e l'ora del litro vale 0.1 mm.
+
+**The Pot** riceverà i blocchi dopo la prima ancora del WH52; fino ad allora il suo passo resta giornaliero, e lo strumento di calibrazione confronta cali giornalieri in ogni caso.
 
 __Il quadro al 29 settembre 2026__
 
@@ -39,9 +22,9 @@ __Note__
 
 Test verdi nel core
 
-1519
+1520
 
-515 sub-test; 1525 con la demo end-to-end (matplotlib); circa 14 secondi
+515 sub-test; 1526 con la demo end-to-end (matplotlib); circa dieci secondi
 
 Righe di sorgente
 
@@ -85,7 +68,30 @@ The Pot
 
 369 specie, 17 substrati, 28 componenti, con le fonti; in fitosim 5 \+ 5 \+ 9 fixture
 
-**I prossimi passi** sono, nell'ordine: la calibrazione sul WH52 (fase 0 dello strumento completa; rinvasi e prima ancora nella settimana del 28 settembre; da metà ottobre il dry-down dei gemelli per `p`), lo spostamento dello strumento sui dispositivi e sui modelli di The Pot (fasi 1–2), e con i primi dati la decisione sul terzo punto dell'acqua a −1500 kPa nei componenti del catalogo. Il lisimetro (`the-pot-lisimetro`) è rimandato perché costoso, non abbandonato: la sua stima di Kc entrerà nella regola di precedenza sopra la pendenza del sensore.
+**I prossimi passi** sono, nell'ordine: la calibrazione sul WH52 (fase 0 dello strumento completa; rinvasi e prima ancora nella settimana del 28 settembre; da metà ottobre il dry-down dei gemelli per `p`), i blocchi in The Pot dopo la prima ancora (`shortwave_radiation` fra le variabili orarie di `previsione.py`, un passo a blocchi accanto a `_un_giorno`, l'ora dell'allerta nella pagina), lo spostamento dello strumento sui dispositivi e sui modelli di The Pot (fasi 1–2), e con i primi dati la decisione sul terzo punto dell'acqua a −1500 kPa nei componenti del catalogo. Il lisimetro (`the-pot-lisimetro`) è rimandato perché costoso, non abbandonato: la sua stima di Kc entrerà nella regola di precedenza sopra la pendenza del sensore.
+
+# Aggiornamento al 22 settembre 2026 — il colore dei sali, e la sonda che lo corregge
+
+**La sonda EC** (0.33.0, `science/soil_ec.py`, `Pot.update_from_ec_sensor`): una sonda nel vaso legge la conducibilità *apparente* del substrato, non quella della soluzione su cui stanno le soglie; le due stanno fra loro come l'acqua sta nel vaso. Il modello di **Hilhorst** (2000) — σ_p = ε_p σ_b / (ε_b − ε_σb=0), con la permittività apparente da **Topp** (1980) invertita per bisezione, quella dell'acqua con la temperatura, l'intercetta 4,1 dei suoli — porta la lettura sull'EC della soluzione, e **un fattore per vaso** (`ec_sensor_factor`, tarato a capacità di campo con `factor_at_field_capacity`: subito dopo un'annaffiata a fondo la soluzione è quella della vasca) chiude il conto sul substrato vero. Da lì la massa salina si allinea (`salt = EC × 10 × acqua`, come la WH51 allinea l'acqua) e i serbatoi nutritivi la seguono in proporzione, restando dentro i sali. Un substrato troppo asciutto perché la corrente passi non dice niente, e non tocca niente. Dieci test.
+
+Il bilancio dei sali sapeva *quanto* sale c'è nel vaso; da oggi sa anche *che cosa*, e quanto la pianta ne mangia. `science/nutrients.py` (versione 0.32.0) mette accanto alla massa salina tre serbatoi — azoto, fosforo come P₂O₅, potassio come K₂O, in milligrammi per vaso, le unità delle etichette — che **seguono la massa salina**: entrano con la concimazione (`volume × concentrazione`, o la quota del giorno di un secco), escono col drenaggio nella stessa frazione dei sali (il nitrato un quinto in più), e la loro somma in milliequivalenti non supera mai `salt_mass_meq`. Il pezzo nuovo è **la domanda del giorno**: la pianta mangia il flusso di massa della sua traspirazione (Kcb × Ks × ET₀, la sola pianta) alla concentrazione che il piano della specie vuole quel mese, per una *frazione di alimentazione* — l'intervallo fra le annaffiature sulla cadenza delle concimazioni: 1 per chi fertirriga sempre, circa 0,7 per un liquido ogni due settimane — e col cancello del freddo (rampa 8–12 °C, pavimento 10 %). Quello che mangia lo toglie anche dai sali: è la «metà mangiata» di The Pot fatta giorno per giorno. La `Species` porta il piano (`nutrient_targets_mg_per_l`, dodici terne), la frazione e i micronutrienti che contano; il `Pot` ha i tre serbatoi, le bandierine datate dei micro, la carica iniziale del substrato (`apply_starter_charge`), la **riserva** — la frazione della carica piena occupata dal serbatoio più vuoto fra quelli che il piano chiede, col *quale* («al 40 %, manca soprattutto azoto») e i giorni che restano — e la sesta allerta, `nutrient_low`. I rilasci dei concimi secchi hanno la loro cinetica per classe (`daily_release_fraction`): il rivestito con la temperatura (Q10 = 2 intorno a 21 °C, la scheda Osmocote), l'organico con temperatura e umidità (Hartz 2000), il granulare solubile con l'acqua. Il vincolo di taratura è il **bilancio annuale** (`tests/test_nutrients.py`): un vaso di profilo medio concimato secondo il suo piano — un liquido ogni quattordici giorni, l'acqua quando serve, sei millimetri di pioggia ogni nove giorni — mangia il 90 % di quello che riceve, il resto lo porta via la pioggia, e finisce l'anno senza accumulo; chi mangia meno di quel che riceve accumula. Tutto retrocompatibile: senza piano i serbatoi restano a zero e il modello è quello di prima. 33 test nuovi, 1457 nel core.
+
+# Aggiornamento al 20 settembre 2026
+
+Da maggio fitosim è cambiato in tre modi, e questo capitolo li racconta prima che il documento torni allo stato di allora.
+
+**È diventato il motore di un'applicazione.** The Pot (`../the-pot`, FastAPI e Postgres) monta fitosim come dipendenza editabile e ne usa il modello — tutto `science/`, il `Pot`, la `Species`, `WeatherDay`, le regole delle allerte, il client Ecowitt grezzo — attraverso un adattatore (`services/fitosim_adapter.py`) che traduce le sue righe di database nelle dataclass di fitosim. Dal 19 settembre **il catalogo ufficiale di specie, substrati e componenti è quello di The Pot** (369 schede con le fonti; 17 substrati derivati da 28 componenti): le cinque specie e i cinque substrati definiti in fitosim sono fixture per i test e gli esempi. Quello che The Pot non importa — `Garden`, la persistenza SQLite, la serializzazione JSON, i `Protocol` dei sensori, il client Open-Meteo — è lo **strato standalone**: 8 400 righe, il 36 % dei sorgenti, congelato per iscritto nel README dal 20 settembre; lo usano lo strumento di calibrazione e gli esempi. Il pianificatore (`domain/scheduler.py`) è stato tolto lo stesso giorno perché nessuno lo chiamava.
+
+**La fascia 3 ha la sua matematica** (luglio, `v0_21`–`v0_30`): il layer di feedback come funzioni pure — Kc dalla pendenza di asciugamento del sensore, ancoraggio fenologico doppio (annuali dai giorni o dai gradi-giorno, perenni dal calendario stagionale), riduzione del Kc in dormienza, calibrazione comportamentale dalle irrigazioni e dai giudizi sulle allerte, lisimetro come ground truth, regola di precedenza fra fonti — con lo schema SQLite v5 e il formato JSON v3 che la persistono. A settembre la **chioma misurata** (H.1-c: copertura e altezza della pianta nel Kc e in Penman-Monteith, schema v6), il WH52 letto dalla sezione giusta dell'API Ecowitt con le unità metriche, la history con il vento e i due pluviometri del GW2000, e la **procedura di calibrazione sul WH52** (`docs/calibrazione_con_WH5X.md`) con il suo strumento a riga di comando, che vive in The Pot: cinque vasi — due rosmarini gemelli, un basilico, due cassette gemelle di lattuga — pronti a partire la settimana del 28 settembre.
+
+**Il modello è stato rivisto numero per numero** (18–20 settembre), con la regola che ogni costante deve avere una fonte o essere dichiarata come stima da tarare:
+
+- il coefficiente nutrizionale Kn penalizza solo l'eccesso di sali, con la forma e la pendenza di FAO-56 eq. 83 (12 % di ET per mS/cm sopra il massimo; per gruppo in The Pot: ortive 9, agrumi 11, mediterranee 5, dalla tab. 23), applicato al Kcb nel dual-Kc; **il pH non entra più nel Kn** — agisce sulla nutrizione in settimane, non sulla traspirazione del giorno, e nel vaso è uno stato stimato — resta un'allerta;
+- la CEC e la densità dei substrati vengono dai componenti del catalogo, con la fonte, e il mix pesa la CEC sulla massa; il vaso pesa il tampone del pH con la sua densità vera (`Substrate.bulk_density_kg_l`, schema v7) invece di 0,4 kg/L per tutti;
+- la frazione di deplezione `p` resta il prior di FAO-56, letto per quello che vale sulla riserva a −10 kPa dei substrati (un setpoint a 2–4 kPa), e si misurerà nel dry-down dei vasi gemelli; intanto `calibrate_kc` inverte il Kc sui soli giorni senza stress, perché il Ks dell'inversione dipende da `p`;
+- la dormienza è il Kc del suolo nudo (0,20, il `Kc min` di FAO-56) e il riposo è il Kc dello stadio: via i due fattori 0,25 e 0,50 che non avevano una fonte; i sempreverdi di The Pot (mediterranee, conifere) riposano invece di dormire.
+
+Le decisioni, con i numeri misurati sul catalogo e sui test prima di cambiare, sono nei messaggi di commit del 20 settembre (A1–A5) e nei commenti dei moduli.
 
 # Executive summary
 
@@ -533,6 +539,18 @@ WH52 nella sua sezione con le unità metriche; history con il vento; i due pluvi
 modello
 
 Kn solo per eccesso di sali (eq. 83) e pH fuori dal Kn; CEC e densità dal catalogo (v7); `p` come prior e Kc senza stress; pendenza salina per specie (v8); dormienza = suolo nudo; via lo scheduler; versione 0.31.0
+
+22 settembre
+
+modello
+
+i serbatoi nutritivi N, P₂O₅, K₂O (`science/nutrients.py`, versione 0.32.0) e la sonda EC che corregge i sali (`science/soil_ec.py`, `Pot.update_from_ec_sensor`, versione 0.33.0)
+
+29 settembre
+
+modello
+
+il giorno fatto di blocchi (A7): il vaso avanza a ore dentro il giorno, il passo giornaliero è un blocco di 24 ore, nove decisioni con le fonti in `domain/blocks.py`; l'esempio delle stagioni; versione 0.34.0
 
 Da settembre le consegne non hanno più un numero nel titolo del commit: la versione si alza in `pyproject.toml`, e il repository è condiviso con The Pot, che monta fitosim come dipendenza editabile.
 

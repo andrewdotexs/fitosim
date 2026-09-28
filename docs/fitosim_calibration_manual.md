@@ -189,6 +189,8 @@ Questo è il livello agronomicamente più interessante e quello che giustifica d
 
 Per ogni giorno e per ogni vaso, il consumo idrico osservato è approssimativamente uguale al theta calibrato all'inizio del giorno meno il theta calibrato alla fine del giorno, moltiplicato per il volume del vaso, espresso in millimetri equivalenti (per ottenere mm dividi i millilitri per la superficie del vaso in centimetri quadrati e poi moltiplichi per dieci). Questa è la stima di ET reale del giorno per quel vaso, da cui si esclude qualsiasi giorno con eventi di irrigazione, pioggia, o fertirrigazione (che sposterebbero artificialmente theta verso l'alto e falserebbero la stima di ET).
 
+Il modello sa avanzare anche a blocchi di ore (A7, settembre 2026), ma il confronto con il sensore resta giornaliero: il WH52 dà theta a passi dell'1 % — 1,6 mm su un vaso da 5 L, contro 0,1–0,4 mm di perdita in un'ora — e dentro il giorno la sonda si porta dietro la deriva termica. L'ora entra nel vaso, con l'allerta e le irrigazioni; nella misura entra il giorno.
+
 Filtrare i giorni con eventi è quindi essenziale, ed è qui che il diario degli eventi paga i suoi dividendi. Tutti i giorni con un evento documentato vanno esclusi dal calcolo del consumo osservato. Restano i giorni "puliti" di sola asciugatura, e su questi puoi stimare il consumo medio giornaliero per vaso e per fase fenologica.
 
 ## Confronto con il modello e stima del Kc

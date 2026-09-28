@@ -424,7 +424,7 @@
       <span class="badge">v0.34.0</span>
       <span class="badge neutral">Python ≥ 3.10</span>
       <span class="badge info">stdlib only (core)</span>
-      <span class="badge">1519 test verdi</span>
+      <span class="badge">1520 test verdi</span>
       <span class="badge info">layer feedback fase A · calibrazione WH52</span>
       <span class="badge neutral">MIT License</span>
     </div>
@@ -453,7 +453,8 @@
       <li>miscele di substrati personalizzati via <code>compose_substrate</code>;</li>
       <li>modello chimico (massa salina, pH, EC derivata) con coefficiente nutrizionale <code>Kn</code>;</li>
       <li>bilancio indoor con microclima della stanza (<code>Room</code> + sensore WN31);</li>
-      <li>selettore "best available" del metodo di evapotraspirazione (Penman-Monteith fisico → standard FAO-56 → Hargreaves-Samani).</li>
+      <li>selettore "best available" del metodo di evapotraspirazione (Penman-Monteith fisico → standard FAO-56 → Hargreaves-Samani);</li>
+      <li>il giorno fatto di blocchi (A7, 2026-09-29): il vaso avanza a blocchi di ore dentro il giorno, con la forma oraria di Penman-Monteith (FAO-56 eq. 53), gli eventi alla loro ora e l'ora dell'allerta; il passo giornaliero è il caso di un blocco di 24 ore.</li>
     </ul>
 
     <p>
@@ -468,7 +469,7 @@
       <strong>Domain confinato</strong>
       Il dominio in cui la libreria sa fare bene il suo lavoro è il
       <em>vaso domestico singolo o un piccolo gruppo di vasi su balcone</em>,
-      su scala temporale giornaliera, per piante individualmente
+      su scala temporale giornaliera (a blocchi di ore dentro il giorno, dal 2026-09-29; non al minuto), per piante individualmente
       identificabili con substrati di parametri noti. Fuori da questo dominio
       (parcelle di pieno campo, controllo elettrovalvole al minuto) i
       risultati sono poco affidabili.
@@ -538,17 +539,19 @@ science/  (layer feedback, fase A)
 
 domain/
 ├── species       (standalone)
-├── weather       (standalone)
+├── weather       (standalone; WeatherBlock e i campioni, A7)
+├── blocks        ← weather, science.et0, science.radiation (A7)
 ├── scheduling    (standalone)
 ├── room          (standalone)
 ├── alerts        ← pot
-├── pot           ← species, substrate, science.*
+├── pot           ← species, substrate, weather, blocks, science.*
 ├── garden        ← pot, room, scheduling, alerts
 └── (alerts.py)   ← pot
 
 io/
 ├── persistence   ← domain.*, science.substrate
 ├── serialization ← domain.*, science.substrate
+├── ecowitt       (client grezzo) ← domain.weather (WeatherSample, A7)
 └── sensors/
     ├── types     (stdlib)
     ├── errors    (stdlib)
@@ -1739,7 +1742,7 @@ garden = import_garden_json(json_str)</code></pre>
       <code>EnvironmentReading</code>/<code>SoilReading</code> sono mantenuti
       perché il nuovo adapter Ecowitt riusa internamente <code>fetch_real_time</code>
       e i tipi legacy potrebbero ancora essere importati da codice utente
-      esistente.
+      esistente. Dal 2026-09-29 il client grezzo espone anche <code>weather_samples_from_series</code>: dallo storico (<code>fetch_history</code>) ai <code>WeatherSample</code> che <code>domain.weather.weather_blocks_from_samples</code> raggruppa in blocchi di ore (A7).
     </div>
 
     <h4>Variabili d'ambiente per credenziali</h4>
@@ -1761,8 +1764,8 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
     <h2 id="testing">7. Testing</h2>
 
     <p>
-      <code>fitosim</code> ha <strong>1424 test verdi</strong> (500 sub-test,
-      1430 con la demo end-to-end) che girano in circa nove secondi su laptop
+      <code>fitosim</code> ha <strong>1520 test verdi</strong> (515 sub-test,
+      1526 con la demo end-to-end) che girano in circa dieci secondi su laptop
       standard. La suite è la rete di
       sicurezza primaria del refactoring.
     </p>
@@ -1795,6 +1798,7 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
         <tr><td>Unit scientifici</td><td><code>test_balance</code>, <code>test_et0</code>, <code>test_substrate</code>, ...</td><td>Funzioni pure FAO-56 e helper.</td></tr>
         <tr><td>Layer feedback (fase A)</td><td><code>test_calibration</code>, <code>test_phenology</code>, <code>test_behavioral_calibration</code>, <code>test_lysimeter</code>, <code>test_calibration_resolution</code></td><td>Recupero di parametri noti, robustezza della mediana, guardrail di confidenza e precedenza tra fonti.</td></tr>
         <tr><td>Unit dominio</td><td><code>test_pot</code>, <code>test_garden</code>, <code>test_alerts</code>, ...</td><td>Entità di dominio e invarianti.</td></tr>
+        <tr><td>Il giorno a blocchi (A7)</td><td><code>test_blocks</code></td><td><code>WeatherBlock</code> e campioni, ET₀ per blocco, i tre metodi del <code>Pot</code>; l'invariante: un blocco di 24 h ≡ il passo giornaliero, numero per numero.</td></tr>
         <tr><td>Integrazione I/O</td><td><code>test_persistence</code>, <code>test_serialization</code></td><td>Round-trip SQLite/JSON.</td></tr>
         <tr><td>Spec sensori v1</td><td><code>test_measurement</code></td><td>Validazione della dataclass canonica <code>Measurement</code>: sensor_id, timestamp tz-aware, vocabolario, range fisici (109 test).</td></tr>
         <tr><td>Adapter sensori</td><td><code>test_sensors_ecowitt</code>, <code>test_sensors_openmeteo</code>, <code>test_sensors_http_json</code>, <code>test_sensors_fixtures</code></td><td>Mapping payload → <code>list[Measurement]</code> canoniche, gestione errori, conformità Protocol.</td></tr>
@@ -1916,7 +1920,7 @@ python -m pytest --cov=fitosim --cov-report=term-missing</code></pre>
     </table>
 
     <footer>
-      Generato per <code>fitosim</code> v0.31.0 · Documentazione tecnica per sviluppatori.<br>
+      Generato per <code>fitosim</code> v0.34.0 · Documentazione tecnica per sviluppatori.<br>
       Per documenti complementari vedere <code>docs/fitosim_user_manual.md</code> (manuale utente), <code>docs/fitosim_calibration_manual.md</code> e <code>docs/calibrazione_con_WH5X.md</code> (calibrazione), <code>docs/fitosim_status_report.md</code> (status report), <code>docs/uml/</code> (diagrammi); i PDF in <code>docs/pdf/</code>.
     </footer>
 
