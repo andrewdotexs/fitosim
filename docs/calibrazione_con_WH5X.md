@@ -378,12 +378,18 @@ compra una cosa diversa. Sono due coppie di gemelli e un contrasto.
 **I substrati.** Due, uno per gruppo, e dentro il gruppo lo stesso sacco: è la condizione perché i gemelli siano
 gemelli e il contrasto sia di specie.
 
-- *Vasi tondi:* ZOMA «Terriccio per basilico e piante aromatiche» — torba o cocco con pomice, perlite, corteccia,
-akadama e quarzite, humus di lombrico, senza concimi chimici; il produttore non pubblica né composizione in
-percentuale né pH, EC o ritenzione. Drenante come vuole il rosmarino; il basilico ci berrà più spesso, che per la
-calibrazione è un bene. Il prior è la scheda `drenante-mediterranea` del catalogo di The Pot (universale, pomice e
-sabbia: θ_FC 0,405, θ_PWP 0,186), il substrato che The Pot consiglia al rosmarino e il più vicino a un miscuglio
-minerale senza scheda tecnica; l'ancora lo corregge dalla prima irrigazione. Il 15 kg per 20 L del formato grande
+- *Vasi tondi:* ZOMA «Terriccio per basilico e piante aromatiche», senza concimi chimici. Il riquadro delle
+indicazioni obbligatorie (etichetta letta il 28 settembre 2026) dice un substrato di coltivazione misto di
+vermicompost da letame, ammendante vegetale non compostato, torba neutra, pomice, perlite, vermiculite e zeoliti, con
+**pH 8,2**, EC 0,09 dS/m (estratto 1:5), densità apparente secca 0,4 kg/L e porosità totale 68 %; non dice né le
+quote né la ritenzione. Fino al 28 settembre questa riga seguiva il fronte del sacco, che parla di akadama e quarzite
+e di «pH neutro»: il riquadro non ha né le une né l'altro, e vale lui. Drenante come vuole il rosmarino; il basilico
+ci berrà più spesso, che per la calibrazione è un bene, e a pH 8,2 può mostrare la clorosi del ferro. Il prior è la
+scheda `drenante-mediterranea` del catalogo di The Pot (universale, pomice e sabbia: θ_FC 0,405, θ_PWP 0,186), il
+substrato che The Pot consiglia al rosmarino e quello a cui il catalogo fa somigliare il prodotto
+(`zoma-terriccio-basilico-aromatiche`, B.3), sotto la porosità del sacco con il 27 % d'aria; l'ancora lo corregge
+dalla prima irrigazione. La chimica della calibrazione è spenta, quindi il pH non entra nel Kc; nel profilo parallelo
+di The Pot sì, e col prodotto scelto vale 8,2. Il 15 kg per 20 L del formato grande
 dice che la frazione minerale è alta: più il mezzo è minerale e grosso, più la percentuale del WH52 si allontana
 dalla θ vera (livello 1) — uguale per i tre vasi, quindi interno al gruppo.
 - *Cassette:* miscela propria, misurata in volume e scritta nel diario — 50 % fibra di cocco tamponata a basso EC,
