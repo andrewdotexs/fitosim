@@ -394,6 +394,7 @@
             <li><a href="#domain-pot"><code>pot</code></a></li>
             <li><a href="#domain-room"><code>room</code></a></li>
             <li><a href="#domain-weather"><code>weather</code></a></li>
+            <li><a href="#domain-blocks"><code>weather</code></a></li>
             <li><a href="#domain-garden"><code>garden</code></a></li>
             <li><a href="#domain-scheduling"><code>scheduling</code></a></li>
             <li><a href="#domain-alerts"><code>alerts</code></a></li>
@@ -420,10 +421,10 @@
     <p class="subtitle">Motore scientifico Python per la simulazione FAO-56 del bilancio idrico e chimico di piante in vaso.</p>
 
     <div class="badges">
-      <span class="badge">v0.31.0</span>
+      <span class="badge">v0.34.0</span>
       <span class="badge neutral">Python ≥ 3.10</span>
       <span class="badge info">stdlib only (core)</span>
-      <span class="badge">1424 test verdi</span>
+      <span class="badge">1519 test verdi</span>
       <span class="badge info">layer feedback fase A · calibrazione WH52</span>
       <span class="badge neutral">MIT License</span>
     </div>
@@ -495,7 +496,7 @@
       <div class="layer-card">
         <div class="role">Layer 2 — orchestrazione</div>
         <h4>domain/</h4>
-        <p>Modello di dominio: <code>Pot</code>, <code>Garden</code>, <code>Species</code>, <code>Room</code>, <code>Alert</code>, <code>ScheduledEvent</code>, <code>WeatherDay</code>.</p>
+        <p>Modello di dominio: <code>Pot</code>, <code>Garden</code>, <code>Species</code>, <code>Room</code>, <code>Alert</code>, <code>ScheduledEvent</code>, <code>WeatherDay</code>, <code>WeatherBlock</code> e il giorno fatto di blocchi (<code>blocks.py</code>).</p>
         <p><em>Dipendenze: <code>science</code>.</em></p>
       </div>
       <div class="layer-card">
@@ -662,7 +663,7 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
       </div>
     </div>
 
-    <p>Altre funzioni esposte (helper pubblici): <code>saturation_vapor_pressure</code>, <code>slope_vapor_pressure</code>, <code>actual_vapor_pressure</code>, <code>atmospheric_pressure</code>, <code>psychrometric_constant</code>, <code>aerodynamic_resistance</code>, <code>et0_hargreaves_samani</code>, <code>compute_et0_penman_monteith</code>, <code>compute_et_penman_monteith_physical</code>.</p>
+    <p>Altre funzioni esposte (helper pubblici): <code>saturation_vapor_pressure</code>, <code>slope_vapor_pressure</code>, <code>actual_vapor_pressure</code>, <code>atmospheric_pressure</code>, <code>psychrometric_constant</code>, <code>aerodynamic_resistance</code>, <code>et0_hargreaves_samani</code>, <code>compute_et0_penman_monteith</code>, <code>compute_et_penman_monteith_physical</code> — tutte e due con <code>hours</code> (24 = giornaliera; 1 = la forma oraria di FAO-56, eq. 53; A7, 2026-09-29) —, <code>soil_heat_flux_interval</code> (G di giorno e di notte, eq. 45–46), <code>distribute_daily_et0</code> (l'ET₀ del giorno sui blocchi in proporzione a R<sub>a</sub>).</p>
 
     <!-- BALANCE -->
     <h3 id="science-balance"><code>science/balance.py</code> — Bilancio idrico giornaliero</h3>
@@ -823,6 +824,8 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     </p>
 
     <p>Funzioni: <code>day_of_year</code>, <code>solar_declination</code>, <code>inverse_relative_distance</code>, <code>sunset_hour_angle</code>, <code>extraterrestrial_radiation</code> (FAO-56 eq. 21), <code>clear_sky_radiation</code>, <code>net_radiation</code> (Stefan-Boltzmann + umidità + nuvolosità).</p>
+
+    <p>A blocchi (A7, FAO-56 eq. 28–33 e cap. 4): <code>seasonal_correction_hours</code>, <code>solar_time_angle</code>, <code>solar_noon_hour</code>, <code>sunrise_sunset_hours</code>, <code>extraterrestrial_radiation_interval</code>, <code>daylight_fraction</code>, <code>net_radiation_interval</code>. Le ore sono in tempo civile standard del sito (per l'Italia CET, senza ora legale), la longitudine positiva a est; la somma dei blocchi di un giorno è la R<sub>a</sub> della eq. 21.</p>
 
     <!-- INDOOR -->
     <h3 id="science-indoor"><code>science/indoor.py</code> — Radiazione indoor</h3>
@@ -1231,12 +1234,15 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     <ul>
       <li><code>apply_step(et_0_mm, current_date, rainfall_volume_l) → FullStepResult</code> — passo completo (bilancio + pioggia + saucer).</li>
       <li><code>apply_step_from_weather(weather, current_date, ...)</code> — usa <code>WeatherDay</code> + selettore best-available.</li>
+      <li><code>apply_balance_blocks(blocks, current_date, t_mean_c) → BlocksStepResult</code> — il giorno a blocchi (A7): per ogni <code>BalanceBlock</code> sottovaso, ET<sub>c</sub> con Ks sullo stato del momento, secchio, D<sub>e</sub>; nutrienti una volta al giorno. Un solo blocco di 24 ore ≡ <code>apply_balance_step</code>.</li>
+      <li><code>apply_step_blocks(blocks, current_date, *, rainfall_l_by_hour, fertigations) → FullBlocksStepResult</code> — pioggia e <code>BlockFertigation</code> nel blocco in cui accadono.</li>
+      <li><code>apply_blocks_from_weather(weather_blocks, current_date, *, longitude_deg, utc_offset_hours, ...) → FullBlocksStepResult</code> — dai <code>WeatherBlock</code>: ET₀ per blocco con <code>domain.blocks.et0_for_blocks</code> (Penman-Monteith fisico o standard a passo orario, oppure l'ET₀ del giorno ripartita ∝ R<sub>a</sub>), gradi-giorno a fine giornata, <code>alert_hour</code>.</li>
       <li><code>apply_balance_step_from_indoor(microclimate, water_input_mm, ..., room)</code> — versione indoor.</li>
       <li><code>update_from_sensor(reading) → SensorUpdateResult</code> — riconcilia con misura sensore (discrepanza modello/realtà).</li>
       <li><code>apply_fertigation_step(volume_l, ec_mscm, ph, current_date) → FertigationResult</code> — applicazione di soluzione fertilizzante.</li>
     </ul>
 
-    <p>Tutti i risultati sono dataclass <code>frozen=True</code>: <code>FullStepResult</code>, <code>SensorUpdateResult</code>, <code>FertigationResult</code>.</p>
+    <p>Tutti i risultati sono dataclass <code>frozen=True</code>: <code>FullStepResult</code>, <code>SensorUpdateResult</code>, <code>FertigationResult</code>, e per i blocchi <code>BlocksStepResult</code>, <code>FullBlocksStepResult</code>, <code>BlockTrace</code>.</p>
 
     <!-- ROOM -->
     <h3 id="domain-room"><code>domain/room.py</code> — Microclima indoor</h3>
@@ -1296,6 +1302,33 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
         <p>Property: <code>has_full_weather</code>.</p>
       </div>
     </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass (frozen)</span>
+        <span class="api-name">WeatherBlock</span>
+      </div>
+      <div class="api-body">
+        <p>Il meteo di un blocco [start_hour, start_hour + hours) di un giorno, in ore intere di tempo civile standard (A7, 2026-09-29): medie di temperatura, umidità e vento, somma della radiazione in MJ/m².</p>
+        <ul class="api-fields">
+          <li><strong>Obbligatori</strong>: <code>date_</code>, <code>start_hour</code>, <code>hours</code>, <code>t_c</code>.</li>
+          <li><strong>Opzionali</strong>: <code>humidity_relative</code>, <code>wind_speed_m_s</code>, <code>solar_radiation_mj_m2</code>.</li>
+        </ul>
+        <p>Property: <code>end_hour</code>, <code>has_full_weather</code>. Funzioni: <code>validate_day_blocks</code> (stesso giorno, contigui da 0 a 24), <code>weather_day_from_blocks</code> (il <code>WeatherDay</code> del giorno: estremi, medie pesate, somma), <code>weather_blocks_from_samples</code> (dai <code>WeatherSample</code> di una stazione — timestamp aware, T, RH, vento, W/m² — ai blocchi, con il fuso standard del sito; <code>io.ecowitt.weather_samples_from_series</code> li ricava dallo storico).</p>
+      </div>
+    </div>
+
+    <!-- BLOCKS -->
+    <h3 id="domain-blocks"><code>domain/blocks.py</code> — Il giorno fatto di blocchi (A7)</h3>
+
+    <p>
+      Il giorno resta l'unità della contabilità del modello (stadio e Kc, gradi-giorno, cancello del freddo,
+      istantanea persistita, taratura di Kc dai cali giornalieri); dentro il giorno il vaso avanza a blocchi
+      [h, h+Δt) — un'ora con i sensori, una o tre con la previsione. Il passo giornaliero è il caso di un solo
+      blocco di 24 ore, e i due cammini condividono <code>Pot._balance_substep</code>: stessi numeri per costruzione.
+    </p>
+    <p>Tipi: <code>BalanceBlock</code> (ET₀ e input di un blocco; rifiuta ET₀ negativa), <code>BlockFertigation</code>, <code>BlockTrace</code>, <code>BlocksStepResult</code> (traccia, totali, <code>alert_hour</code>), <code>FullBlocksStepResult</code> (eventi, <code>et_method</code>, <code>rs_rso_pre_sunset</code> da passare alla notte del giorno dopo), <code>BlockEt0</code>. Funzioni: <code>validate_block_tiling</code>, <code>et0_for_blocks</code>.</p>
+    <p>Le nove decisioni del 29 settembre 2026, con le fonti e i numeri misurati, sono nel docstring del modulo: Kc costante dentro il giorno (D1), Ks sullo stato del blocco (D2), D<sub>e</sub> a blocchi (D3), tasso capillare riscalato 1 − (1 − r)<sup>Δt/24</sup> (D4), cancello del freddo sulla T media del giorno (D5), forma oraria FAO-56 eq. 53 e non ASCE-EWRI (D6), blocchi notturni negativi a zero (D7), G e R<sub>s</sub>/R<sub>so</sub> notturni di FAO-56 cap. 4 (D8), l'ora dell'allerta (D9). Misurato sulla settimana 14–20 settembre 2026 a Milano: somma delle ore +3 % sulla giornaliera FAO, Ks a ore −1,4 % di ET<sub>c</sub>, un litro alle 20 tiene 2,5 mm in più nel vaso. Lo strumento di calibrazione resta sui cali giornalieri.</p>
 
     <!-- GARDEN -->
     <h3 id="domain-garden"><code>domain/garden.py</code> — Orchestratore</h3>

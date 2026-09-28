@@ -290,6 +290,11 @@ Dopo i primi dry-down si decide se aggiungere il terzo punto dell'acqua, `θ(−
 catalogo: θ_PWP tornerebbe un pavimento fisico, `p` il `p` di FAO, e −10 kPa resterebbe il limite del substrato
 (`soglia = max(FC − p·TAW_FAO, θ₋₁₀)`). Un lavoro come quello della CEC, con le fonti, da fare con i dati in mano.
 
+Il bilancio a blocchi (A7, 29 settembre 2026) non cambia il protocollo: i confronti restano sui cali giornalieri, perché
+il WH52 dà θ a passi dell'1 % — 1,6 mm su un vaso da 5 L, contro 0,1–0,4 mm di perdita in un'ora — e dentro il giorno
+l'AD della sonda si porta dietro la deriva termica. I blocchi servono al vaso (l'ora dell'allerta, gli eventi alla loro
+ora), non alla misura.
+
 ## Aspettative e calendario
 
 La confidenza cresce con il numero di cicli di irrigazione, non con i giorni:

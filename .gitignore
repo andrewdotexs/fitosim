@@ -234,3 +234,4 @@ docs/pdf/calibrazione_con_WH5X.pdf
 # un asset: si rigenerano con `python examples/tappa5_E_appartamento_demo.py`
 # (D, 2026-09-21). I test li scrivono in una cartella temporanea.
 examples/tappa5_E_*.png
+examples/confronto_et0_*.png

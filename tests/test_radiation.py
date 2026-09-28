@@ -22,10 +22,16 @@ from datetime import date
 from fitosim.science.radiation import (
     clear_sky_radiation,
     day_of_year,
+    daylight_fraction,
     extraterrestrial_radiation,
+    extraterrestrial_radiation_interval,
     inverse_relative_distance,
     net_radiation,
+    net_radiation_interval,
+    seasonal_correction_hours,
     solar_declination,
+    solar_noon_hour,
+    sunrise_sunset_hours,
     sunset_hour_angle,
 )
 
@@ -253,6 +259,142 @@ class TestNetRadiation(unittest.TestCase):
         rn_overcast = net_radiation(solar_radiation_mj=10.5, **common)
         self.assertGreater(rn_clear, rn_overcast)
         self.assertGreater(rn_clear - rn_overcast, 5.0)  # differenza significativa
+
+
+
+class TestIntervalGeometry(unittest.TestCase):
+    """
+    FAO-56 eq. 28–33 (A7): la geometria a blocchi deve integrarsi al
+    giorno intero, spegnersi di notte ed essere simmetrica attorno al
+    mezzogiorno solare.
+    """
+
+    LAT, LON, TZ = 45.47, 9.19, 1.0   # Milano, ora solare CET
+
+    def test_hourly_blocks_sum_to_daily_ra(self):
+        # La somma delle 24 ore (eq. 28, tagliate all'arco diurno) è la
+        # R_a giornaliera della eq. 21, in ogni stagione.
+        for j in (15, 80, 172, 257, 355):
+            with self.subTest(j=j):
+                daily = extraterrestrial_radiation(self.LAT, j)
+                hourly = sum(
+                    extraterrestrial_radiation_interval(
+                        self.LAT, self.LON, j, h, h + 1, self.TZ,
+                    )
+                    for h in range(24)
+                )
+                self.assertAlmostEqual(hourly, daily, delta=1e-9 * daily)
+
+    def test_six_hour_blocks_sum_to_daily_ra(self):
+        j = 257
+        daily = extraterrestrial_radiation(self.LAT, j)
+        blocks = sum(
+            extraterrestrial_radiation_interval(self.LAT, self.LON, j, h, h + 6, self.TZ)
+            for h in (0, 6, 12, 18)
+        )
+        self.assertAlmostEqual(blocks, daily, delta=1e-9 * daily)
+
+    def test_night_blocks_are_zero(self):
+        j = 257
+        self.assertEqual(
+            extraterrestrial_radiation_interval(self.LAT, self.LON, j, 0, 4, self.TZ), 0.0,
+        )
+        self.assertEqual(
+            extraterrestrial_radiation_interval(self.LAT, self.LON, j, 20, 24, self.TZ), 0.0,
+        )
+        self.assertEqual(daylight_fraction(self.LAT, self.LON, j, 0, 4, self.TZ), 0.0)
+
+    def test_symmetric_around_solar_noon(self):
+        j = 172
+        noon = solar_noon_hour(j, self.LON, self.TZ)
+        before = extraterrestrial_radiation_interval(
+            self.LAT, self.LON, j, noon - 1.0, noon, self.TZ,
+        )
+        after = extraterrestrial_radiation_interval(
+            self.LAT, self.LON, j, noon, noon + 1.0, self.TZ,
+        )
+        self.assertAlmostEqual(before, after, places=9)
+        self.assertGreater(before, 3.0)   # a mezzogiorno d'estate: ~3.8 MJ/m² all'ora
+
+    def test_sunrise_and_sunset_milan_mid_september(self):
+        # Il 14 settembre a Milano: alba 06:07 e tramonto 19:28 CEST,
+        # cioè 6.13 e 18.47 in ora solare CET.
+        j = day_of_year(date(2026, 9, 14))
+        sunrise, sunset = sunrise_sunset_hours(self.LAT, self.LON, j, self.TZ)
+        self.assertAlmostEqual(sunrise, 6.13, delta=0.05)
+        self.assertAlmostEqual(sunset, 18.47, delta=0.05)
+
+    def test_seasonal_correction_is_the_equation_of_time(self):
+        # Minimo a metà febbraio (−14 min), massimo a inizio novembre
+        # (+16 min), zero verso metà aprile.
+        self.assertAlmostEqual(seasonal_correction_hours(42), -0.243, delta=0.01)
+        self.assertAlmostEqual(seasonal_correction_hours(307), 0.272, delta=0.01)
+        self.assertLess(abs(seasonal_correction_hours(105)), 0.02)
+
+    def test_daylight_fraction_of_the_sunrise_block(self):
+        j = day_of_year(date(2026, 9, 14))
+        self.assertEqual(daylight_fraction(self.LAT, self.LON, j, 12, 13, self.TZ), 1.0)
+        # Alba a 6.13: del blocco 6–7 è illuminato l'87 %.
+        self.assertAlmostEqual(
+            daylight_fraction(self.LAT, self.LON, j, 6, 7, self.TZ), 0.87, delta=0.03,
+        )
+
+    def test_invalid_interval_raises(self):
+        with self.assertRaises(ValueError):
+            extraterrestrial_radiation_interval(self.LAT, self.LON, 100, 8, 8, self.TZ)
+        with self.assertRaises(ValueError):
+            extraterrestrial_radiation_interval(self.LAT, self.LON, 100, 20, 25, self.TZ)
+
+
+class TestNetRadiationInterval(unittest.TestCase):
+    """La R_n di un blocco (FAO-56 cap. 4) e il suo raccordo con la giornaliera."""
+
+    LAT, LON, TZ, Z = 45.47, 9.19, 1.0, 160.0
+
+    def test_hourly_sum_matches_daily_with_constant_temperature(self):
+        # A temperatura costante la giornaliera usa la stessa T⁴ dei
+        # blocchi; con lo stesso rapporto R_s/R_so (0.8) dappertutto la
+        # somma delle 24 ore deve dare la R_n della eq. 40.
+        j, t_c, ea, ratio = 257, 22.0, 1.5, 0.8
+        ra_day = extraterrestrial_radiation(self.LAT, j)
+        rs_day = ratio * clear_sky_radiation(ra_day, self.Z)
+        daily = net_radiation(rs_day, ra_day, t_c, t_c, ea, self.Z)
+
+        total = 0.0
+        for h in range(24):
+            ra_h = extraterrestrial_radiation_interval(self.LAT, self.LON, j, h, h + 1, self.TZ)
+            daytime = daylight_fraction(self.LAT, self.LON, j, h, h + 1, self.TZ) >= 0.5
+            rs_h = ratio * clear_sky_radiation(ra_h, self.Z)
+            total += net_radiation_interval(
+                rs_h, ra_h, t_c, ea, 1.0,
+                daytime=daytime, rs_rso_night=ratio, elevation_m=self.Z,
+            )
+        self.assertAlmostEqual(total, daily, places=9)
+
+    def test_night_block_requires_the_pre_sunset_ratio(self):
+        with self.assertRaises(ValueError):
+            net_radiation_interval(0.0, 0.0, 18.0, 1.6, 1.0, daytime=False)
+
+    def test_night_block_is_a_longwave_loss(self):
+        rn = net_radiation_interval(0.0, 0.0, 18.0, 1.6, 1.0, daytime=False, rs_rso_night=0.9)
+        self.assertLess(rn, 0.0)
+        self.assertGreater(rn, -0.4)   # qualche decimo di MJ/m² all'ora
+
+    def test_ratio_is_clamped_to_the_subdaily_bounds(self):
+        low = net_radiation_interval(0.0, 0.0, 18.0, 1.6, 1.0, daytime=False, rs_rso_night=0.05)
+        floor = net_radiation_interval(0.0, 0.0, 18.0, 1.6, 1.0, daytime=False, rs_rso_night=0.3)
+        self.assertEqual(low, floor)
+        # Di giorno un piranometro che legge più del cielo sereno vale 1.0.
+        ra_h = 3.0
+        rso = clear_sky_radiation(ra_h, self.Z)
+        over = net_radiation_interval(1.2 * rso, ra_h, 25.0, 1.8, 1.0, daytime=True, elevation_m=self.Z)
+        at_one = net_radiation_interval(rso, ra_h, 25.0, 1.8, 1.0, daytime=True, elevation_m=self.Z)
+        # Rns cresce con Rs, ma il termine nuvole è lo stesso: la differenza è solo 0.77·ΔRs.
+        self.assertAlmostEqual(over - at_one, 0.77 * 0.2 * rso, places=9)
+
+    def test_hours_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            net_radiation_interval(1.0, 2.0, 20.0, 1.5, 0.0, daytime=True)
 
 
 if __name__ == "__main__":

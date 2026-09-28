@@ -458,10 +458,11 @@ def compute_et_penman_monteith_physical(
     crop_height_m: float,
     elevation_m: float = 0.0,
     soil_heat_flux_mj_m2_day: float = 0.0,
+    hours: float = 24.0,
 ) -> float:
     """
     Evapotraspirazione ET secondo l'equazione fisica di Penman-Monteith,
-    in mm/giorno.
+    in mm per il passo (mm/giorno con il default `hours=24`).
 
     Significato fisico: l'evapotraspirazione effettiva di una specie
     specifica calcolata applicando direttamente l'equazione di
@@ -549,23 +550,35 @@ def compute_et_penman_monteith_physical(
         Quota del sito sul livello del mare. Influenza la pressione
         atmosferica e quindi la costante psicrometrica.
     soil_heat_flux_mj_m2_day : float, default 0.0
-        Flusso termico G nel suolo, in MJ/m²/giorno. A scala giornaliera
-        e per coperture vegetali ben sviluppate è quasi sempre
-        trascurabile, e il default 0 è la scelta raccomandata da FAO-56.
+        Flusso termico G nel suolo, in MJ/m² nel passo. A scala
+        giornaliera e per coperture vegetali ben sviluppate è quasi
+        sempre trascurabile, e il default 0 è la scelta raccomandata da
+        FAO-56 (eq. 42). Nei passi sub-giornalieri non lo è:
+        `soil_heat_flux_interval` dà la regola oraria (eq. 45–46).
+    hours : float, default 24.0
+        Durata del passo in ore (A7, 2026-09-29). Radiazione netta e G
+        vanno espressi in MJ/m² *su quel passo*, e il termine
+        aerodinamico integra il flusso su `hours × 3600` secondi invece
+        che su 86 400. Con 24 la funzione è quella di sempre; con 1 è
+        la forma oraria di FAO-56 (eq. 53), a meno degli arrotondamenti
+        dei coefficienti 900 → 37 che la versione fisica non fa.
 
     Ritorna
     -------
     float
-        ET in mm/giorno. Valori tipici per coltura ben irrigata a
-        latitudini medie: 1-3 in inverno, 4-7 in estate, fino a 10+
-        in condizioni desertiche ventilate.
+        ET in mm nel passo. Valori tipici giornalieri per coltura ben
+        irrigata a latitudini medie: 1-3 in inverno, 4-7 in estate,
+        fino a 10+ in condizioni desertiche ventilate.
 
     Solleva
     -------
     ValueError
         Se i parametri di input violano i loro vincoli fisici
-        (umidità fuori da [0,1], vento o resistenze non positive).
+        (umidità fuori da [0,1], vento o resistenze non positive,
+        durata non positiva).
     """
+    if hours <= 0:
+        raise ValueError(f"hours ({hours}) deve essere positivo.")
     # I sei helper introdotti sopra fanno il grosso del lavoro.
     # Ognuno è testato indipendentemente, e qui li componiamo nella
     # forma finale dell'equazione di Penman-Monteith.
@@ -605,12 +618,13 @@ def compute_et_penman_monteith_physical(
     radiative_term = delta * (
         net_radiation_mj_m2_day - soil_heat_flux_mj_m2_day
     )
-    aerodynamic_term = (86400.0 * rho_cp * (e_s - e_a) / r_a)
-    # Il fattore 86400 = 24·3600 converte secondi → giorni: r_a è in
-    # s/m, mentre R_n è in MJ/m²/giorno, e dobbiamo riportare le due
-    # quantità sulla stessa base temporale. Il prodotto rho_cp·86400/r_a
-    # ha unità di MJ/(m²·giorno·kPa) che, moltiplicato per (e_s−e_a) in
-    # kPa, dà MJ/m²/giorno come il termine radiativo.
+    aerodynamic_term = (hours * 3600.0 * rho_cp * (e_s - e_a) / r_a)
+    # Il fattore hours·3600 (86 400 per il giorno) converte secondi →
+    # passo: r_a è in s/m, mentre R_n è in MJ/m² sul passo, e dobbiamo
+    # riportare le due quantità sulla stessa base temporale. Il prodotto
+    # rho_cp·hours·3600/r_a ha unità di MJ/(m²·passo·kPa) che,
+    # moltiplicato per (e_s−e_a) in kPa, dà MJ/m² sul passo come il
+    # termine radiativo.
     numerator = radiative_term + aerodynamic_term
 
     # Denominatore: somma di Δ e del fattore psicrometrico modificato
@@ -633,10 +647,12 @@ def compute_et0_penman_monteith(
     net_radiation_mj_m2_day: float,
     elevation_m: float = 0.0,
     soil_heat_flux_mj_m2_day: float = 0.0,
+    hours: float = 24.0,
 ) -> float:
     """
     Evapotraspirazione di riferimento ET₀ secondo Penman-Monteith FAO-56,
-    in mm/giorno.
+    in mm per il passo (mm/giorno con il default `hours=24`; con
+    `hours=1` è la forma oraria, eq. 53).
 
     Significato fisico: la versione "standard" del Penman-Monteith che
     assume la coltura di riferimento ipotetica di FAO-56 (erba bassa
@@ -672,7 +688,8 @@ def compute_et0_penman_monteith(
     Parametri
     ---------
     temperature_c, humidity_relative, wind_speed_m_s,
-    net_radiation_mj_m2_day, elevation_m, soil_heat_flux_mj_m2_day :
+    net_radiation_mj_m2_day, elevation_m, soil_heat_flux_mj_m2_day,
+    hours :
         Vedi `compute_et_penman_monteith_physical`. Stessi significati,
         stessi vincoli, stesse unità.
 
@@ -700,6 +717,7 @@ def compute_et0_penman_monteith(
         crop_height_m=REFERENCE_CROP_HEIGHT_M,
         elevation_m=elevation_m,
         soil_heat_flux_mj_m2_day=soil_heat_flux_mj_m2_day,
+        hours=hours,
     )
 
 
@@ -1012,3 +1030,66 @@ def compute_et(
         latitude_deg=latitude_deg, j=j,
     )
     return EtResult(value_mm=value, method=EtMethod.HARGREAVES_SAMANI)
+
+
+# =====================================================================
+#  Il giorno fatto di blocchi (A7, 2026-09-29): i due mattoni che il
+#  passo sub-giornaliero aggiunge alla formula. La forma oraria di
+#  FAO-56 (eq. 53) è `compute_et0_penman_monteith(..., hours=1)`; qui
+#  stanno la regola per G nei passi orari e la ripartizione di un'ET₀
+#  giornaliera sui blocchi, per quando i dati orari non bastano a
+#  Penman-Monteith (Hargreaves non ha una forma oraria).
+# =====================================================================
+
+# Frazioni della radiazione netta che finiscono nel suolo nei passi
+# orari (FAO-56 eq. 45 e 46): 0.1 R_n di giorno, 0.5 R_n di notte. Sul
+# giorno intero le due si compensano e G ≈ 0 (eq. 42).
+SOIL_HEAT_FLUX_DAYTIME_FRACTION = 0.1
+SOIL_HEAT_FLUX_NIGHTTIME_FRACTION = 0.5
+
+
+def soil_heat_flux_interval(net_radiation_mj: float, daytime: bool) -> float:
+    """
+    Flusso di calore nel suolo G di un blocco sub-giornaliero, in MJ/m²
+    (FAO-56 eq. 45–46).
+
+    Di giorno il suolo sotto un prato assorbe circa un decimo della
+    radiazione netta; di notte, con R_n negativa, ne restituisce la
+    metà. La regola è FAO-56 cap. 4 per i passi orari «o più brevi»;
+    qui la usiamo per qualunque blocco, classificato diurno o notturno
+    da chi lo chiama (di norma: il sole sopra l'orizzonte per almeno
+    metà del blocco, vedi `radiation.daylight_fraction`).
+    """
+    fraction = (
+        SOIL_HEAT_FLUX_DAYTIME_FRACTION if daytime
+        else SOIL_HEAT_FLUX_NIGHTTIME_FRACTION
+    )
+    return fraction * net_radiation_mj
+
+
+def distribute_daily_et0(et_0_day_mm: float, weights: list[float]) -> list[float]:
+    """
+    Ripartisce l'ET₀ di un giorno sui blocchi in proporzione ai pesi
+    (di norma la R_a di ciascun blocco,
+    `radiation.extraterrestrial_radiation_interval`): il profilo del
+    sole, che di notte è zero.
+
+    Non è un'ET₀ nuova: la somma dei blocchi è esattamente `et_0_day_mm`.
+    Serve quando ai dati orari mancano vento, umidità o radiazione e
+    l'ET₀ del giorno viene da Hargreaves-Samani o dalla Penman-Monteith
+    giornaliera; il bilancio a blocchi ha comunque bisogno di sapere
+    *quando* nel giorno quell'acqua se ne va. Se tutti i pesi sono zero
+    (notte polare) la ripartizione è uniforme.
+
+    Solleva ValueError per ET₀ negativa, pesi negativi o lista vuota.
+    """
+    if et_0_day_mm < 0:
+        raise ValueError(f"et_0_day_mm ({et_0_day_mm}) deve essere ≥ 0.")
+    if not weights:
+        raise ValueError("distribute_daily_et0 richiede almeno un blocco.")
+    if any(w < 0 for w in weights):
+        raise ValueError(f"I pesi devono essere ≥ 0 (ricevuti {weights}).")
+    total = sum(weights)
+    if total <= 0:
+        return [et_0_day_mm / len(weights)] * len(weights)
+    return [et_0_day_mm * w / total for w in weights]

@@ -33,7 +33,8 @@ corrente meno la data di impianto, attraverso il metodo
 campo redundant e gli permette di evolvere automaticamente nel tempo.
 """
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from enum import Enum
 from typing import Optional
@@ -59,7 +60,21 @@ from fitosim.domain.room import (
     MicroclimateKind,
     Room,
 )
-from fitosim.domain.weather import WeatherDay
+from fitosim.domain.blocks import (
+    BalanceBlock,
+    BlockFertigation,
+    BlocksStepResult,
+    BlockTrace,
+    FullBlocksStepResult,
+    et0_for_blocks,
+    validate_block_tiling,
+)
+from fitosim.domain.weather import (
+    WeatherBlock,
+    WeatherDay,
+    validate_day_blocks,
+    weather_day_from_blocks,
+)
 from fitosim.science.balance import (
     BalanceStepResult,
     water_balance_step_mm,
@@ -1484,7 +1499,47 @@ class Pot:
             del sottovaso è disponibile direttamente in
             self.saucer_state_mm dopo la chiamata.
         """
+        result, _et_c_mm, _soil_evap_mm, transpiration_mm = self._balance_substep(
+            et_0_mm=et_0_mm,
+            water_input_mm=water_input_mm,
+            current_date=current_date,
+            hours=24.0,
+        )
+
+        # === Passo 7: la pianta mangia (il colore dei sali) ===
+        self.last_nutrient_step = self._apply_nutrient_uptake(
+            transpiration_mm=transpiration_mm,
+            current_date=current_date,
+            t_mean_c=t_mean_c,
+        )
+
+        return result
+
+    def _balance_substep(
+        self,
+        et_0_mm: float,
+        water_input_mm: float,
+        current_date: date,
+        hours: float,
+    ) -> tuple[BalanceStepResult, float, float, float]:
+        """
+        I passi 1–6 del bilancio su un passo di `hours` ore: il giorno
+        intero (24, `apply_balance_step`) o un blocco (A7,
+        `apply_balance_blocks`). Sottovaso, ET_c con Ks sullo stato
+        corrente, secchio, drenaggio nel sottovaso, D_e. Ritorna
+        (esito, ET_c, evaporazione dal substrato, traspirazione), tutti
+        in mm sul passo; i nutrienti li fa il chiamante, una volta al
+        giorno (D5 di `domain/blocks.py`).
+
+        L'unico numero che dipende dalla durata è il tasso capillare
+        del sottovaso, definito «per giorno»: su un passo più corto
+        diventa 1 − (1 − r)^(hours/24) (D4). L'evaporazione del
+        piattino è proporzionale a ET₀ e si riscala da sola.
+        """
         has_saucer = self.saucer_capacity_mm is not None
+        capillary_rate = self.saucer_capillary_rate
+        if hours != 24.0:
+            capillary_rate = 1.0 - (1.0 - self.saucer_capillary_rate) ** (hours / 24.0)
 
         # === Passi 1-2: dinamica del sottovaso PRIMA del bilancio ===
         # L'evaporazione e la risalita capillare avvengono "durante la
@@ -1507,7 +1562,7 @@ class Pot:
             capillary_in = capillary_transfer(
                 saucer_water_mm=self.saucer_state_mm,
                 deficit_mm=deficit,
-                rate=self.saucer_capillary_rate,
+                rate=capillary_rate,
             )
             self.saucer_state_mm -= capillary_in
 
@@ -1566,14 +1621,7 @@ class Pot:
                 tew_mm=self.substrate.tew_mm,  # type: ignore[arg-type]
             )
 
-        # === Passo 7: la pianta mangia (il colore dei sali) ===
-        self.last_nutrient_step = self._apply_nutrient_uptake(
-            transpiration_mm=transpiration_mm,
-            current_date=current_date,
-            t_mean_c=t_mean_c,
-        )
-
-        return result
+        return result, et_c_mm, soil_evap_mm, transpiration_mm
 
     def _apply_nutrient_uptake(
         self,
@@ -2831,4 +2879,287 @@ class Pot:
             rainfall_result=rainfall_result,
             fertigation_result=fertigation_result,
             nutrient_result=self.last_nutrient_step,
+        )
+
+    # -------------------------------------------------------------------
+    #  Il giorno fatto di blocchi (A7, 2026-09-29). Il disegno e le
+    #  decisioni sono in `domain/blocks.py`. Il passo giornaliero è il
+    #  caso di un solo blocco di 24 ore: i due cammini condividono
+    #  `_balance_substep` e danno gli stessi numeri per costruzione.
+    # -------------------------------------------------------------------
+
+    def apply_balance_blocks(
+        self,
+        blocks: Sequence[BalanceBlock],
+        current_date: date,
+        t_mean_c: float | None = None,
+    ) -> BlocksStepResult:
+        """
+        Un giorno di bilancio idrico a blocchi: per ogni blocco il
+        sottovaso, ET_c = Kp · Ks(θ del momento) · Kc · Kn · ET₀ del
+        blocco, il secchio con l'acqua entrata nel blocco, il drenaggio
+        nel sottovaso, D_e; a fine giornata i nutrienti, con la
+        traspirazione del giorno e la temperatura media (D5).
+
+        È il fratello a blocchi di `apply_balance_step`, che è il caso
+        di un solo blocco di 24 ore: `apply_balance_blocks([BalanceBlock(
+        0, 24, et_0_mm, water_input_mm)])` dà esattamente il suo
+        risultato. I blocchi devono coprire il giorno, contigui, da 0 a
+        24 (`validate_block_tiling`).
+
+        Ritorna un `BlocksStepResult`: la traccia per blocco, il
+        bilancio del giorno nella forma di sempre, i totali, e
+        `alert_hour` — la fine del primo blocco in cui l'acqua è scesa
+        sotto la soglia della specie, None se non è successo (D9).
+        """
+        validate_block_tiling(blocks)
+        result, _rain, _fertigations = self._run_blocks(
+            blocks, current_date, t_mean_c=t_mean_c,
+        )
+        return result
+
+    def apply_step_blocks(
+        self,
+        blocks: Sequence[BalanceBlock],
+        current_date: date,
+        *,
+        rainfall_l_by_hour: Mapping[int, float] | None = None,
+        fertigations: Sequence[BlockFertigation] = (),
+        t_mean_c: float | None = None,
+    ) -> FullBlocksStepResult:
+        """
+        Il fratello a blocchi di `apply_step`: gli eventi alla loro ora.
+        La pioggia (`rainfall_l_by_hour`: litri nominali sulla bocca del
+        vaso, per ora d'inizio) e le irrigazioni (`BlockFertigation`,
+        con EC, pH e nutrienti) entrano nel blocco in cui accadono,
+        prima dell'ET di quel blocco — come nel passo giornaliero gli
+        eventi «del mattino» entrano prima dell'ET del giorno —, con la
+        chimica di quel momento: un litro alle 20 trova il vaso più
+        asciutto che alle 8 e drena meno.
+        """
+        validate_block_tiling(blocks)
+        rain = dict(rainfall_l_by_hour or {})
+        for hour, litres in rain.items():
+            if not 0 <= hour < 24:
+                raise ValueError(f"Ora della pioggia fuori dal giorno: {hour}.")
+            if litres < 0:
+                raise ValueError(f"Pioggia negativa alle {hour}: {litres} L.")
+        result, rain_results, fertigation_results = self._run_blocks(
+            blocks, current_date, t_mean_c=t_mean_c,
+            rainfall_l_by_hour=rain, fertigations=tuple(fertigations),
+        )
+        return FullBlocksStepResult(
+            event_date=current_date,
+            blocks_result=result,
+            rainfall_results=tuple(rain_results),
+            fertigation_results=tuple(fertigation_results),
+        )
+
+    def apply_blocks_from_weather(
+        self,
+        weather_blocks: Sequence[WeatherBlock],
+        current_date: date,
+        *,
+        longitude_deg: float,
+        utc_offset_hours: float,
+        latitude_deg: float | None = None,
+        elevation_m: float | None = None,
+        rainfall_l_by_hour: Mapping[int, float] | None = None,
+        fertigations: Sequence[BlockFertigation] = (),
+        rs_rso_night_previous: float | None = None,
+    ) -> FullBlocksStepResult:
+        """
+        Il giorno a blocchi a partire dal meteo dei blocchi: il fratello
+        di `apply_step_from_weather`.
+
+        L'ET₀ di ogni blocco la fa `domain.blocks.et0_for_blocks`:
+        Penman-Monteith per blocco quando umidità, vento e radiazione ci
+        sono in tutti (fisico se la specie ha resistenza stomatica e
+        altezza, standard altrimenti — la gerarchia del selettore), con
+        il vento ridotto dal riparo del vaso come nel cammino
+        giornaliero; l'ET₀ del giorno ripartita sul profilo del sole
+        quando manca qualcosa. Il Penman-Monteith fisico dà ET, non
+        ET₀: la si riporta a «ET₀ equivalente» dividendo per il Kc dello
+        stadio, la stessa divisione di `apply_balance_step_from_weather`.
+        I blocchi notturni con ET₀ negativa valgono zero (D7).
+
+        Servono la longitudine (positiva a est) e il fuso orario
+        standard del sito (1 per l'Italia, senza ora legale), perché la
+        geometria del sole ora per ora ne dipende (FAO-56 eq. 31); non
+        stanno sul `Pot` perché lo strato di persistenza è congelato.
+        Latitudine e quota come nel cammino giornaliero: dal `Pot` o
+        espliciti. `rs_rso_night_previous` è il rapporto R_s/R_so
+        pre-tramonto del giorno prima (`FullBlocksStepResult.
+        rs_rso_pre_sunset`), per le prime ore della notte.
+
+        A fine giornata accumula i gradi-giorno come il cammino
+        giornaliero. Il metodo con cui è stata calcolata l'ET₀ è in
+        `et_method` del risultato.
+        """
+        validate_day_blocks(weather_blocks)
+        if weather_blocks[0].date_ != current_date:
+            raise ValueError(
+                f"Vaso '{self.label}': i blocchi sono del "
+                f"{weather_blocks[0].date_}, il passo è del {current_date}."
+            )
+        effective_latitude = (
+            latitude_deg if latitude_deg is not None else self.latitude_deg
+        )
+        if effective_latitude is None:
+            raise ValueError(
+                f"Vaso '{self.label}': latitude_deg non è disponibile. "
+                f"Va passata come parametro esplicito al metodo, oppure "
+                f"valorizzata sul Pot al momento della costruzione."
+            )
+        effective_elevation = (
+            elevation_m if elevation_m is not None else self.elevation_m
+        )
+        if effective_elevation is None:
+            raise ValueError(
+                f"Vaso '{self.label}': elevation_m non è disponibile. "
+                f"Va passata come parametro esplicito al metodo, oppure "
+                f"valorizzata sul Pot al momento della costruzione."
+            )
+
+        et_blocks, method, rs_rso_pre_sunset = et0_for_blocks(
+            weather_blocks,
+            latitude_deg=effective_latitude,
+            longitude_deg=longitude_deg,
+            utc_offset_hours=utc_offset_hours,
+            elevation_m=effective_elevation,
+            wind_factor=shelter_wind_factor(self.shelter_level),
+            stomatal_resistance_s_m=self.species.stomatal_resistance_s_m,
+            crop_height_m=self.effective_crop_height_m,
+            rs_rso_night_previous=rs_rso_night_previous,
+        )
+
+        # Penman-Monteith fisico dà ET della specie: la divisione per il
+        # Kc dello stadio (non ridotto dalla dormienza, come nel cammino
+        # giornaliero: la dormienza sopravvive nel prodotto) la riporta
+        # all'ET₀ equivalente che il secchio moltiplicherà per Kc.
+        factor = 1.0
+        if method == EtMethod.PENMAN_MONTEITH_PHYSICAL:
+            kc_current = kc_for_stage(self.species, self.current_stage(current_date))
+            if kc_current > 0:
+                factor = 1.0 / kc_current
+        balance_blocks = [
+            BalanceBlock(start_hour=e.start_hour, hours=e.hours, et_0_mm=e.et_mm * factor)
+            for e in et_blocks
+        ]
+
+        day = weather_day_from_blocks(weather_blocks)
+        full = self.apply_step_blocks(
+            balance_blocks, current_date,
+            rainfall_l_by_hour=rainfall_l_by_hour, fertigations=fertigations,
+            t_mean_c=(day.t_min + day.t_max) / 2.0,
+        )
+
+        # I gradi-giorno del giorno appena simulato, dopo il bilancio:
+        # l'ET del giorno usa lo stadio con cui il giorno comincia.
+        if self.gdd_accumulated is not None and self.species.supports_gdd:
+            self.gdd_accumulated += growing_degree_days(
+                t_min=day.t_min,
+                t_max=day.t_max,
+                t_base=self.species.t_base_c,
+                t_cap=self.species.t_cap_c,
+            )
+
+        blocks_result = replace(
+            full.blocks_result,
+            balance_result=replace(full.blocks_result.balance_result, et_method=method),
+        )
+        return replace(
+            full,
+            blocks_result=blocks_result,
+            et_method=method,
+            rs_rso_pre_sunset=rs_rso_pre_sunset,
+        )
+
+    def _run_blocks(
+        self,
+        blocks: Sequence[BalanceBlock],
+        current_date: date,
+        *,
+        t_mean_c: float | None,
+        rainfall_l_by_hour: Mapping[int, float] | None = None,
+        fertigations: Sequence[BlockFertigation] = (),
+    ) -> tuple[BlocksStepResult, list[FertigationResult], list[FertigationResult]]:
+        """
+        Il ciclo del giorno a blocchi: eventi del blocco (pioggia, poi
+        irrigazioni), poi `_balance_substep` sulla sua durata; alla fine
+        i nutrienti una volta sola. Ritorna l'esito e gli eventi
+        applicati, nell'ordine.
+        """
+        rain = rainfall_l_by_hour or {}
+        traces: list[BlockTrace] = []
+        rain_results: list[FertigationResult] = []
+        fertigation_results: list[FertigationResult] = []
+        total_et_c = total_soil_evap = total_transpiration = total_drainage = 0.0
+        # L'ora dell'allerta (D9): 0 se il giorno comincia già sotto la
+        # soglia, altrimenti la fine del primo blocco che la passa.
+        alert_hour: int | None = 0 if self.state_mm < self.alert_mm else None
+
+        for block in blocks:
+            for hour in sorted(rain):
+                if block.start_hour <= hour < block.end_hour and rain[hour] > 0:
+                    rain_results.append(
+                        self.apply_rainfall_step(volume_l=rain[hour], current_date=current_date)
+                    )
+            for event in fertigations:
+                if block.start_hour <= event.start_hour < block.end_hour:
+                    fertigation_results.append(self.apply_fertigation_step(
+                        volume_l=event.volume_l, ec_mscm=event.ec_mscm, ph=event.ph,
+                        current_date=current_date,
+                        nutrients_mg_per_l=event.nutrients_mg_per_l,
+                    ))
+            result, et_c_mm, soil_evap_mm, transpiration_mm = self._balance_substep(
+                et_0_mm=block.et_0_mm,
+                water_input_mm=block.water_input_mm,
+                current_date=current_date,
+                hours=float(block.hours),
+            )
+            total_et_c += et_c_mm
+            total_soil_evap += soil_evap_mm
+            total_transpiration += transpiration_mm
+            total_drainage += result.drainage
+            if result.under_alert and alert_hour is None:
+                alert_hour = block.end_hour
+            traces.append(BlockTrace(
+                start_hour=block.start_hour, hours=block.hours,
+                et_0_mm=block.et_0_mm, water_input_mm=block.water_input_mm,
+                et_c_mm=et_c_mm, soil_evaporation_mm=soil_evap_mm,
+                drainage_mm=result.drainage, state_after_mm=self.state_mm,
+                under_alert=result.under_alert,
+                saucer_state_after_mm=(
+                    self.saucer_state_mm if self.saucer_capacity_mm is not None else None
+                ),
+            ))
+
+        # === Passo 7, una volta al giorno: la pianta mangia (D5) ===
+        self.last_nutrient_step = self._apply_nutrient_uptake(
+            transpiration_mm=total_transpiration,
+            current_date=current_date,
+            t_mean_c=t_mean_c,
+        )
+
+        under_alert = self.state_mm < self.alert_mm
+        day_result = BalanceStepResult(
+            new_state=self.state_mm,
+            drainage=total_drainage,
+            under_alert=under_alert,
+            deficit=max(0.0, self.alert_mm - self.state_mm) if under_alert else 0.0,
+        )
+        return (
+            BlocksStepResult(
+                event_date=current_date,
+                blocks=tuple(traces),
+                balance_result=day_result,
+                et_c_mm=total_et_c,
+                soil_evaporation_mm=total_soil_evap,
+                transpiration_mm=total_transpiration,
+                alert_hour=alert_hour,
+                nutrient_result=self.last_nutrient_step,
+            ),
+            rain_results,
+            fertigation_results,
         )

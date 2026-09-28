@@ -27,11 +27,13 @@ from fitosim.science.et0 import (
     compute_et,
     compute_et0_penman_monteith,
     compute_et_penman_monteith_physical,
+    distribute_daily_et0,
     et0_hargreaves_samani,
     mj_per_m2_to_mm_water,
     psychrometric_constant,
     saturation_vapor_pressure,
     slope_vapor_pressure,
+    soil_heat_flux_interval,
 )
 from fitosim.science.radiation import day_of_year
 
@@ -755,6 +757,90 @@ class TestComputeEtSelector(unittest.TestCase):
                 latitude_deg=45.47, j=None,
             )
         self.assertIn("j", str(ctx.exception))
+
+
+
+class TestPenmanMonteithHours(unittest.TestCase):
+    """
+    Il parametro `hours` (A7): con 24 la formula è quella di sempre,
+    con 1 è la forma oraria di FAO-56 (eq. 53) a meno degli
+    arrotondamenti dei suoi coefficienti.
+    """
+
+    def test_default_is_the_daily_form(self):
+        daily = compute_et0_penman_monteith(25.0, 0.5, 2.0, 12.0, 150.0)
+        explicit = compute_et0_penman_monteith(25.0, 0.5, 2.0, 12.0, 150.0, hours=24.0)
+        self.assertEqual(daily, explicit)
+
+    def test_one_twentyfourth_of_the_radiation_gives_one_twentyfourth_of_et0(self):
+        # Stessa aria, stesso vento: un blocco di un'ora con un
+        # ventiquattresimo della radiazione netta dà un ventiquattresimo
+        # dell'ET₀ (entrambi i termini del numeratore scalano con la
+        # durata, il denominatore no).
+        daily = compute_et0_penman_monteith(25.0, 0.5, 2.0, 12.0, 150.0)
+        hourly = compute_et0_penman_monteith(25.0, 0.5, 2.0, 12.0 / 24.0, 150.0, hours=1.0)
+        self.assertAlmostEqual(hourly, daily / 24.0, places=12)
+        physical_daily = compute_et_penman_monteith_physical(
+            25.0, 0.5, 2.0, 12.0, 200.0, 0.6, 150.0,
+        )
+        physical_hourly = compute_et_penman_monteith_physical(
+            25.0, 0.5, 2.0, 12.0 / 24.0, 200.0, 0.6, 150.0, hours=1.0,
+        )
+        self.assertAlmostEqual(physical_hourly, physical_daily / 24.0, places=12)
+
+    def test_hourly_form_matches_fao56_eq_53_within_rounding(self):
+        # L'ora 12–13 del 20 settembre 2026 a Milano (ERA5): con la
+        # eq. 53 scritta esplicitamente (37 e 0.34) viene 0.464 mm.
+        # La versione fisica non arrotonda 900 → 37 e 891 → 900: sta
+        # entro l'1 %.
+        t, rh, u2, rn, g, z = 26.1, 0.59, 0.77, 1.669, 0.167, 160.0
+        es = saturation_vapor_pressure(t)
+        ea = rh * es
+        delta = slope_vapor_pressure(t)
+        gamma = psychrometric_constant(atmospheric_pressure(z))
+        eq53 = (
+            0.408 * delta * (rn - g) + gamma * 37.0 / (t + 273.0) * u2 * (es - ea)
+        ) / (delta + gamma * (1.0 + 0.34 * u2))
+        ours = compute_et0_penman_monteith(
+            t, rh, u2, rn, z, soil_heat_flux_mj_m2_day=g, hours=1.0,
+        )
+        self.assertAlmostEqual(eq53, 0.464, delta=0.002)
+        self.assertAlmostEqual(ours, eq53, delta=0.01 * eq53)
+
+    def test_hours_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            compute_et0_penman_monteith(25.0, 0.5, 2.0, 12.0, 150.0, hours=0.0)
+
+
+class TestSoilHeatFluxInterval(unittest.TestCase):
+    """FAO-56 eq. 45–46: un decimo di giorno, la metà di notte."""
+
+    def test_daytime_is_a_tenth(self):
+        self.assertAlmostEqual(soil_heat_flux_interval(1.5, daytime=True), 0.15)
+
+    def test_nighttime_is_half_and_follows_the_sign(self):
+        self.assertAlmostEqual(soil_heat_flux_interval(-0.2, daytime=False), -0.1)
+
+
+class TestDistributeDailyEt0(unittest.TestCase):
+    """La ripartizione dell'ET₀ del giorno sui blocchi: il totale non cambia."""
+
+    def test_proportional_to_weights_and_sums_to_total(self):
+        parts = distribute_daily_et0(3.0, [0.0, 1.0, 2.0, 1.0])
+        self.assertEqual(parts[0], 0.0)
+        self.assertAlmostEqual(parts[2], 1.5)
+        self.assertAlmostEqual(sum(parts), 3.0, places=12)
+
+    def test_all_zero_weights_split_uniformly(self):
+        self.assertEqual(distribute_daily_et0(3.0, [0.0, 0.0, 0.0]), [1.0, 1.0, 1.0])
+
+    def test_invalid_inputs_raise(self):
+        with self.assertRaises(ValueError):
+            distribute_daily_et0(-1.0, [1.0])
+        with self.assertRaises(ValueError):
+            distribute_daily_et0(1.0, [])
+        with self.assertRaises(ValueError):
+            distribute_daily_et0(1.0, [1.0, -0.5])
 
 
 if __name__ == "__main__":

@@ -158,6 +158,10 @@ for i in range(7):
 
 Questo è il motore che fa girare tutto il resto. Quando vedrai il Garden orchestrare più vasi, o le previsioni a 7 giorni, o le allerte, sotto sotto sarà sempre apply\_balance\_step a essere chiamato per ogni vaso e per ogni giorno.
 
+## Il giorno fatto di blocchi
+
+Dal 29 settembre 2026 (A7) il vaso sa anche avanzare *dentro* il giorno. `Pot.apply_blocks_from_weather` riceve i `WeatherBlock` di un giorno — un'ora l'uno con la stazione, una o tre con la previsione, in ora solare del sito — e per ogni blocco calcola l'ET₀ con la forma oraria di Penman-Monteith (FAO-56 eq. 53), valuta Ks sullo stato di quel momento e fa entrare pioggia e irrigazioni all'ora in cui accadono. Il giorno resta l'unità della contabilità (Kc, stadio, gradi-giorno, nutrienti), e il passo giornaliero di sempre è il caso di un solo blocco di 24 ore: gli stessi numeri. Quello che i blocchi aggiungono è l'*ora* dell'allerta (`alert_hour`) e il drenaggio giusto di un litro dato alle 20 invece che alle 8. Se ai blocchi manca umidità, vento o radiazione, l'ET₀ del giorno viene ripartita sul profilo del sole: la somma non cambia. Le decisioni e le ragioni sono in `domain/blocks.py`; l'esempio `examples/confronto_et0_risoluzione_temporale.py` mette a confronto i due cammini su una settimana vera di Milano.
+
 # 4 — Caratterizzare il vaso
 
 Nel capitolo 2 hai creato un Pot fornendo solo i parametri minimi: specie, substrato, volume, diametro. Quei parametri bastano per una simulazione di base, ma ignorano tre caratteristiche fisiche del contenitore che hanno un impatto significativo sul fabbisogno idrico reale: il materiale del vaso, il suo colore, e la sua esposizione solare. La differenza tra un vaso di plastica chiara in ombra parziale e un vaso di terracotta scura al pieno sole, a parità di tutto il resto, può essere di un fattore otto sulle irrigazioni richieste in un mese.

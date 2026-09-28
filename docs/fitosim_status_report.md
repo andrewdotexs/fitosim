@@ -10,7 +10,7 @@ __fitosim — Status Report__
 
 Il bilancio dei sali sapeva *quanto* sale c'è nel vaso; da oggi sa anche *che cosa*, e quanto la pianta ne mangia. `science/nutrients.py` (versione 0.32.0) mette accanto alla massa salina tre serbatoi — azoto, fosforo come P₂O₅, potassio come K₂O, in milligrammi per vaso, le unità delle etichette — che **seguono la massa salina**: entrano con la concimazione (`volume × concentrazione`, o la quota del giorno di un secco), escono col drenaggio nella stessa frazione dei sali (il nitrato un quinto in più), e la loro somma in milliequivalenti non supera mai `salt_mass_meq`. Il pezzo nuovo è **la domanda del giorno**: la pianta mangia il flusso di massa della sua traspirazione (Kcb × Ks × ET₀, la sola pianta) alla concentrazione che il piano della specie vuole quel mese, per una *frazione di alimentazione* — l'intervallo fra le annaffiature sulla cadenza delle concimazioni: 1 per chi fertirriga sempre, circa 0,7 per un liquido ogni due settimane — e col cancello del freddo (rampa 8–12 °C, pavimento 10 %). Quello che mangia lo toglie anche dai sali: è la «metà mangiata» di The Pot fatta giorno per giorno. La `Species` porta il piano (`nutrient_targets_mg_per_l`, dodici terne), la frazione e i micronutrienti che contano; il `Pot` ha i tre serbatoi, le bandierine datate dei micro, la carica iniziale del substrato (`apply_starter_charge`), la **riserva** — la frazione della carica piena occupata dal serbatoio più vuoto fra quelli che il piano chiede, col *quale* («al 40 %, manca soprattutto azoto») e i giorni che restano — e la sesta allerta, `nutrient_low`. I rilasci dei concimi secchi hanno la loro cinetica per classe (`daily_release_fraction`): il rivestito con la temperatura (Q10 = 2 intorno a 21 °C, la scheda Osmocote), l'organico con temperatura e umidità (Hartz 2000), il granulare solubile con l'acqua. Il vincolo di taratura è il **bilancio annuale** (`tests/test_nutrients.py`): un vaso di profilo medio concimato secondo il suo piano — un liquido ogni quattordici giorni, l'acqua quando serve, sei millimetri di pioggia ogni nove giorni — mangia il 90 % di quello che riceve, il resto lo porta via la pioggia, e finisce l'anno senza accumulo; chi mangia meno di quel che riceve accumula. Tutto retrocompatibile: senza piano i serbatoi restano a zero e il modello è quello di prima. 33 test nuovi, 1457 nel core.
 
-# Aggiornamento al 20 settembre 2026
+# Aggiornamento al 29 settembre 2026
 
 Da maggio fitosim è cambiato in tre modi, e questo capitolo li racconta prima che il documento torni allo stato di allora.
 
@@ -27,7 +27,9 @@ Da maggio fitosim è cambiato in tre modi, e questo capitolo li racconta prima c
 
 Le decisioni, con i numeri misurati sul catalogo e sui test prima di cambiare, sono nei messaggi di commit del 20 settembre (A1–A5) e nei commenti dei moduli.
 
-__Il quadro al 20 settembre 2026__
+**Il giorno fatto di blocchi** (29 settembre, A7). Il vaso sa avanzare a blocchi di ore dentro il giorno: `Pot.apply_blocks_from_weather` calcola l'ET₀ di ogni blocco con la forma oraria di Penman-Monteith (FAO-56 eq. 53, R_a e R_n del blocco, G di giorno e di notte), valuta Ks sullo stato del momento e fa entrare pioggia e irrigazioni alla loro ora; il giorno resta l'unità di Kc, stadio, gradi-giorno e nutrienti, e il passo giornaliero è il caso di un blocco di 24 ore, con gli stessi numeri. Misurato su una settimana vera di settembre a Milano: la somma delle ore sta +3 % sopra la giornaliera FAO (+7 % sopra quella di fitosim, che usa e°(T_mean)); Ks a ore vale −1,4 % di ET_c; un litro alle 20 invece che «al mattino» tiene 2,5 mm in più nel vaso; l'allerta ha un'ora. Le nove decisioni (Kc costante nel giorno, D_e a blocchi, tasso capillare riscalato, notte a zero, forma FAO-56 e non ASCE-EWRI, …) sono nel docstring di `domain/blocks.py`, con le fonti. Lo strumento di calibrazione non cambia: confronta cali giornalieri.
+
+__Il quadro al 29 settembre 2026__
 
 __Metrica__
 
@@ -37,15 +39,15 @@ __Note__
 
 Test verdi nel core
 
-1467
+1519
 
-500 sub-test; 1430 con la demo end-to-end (matplotlib); circa 9 secondi
+515 sub-test; 1525 con la demo end-to-end (matplotlib); circa 14 secondi
 
 Righe di sorgente
 
-22 850
+25 233
 
-science 8 230 (16 moduli), domain 6 110 (7), io 5 060 (4) \+ io/sensors 3 460 (8)
+science 9 102 (18 moduli), domain 7 580 (8), io 5 095 (4) \+ io/sensors 3 456 (8)
 
 Strato standalone
 
@@ -67,13 +69,13 @@ esportazione fedele del giardino (luglio)
 
 Versione
 
-0.33.0
+0.34.0
 
 `pyproject.toml`; continua la serie dei commit `v0_NN`, fermata a `v0_30` il 22 luglio
 
 Esempi
 
-29
+30
 
 `scheduler_demo.py` tolto con il pianificatore
 

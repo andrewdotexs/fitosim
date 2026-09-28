@@ -1432,3 +1432,41 @@ def aggregate_to_daily_weather(
 
     return daily
 
+
+# ---------------------------------------------------------------------
+#  Il giorno fatto di blocchi (A7, 2026-09-29): dallo storico della
+#  stazione ai campioni che `domain.weather.weather_blocks_from_samples`
+#  raggruppa in blocchi di ore.
+# ---------------------------------------------------------------------
+
+
+def weather_samples_from_series(series: "EcowittTimeSeries") -> list["WeatherSample"]:
+    """
+    I campioni meteo esterni di una serie Ecowitt (`fetch_history`),
+    nel tipo che il dominio aggrega in `WeatherBlock`: temperatura,
+    umidità come frazione, vento (alla quota della stazione: la
+    riduzione a 2 m, FAO-56 eq. 47, spetta al chiamante se serve) e
+    radiazione in W/m². I punti senza nessuno dei quattro non entrano.
+    """
+    from fitosim.domain.weather import WeatherSample
+
+    samples: list[WeatherSample] = []
+    for point in series.points:
+        if (
+            point.outdoor_temp_c is None
+            and point.outdoor_humidity_pct is None
+            and point.wind_speed_m_s is None
+            and point.solar_w_m2 is None
+        ):
+            continue
+        samples.append(WeatherSample(
+            timestamp=point.timestamp,
+            t_c=point.outdoor_temp_c,
+            humidity_relative=(
+                None if point.outdoor_humidity_pct is None
+                else point.outdoor_humidity_pct / 100.0
+            ),
+            wind_speed_m_s=point.wind_speed_m_s,
+            solar_w_m2=point.solar_w_m2,
+        ))
+    return samples

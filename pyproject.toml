@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fitosim"
-version = "0.33.0"
+version = "0.34.0"
 description = "Motore scientifico per la simulazione agronomica di piante in vaso: bilancio idrico, evapotraspirazione, calendario di cura."
 readme = "README.md"
 requires-python = ">=3.10"

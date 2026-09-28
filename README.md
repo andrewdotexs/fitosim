@@ -23,8 +23,9 @@ il giardiniere.
 
 ## Stato del progetto
 
-- **Versione**: 0.33.0 (`pyproject.toml`, dal 2026-09-22: la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
-- **1467 test verdi** (510 sub-test) nel core; la demo end-to-end usa matplotlib
+- **Versione**: 0.34.0 (`pyproject.toml`, dal 2026-09-29: il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
+- **1519 test verdi** (515 sub-test) nel core; la demo end-to-end usa matplotlib
+- **Il giorno fatto di blocchi** (A7, 2026-09-29): il vaso avanza a blocchi di ore dentro il giorno — `Pot.apply_blocks_from_weather`, `domain/blocks.py` con le nove decisioni e le fonti; il passo giornaliero è il caso di un blocco di 24 ore, con gli stessi numeri
 - **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
 - **Linguaggio**: Python ≥ 3.10
 - **Dipendenze esterne nel core**: zero (solo standard library)
@@ -40,7 +41,7 @@ il giardiniere.
 $ python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
 ================= 1424 passed, 500 subtests passed =================
 
-# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1430 test.
+# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1525 test.
 ```
 
 ## Cosa fa
@@ -296,7 +297,8 @@ per il microclima delle stanze indoor (WN31).
 ### Il modello e lo strato standalone
 
 Dal 2026-09-19 fitosim è il motore di **The Pot**, e The Pot importa il
-modello: tutto `science/`, e di `domain/` il `Pot`, la `Species`, `WeatherDay`,
+modello: tutto `science/`, e di `domain/` il `Pot`, la `Species`, `WeatherDay` e
+`WeatherBlock` con `blocks.py` (il giorno fatto di blocchi, A7),
 `Room.LightExposure` e le regole di `alerts`; di `io/` il solo client Ecowitt
 grezzo (`io/ecowitt.py`). Il resto è lo **strato standalone** — la libreria
 usata da sola, com'era prima dell'app:
@@ -349,9 +351,10 @@ fitosim/
 │   ├── domain/             # entità di dominio e orchestrazione
 │   │   ├── garden.py       # Garden orchestratore (tappe 4-5)
 │   │   ├── pot.py          # Pot, classe centrale del modello
+│   │   ├── blocks.py       # il giorno fatto di blocchi (A7, 2026-09-29)
 │   │   ├── species.py      # Species, catalogo specie predefinite
 │   │   ├── room.py         # Room, IndoorMicroclimate (tappa 5-D)
-│   │   ├── weather.py      # WeatherDay (tappa 5-C)
+│   │   ├── weather.py      # WeatherDay (tappa 5-C), WeatherBlock e i campioni (A7)
 │   │   ├── alerts.py       # Sistema di allerte (tappa 4)
 │   │   └── scheduling.py   # ScheduledEvent, WeatherDayForecast
 │   ├── science/            # modello matematico FAO-56 esteso

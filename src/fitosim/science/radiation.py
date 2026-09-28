@@ -366,3 +366,235 @@ def net_radiation(
     rnl = stefan_boltzmann_term * humidity_factor * cloudiness_factor
 
     return rns - rnl
+
+
+# =====================================================================
+#  Il giorno fatto di blocchi (A7, 2026-09-29): la geometria solare su
+#  un intervallo di ore invece che sul giorno intero — FAO-56 cap. 3,
+#  eq. 28–33 — e la radiazione netta di un blocco (cap. 4). Servono al
+#  Penman-Monteith a passo sub-giornaliero e alla ripartizione dell'ET₀
+#  del giorno sui blocchi.
+#
+#  Le ore sono in tempo civile *standard* del sito, senza ora legale
+#  (per l'Italia CET = UTC+1): è l'"ora dell'orologio" che FAO-56 vuole
+#  nella eq. 31. La longitudine è positiva a est; FAO-56 la vuole in
+#  gradi ovest, e la differenza L_z − L_m della eq. 31 in gradi ovest è
+#  (longitudine_est − 15 · fuso_orario) — la stessa quantità, senza
+#  giri di 360°.
+# =====================================================================
+
+# Costante di Stefan-Boltzmann nelle unità FAO-56 (MJ K⁻⁴ m⁻² giorno⁻¹);
+# per un blocco di Δt ore si riscala di Δt/24 (2.043 × 10⁻¹⁰ all'ora).
+STEFAN_BOLTZMANN_MJ_M2_DAY = 4.903e-9
+
+# Limite inferiore del rapporto R_s/R_so nei passi sub-giornalieri
+# (FAO-56 cap. 4): di notte e con il sole basso il rapporto misurato
+# non è affidabile, e il termine nuvole della eq. 39 va tenuto in
+# [0.3, 1.0].
+RS_RSO_MIN_SUBDAILY = 0.3
+
+
+def seasonal_correction_hours(j: int) -> float:
+    """
+    Correzione stagionale S_c dell'ora solare, in ore (FAO-56 eq. 32–33).
+
+    È l'equazione del tempo: lo scarto fra il mezzogiorno dell'orologio
+    e il passaggio del Sole al meridiano, dovuto all'eccentricità
+    dell'orbita e all'inclinazione dell'asse. Oscilla fra circa −0.24 h
+    (metà febbraio) e +0.27 h (inizio novembre).
+    """
+    b = 2.0 * math.pi * (j - 81) / 364.0
+    return 0.1645 * math.sin(2.0 * b) - 0.1255 * math.cos(b) - 0.025 * math.sin(b)
+
+
+def solar_time_angle(
+    clock_hour: float, j: int, longitude_deg: float, utc_offset_hours: float,
+) -> float:
+    """
+    Angolo orario solare ω all'ora civile standard `clock_hour`, in
+    radianti (FAO-56 eq. 31): zero al mezzogiorno solare, negativo la
+    mattina, π/12 per ogni ora.
+
+    `longitude_deg` è positiva a est; `utc_offset_hours` è il fuso
+    orario standard del sito (1 per l'Italia), che fissa il meridiano
+    di riferimento a 15° × fuso.
+    """
+    return (math.pi / 12.0) * (
+        clock_hour
+        + 0.06667 * (longitude_deg - 15.0 * utc_offset_hours)
+        + seasonal_correction_hours(j)
+        - 12.0
+    )
+
+
+def solar_noon_hour(j: int, longitude_deg: float, utc_offset_hours: float) -> float:
+    """L'ora civile standard del mezzogiorno solare: la eq. 31 per ω = 0."""
+    return (
+        12.0
+        - 0.06667 * (longitude_deg - 15.0 * utc_offset_hours)
+        - seasonal_correction_hours(j)
+    )
+
+
+def sunrise_sunset_hours(
+    latitude_deg: float, longitude_deg: float, j: int, utc_offset_hours: float,
+) -> tuple[float, float]:
+    """
+    Le ore civili standard di alba e tramonto (la eq. 31 invertita per
+    ω = ∓ω_s). Milano, 14 settembre: circa 6.13 e 18.47 CET.
+    """
+    ws = sunset_hour_angle(math.radians(latitude_deg), solar_declination(j))
+    noon = solar_noon_hour(j, longitude_deg, utc_offset_hours)
+    half_day = 12.0 * ws / math.pi
+    return noon - half_day, noon + half_day
+
+
+def _clipped_hour_angles(
+    latitude_deg: float,
+    longitude_deg: float,
+    j: int,
+    start_hour: float,
+    end_hour: float,
+    utc_offset_hours: float,
+) -> tuple[float, float, float, float, float, float]:
+    """
+    Gli angoli orari agli estremi del blocco (ω₁, ω₂) e gli stessi
+    limitati all'arco diurno [−ω_s, ω_s], come prescrive FAO-56 per la
+    eq. 28. Ritorna (φ, δ, ω₁, ω₂, a, b): se b ≤ a il blocco è tutto
+    di notte.
+    """
+    if not 0.0 <= start_hour < end_hour <= 24.0:
+        raise ValueError(
+            f"Il blocco [{start_hour}, {end_hour}) deve stare dentro le "
+            f"24 ore del giorno, con inizio prima della fine."
+        )
+    phi = math.radians(latitude_deg)
+    delta = solar_declination(j)
+    ws = sunset_hour_angle(phi, delta)
+    w1 = solar_time_angle(start_hour, j, longitude_deg, utc_offset_hours)
+    w2 = solar_time_angle(end_hour, j, longitude_deg, utc_offset_hours)
+    return phi, delta, w1, w2, max(w1, -ws), min(w2, ws)
+
+
+def extraterrestrial_radiation_interval(
+    latitude_deg: float,
+    longitude_deg: float,
+    j: int,
+    start_hour: float,
+    end_hour: float,
+    utc_offset_hours: float,
+) -> float:
+    """
+    Radiazione extra-atmosferica R_a integrata sul blocco
+    [start_hour, end_hour) di ora civile standard, in MJ/m² (FAO-56
+    eq. 28).
+
+    La eq. 28 è l'integrale esatto del flusso solare fra due angoli
+    orari: vale per un'ora come per sei, purché ω₁ e ω₂ restino dentro
+    l'arco diurno — il taglio a [−ω_s, ω_s] è quello che FAO-56
+    prescrive, e rende la somma dei blocchi di un giorno uguale alla
+    R_a giornaliera della eq. 21. Di notte vale zero.
+    """
+    phi, delta, _w1, _w2, a, b = _clipped_hour_angles(
+        latitude_deg, longitude_deg, j, start_hour, end_hour, utc_offset_hours,
+    )
+    if b <= a:
+        return 0.0
+    dr = inverse_relative_distance(j)
+    return (12.0 * 60.0 / math.pi) * SOLAR_CONSTANT * dr * (
+        (b - a) * math.sin(phi) * math.sin(delta)
+        + math.cos(phi) * math.cos(delta) * (math.sin(b) - math.sin(a))
+    )
+
+
+def daylight_fraction(
+    latitude_deg: float,
+    longitude_deg: float,
+    j: int,
+    start_hour: float,
+    end_hour: float,
+    utc_offset_hours: float,
+) -> float:
+    """
+    La frazione del blocco [start_hour, end_hour) in cui il sole è
+    sopra l'orizzonte, in [0, 1]. Un blocco è «diurno» per le regole
+    orarie di FAO-56 (G, R_s/R_so) quando la frazione è almeno 0.5.
+    """
+    _phi, _delta, w1, w2, a, b = _clipped_hour_angles(
+        latitude_deg, longitude_deg, j, start_hour, end_hour, utc_offset_hours,
+    )
+    if b <= a:
+        return 0.0
+    return (b - a) / (w2 - w1)
+
+
+def net_radiation_interval(
+    solar_radiation_mj: float,
+    extraterrestrial_radiation_mj: float,
+    temperature_c: float,
+    actual_vapor_pressure_kpa: float,
+    hours: float,
+    *,
+    daytime: bool,
+    rs_rso_night: float | None = None,
+    elevation_m: float = 0.0,
+    albedo: float = 0.23,
+) -> float:
+    """
+    Radiazione netta R_n di un blocco di `hours` ore, in MJ/m² (FAO-56
+    cap. 4, la forma oraria delle eq. 38–40).
+
+    Rispetto a `net_radiation` (giornaliera) cambiano tre cose, tutte
+    dettate da FAO-56 per i passi orari:
+
+      - la temperatura è quella del blocco, alla quarta potenza, invece
+        della media delle quarte potenze degli estremi del giorno;
+      - σ è riscalata sulla durata (σ · hours / 24);
+      - il rapporto R_s/R_so è limitato a [0.3, 1.0] e, quando il blocco
+        è notturno (`daytime=False`) o non c'è radiazione di cielo
+        sereno, va preso da fuori: `rs_rso_night`, il rapporto delle
+        2–3 ore prima del tramonto. Senza, la funzione solleva
+        ValueError: non si inventa un cielo.
+
+    Parametri
+    ---------
+    solar_radiation_mj, extraterrestrial_radiation_mj : float
+        R_s misurata e R_a del blocco, in MJ/m² sul blocco.
+    temperature_c : float
+        Temperatura media dell'aria nel blocco, in °C.
+    actual_vapor_pressure_kpa : float
+        e_a del blocco, in kPa.
+    hours : float
+        Durata del blocco, in ore (> 0).
+    daytime : bool
+        Se il blocco è diurno (sole sopra l'orizzonte per almeno metà
+        della durata, `daylight_fraction` ≥ 0.5).
+    rs_rso_night : float, opzionale
+        Il rapporto R_s/R_so da usare quando il blocco è notturno.
+    elevation_m, albedo : float
+        Come in `net_radiation`.
+    """
+    if hours <= 0:
+        raise ValueError(f"hours ({hours}) deve essere positivo.")
+    rns = (1.0 - albedo) * solar_radiation_mj
+
+    rso = clear_sky_radiation(extraterrestrial_radiation_mj, elevation_m)
+    if daytime and rso > 0.0:
+        ratio = solar_radiation_mj / rso
+    else:
+        if rs_rso_night is None:
+            raise ValueError(
+                "Blocco notturno: serve rs_rso_night, il rapporto R_s/R_so "
+                "delle 2–3 ore prima del tramonto (FAO-56 cap. 4)."
+            )
+        ratio = rs_rso_night
+    ratio = min(max(ratio, RS_RSO_MIN_SUBDAILY), 1.0)
+
+    sigma = STEFAN_BOLTZMANN_MJ_M2_DAY * hours / 24.0
+    t_k = temperature_c + 273.16
+    rnl = (
+        sigma * t_k ** 4
+        * (0.34 - 0.14 * math.sqrt(actual_vapor_pressure_kpa))
+        * (1.35 * ratio - 0.35)
+    )
+    return rns - rnl
