@@ -57,6 +57,7 @@ from typing import Optional
 
 from fitosim.io.ecowitt import (
     EcowittObservation,
+    aa_battery_fraction,
     fetch_history_aggregation,
     fetch_real_time,
 )
@@ -65,6 +66,7 @@ from fitosim.io.sensors.errors import (
     SensorTemporaryError,
 )
 from fitosim.io.sensors.measurement import (
+    PARAM_BATTERY_LEVEL,
     Measurement,
     PARAM_AIR_HUMIDITY,
     PARAM_AIR_TEMPERATURE_C,
@@ -571,9 +573,11 @@ class EcowittWH51SoilSensor:
         lista piatta di `Measurement` canoniche (spec sensori v1).
 
         Numero di Measurement prodotte:
-          - WH51: 1 Measurement (`soil_theta`).
-          - WH52: 1-3 Measurement (`soil_theta` sempre, più
-            `soil_temperature_c` e `soil_ec_mscm` se presenti).
+          - WH51: 1-2 Measurement (`soil_theta`, più `battery_level`
+            se la stazione riporta la pila del canale).
+          - WH52: 1-4 Measurement (`soil_theta` sempre, più
+            `soil_temperature_c`, `soil_ec_mscm` e `battery_level` se
+            presenti).
 
         Solleva:
           - SensorPermanentError se il channel_id non è valido o non è
@@ -664,6 +668,17 @@ class EcowittWH51SoilSensor:
                     parameter=PARAM_SOIL_EC_MSCM,
                     value=soil_ec,
                 ))
+
+        # La pila del canale (2026-10-12), per tutti e due i modelli:
+        # la tensione diventa la frazione di carica di una AA.
+        volts = obs.soil_battery_v.get(channel_int)
+        if volts is not None:
+            out.append(Measurement(
+                sensor_id=sensor_id,
+                timestamp=obs.timestamp,
+                parameter=PARAM_BATTERY_LEVEL,
+                value=aa_battery_fraction(volts),
+            ))
 
         return out
 

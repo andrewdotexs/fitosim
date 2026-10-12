@@ -56,6 +56,7 @@ Con il WS90 la forzante **osservata** è interamente locale. Open-Meteo serve so
 |---|---|---|---|
 | θ del substrato | WH52 | `soil_theta` | l'osservazione da confrontare |
 | temperatura, EC del substrato | WH52 | `soil_temperature_c`, `soil_ec_mscm` | registrati, non usati in questa passata |
+| pila della sonda | WH51, WH52 | `battery_level` (dai volt, `aa_battery_fraction`) | registrata, per sapere quando cambiarla |
 | temperatura, umidità dell'aria | WN32P (o WS90) | `air_temperature_c`, `air_humidity` | ET₀ osservata |
 | vento | WS90 | `wind_speed_m_s` | ET₀ osservata |
 | radiazione solare | WS90 | `solar_radiation_mj_m2` | ET₀ osservata, Penman-Monteith |

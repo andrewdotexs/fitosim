@@ -310,6 +310,10 @@ class EcowittObservation:
     soil_temperature_c, soil_ec_mscm : dict[int, float]
         Temperatura del substrato (°C) ed EC (mS/cm) dei WH52, per
         canale: il WH51 non le misura, e lascia i due dict vuoti.
+    soil_battery_v : dict[int, float]
+        La tensione della pila (V) di ogni sonda del suolo, WH51 e WH52,
+        per canale: dal blocco `battery` della risposta. Per passare a
+        una frazione di carica c'è `aa_battery_fraction`.
 
     Note
     ----
@@ -355,6 +359,8 @@ class EcowittObservation:
     # i dict vuoti, mantenendo la retrocompatibilità.
     soil_temperature_c: dict = field(default_factory=dict)
     soil_ec_mscm: dict = field(default_factory=dict)
+    # Le pile delle sonde del suolo, in volt, per canale (2026-10-12).
+    soil_battery_v: dict = field(default_factory=dict)
 
 
 # -----------------------------------------------------------------------
@@ -382,6 +388,45 @@ _MAX_SOIL_CHANNELS = 16
 # letta.
 _SOIL_SECTION_WH51 = "soil_ch{ch}"
 _SOIL_SECTION_WH52 = "soil_moisture_ec_ch{ch}"
+
+# Le pile delle sonde del suolo (2026-10-12). Il blocco `battery` della
+# risposta ha una voce per sensore, col nome del modello e del canale:
+# `soilmoisture_sensor_chN` per il WH51, `soilmoisture_ec_sensor_chN`
+# per il WH52, in volt — una pila AA a testa (visto sul ferro: 1,5–1,7 V
+# sui WH51, 1,48 V su un WH52). Altre voci dello stesso blocco sono un
+# flag 0/1 senza unità (i WN31, `temp_humidity_sensor_chN`): non sono
+# tensioni, e qui non si leggono.
+_BATTERY_WH51 = "soilmoisture_sensor_ch{ch}"
+_BATTERY_WH52 = "soilmoisture_ec_sensor_ch{ch}"
+
+# La carica di una pila AA dalla sua tensione, in lineare fra le due
+# soglie. **Ecowitt non dichiara una soglia di scarica per i WH51 e i
+# WH52**, e le librerie che li leggono (aioecowitt, Home Assistant)
+# riportano solo i volt. Le soglie sono quelle di una alcalina: nuova
+# sta sopra 1,5 V, e verso 1,1 V ha dato quasi tutto. Una ricaricabile
+# Ni-MH vive intorno a 1,2–1,3 V e qui sembra mezza scarica anche
+# carica: per lei conta la tensione, non la frazione.
+AA_EMPTY_V = 1.1
+AA_FULL_V = 1.5
+
+
+def aa_battery_fraction(volts: float) -> float:
+    """
+    La carica di una pila AA, fra 0 e 1, dalla sua tensione: zero a
+    `AA_EMPTY_V` e sotto, uno a `AA_FULL_V` e sopra, in lineare fra le
+    due. È una stima — la scarica di un'alcalina non è una retta —, buona
+    per dire «sta finendo» con qualche settimana di anticipo.
+    """
+    frazione = (volts - AA_EMPTY_V) / (AA_FULL_V - AA_EMPTY_V)
+    return min(1.0, max(0.0, frazione))
+
+
+def _parse_volts(node: Optional[dict]) -> Optional[float]:
+    """Una voce del blocco `battery` in volt, o None se non è una
+    tensione (un flag senza unità) o non si legge."""
+    if node is None or _normalize_unit(str(node.get("unit", ""))).upper() != "V":
+        return None
+    return _parse_pure_float(node)
 
 
 def parse_ecowitt_response(payload: dict) -> EcowittObservation:
@@ -549,6 +594,17 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         if ec is not None:
             soil_ec[ch] = ec
 
+    # ---------- Le pile delle sonde del suolo ----------
+    # Come per le sezioni del substrato, se mai un canale avesse le due
+    # voci vince il WH52, che arriva dopo.
+    battery = data.get("battery") or {}
+    soil_battery = {}
+    for ch in range(1, _MAX_SOIL_CHANNELS + 1):
+        for chiave in (_BATTERY_WH51, _BATTERY_WH52):
+            volts = _parse_volts(battery.get(chiave.format(ch=ch)))
+            if volts is not None:
+                soil_battery[ch] = volts
+
     return EcowittObservation(
         timestamp=timestamp,
         outdoor_temp_c=outdoor_temp_c,
@@ -574,6 +630,7 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         soil_moisture_pct=soil,
         soil_temperature_c=soil_temp,
         soil_ec_mscm=soil_ec,
+        soil_battery_v=soil_battery,
     )
 
 

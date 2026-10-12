@@ -46,6 +46,7 @@ from fitosim.io.sensors import (
     SoilSensor,
 )
 from fitosim.io.sensors.measurement import (
+    PARAM_BATTERY_LEVEL,
     PARAM_AIR_HUMIDITY,
     PARAM_AIR_TEMPERATURE_C,
     PARAM_RAINFALL_MM,
@@ -652,6 +653,28 @@ class TestWH52SupportInSoilSensor:
         # Solo θ emessa.
         assert len(ms) == 1
         assert ms[0].parameter == PARAM_SOIL_THETA
+
+    def test_the_battery_becomes_a_battery_level(self):
+        """La pila del canale (2026-10-12), per tutti e due i modelli: la
+        tensione diventa la frazione di carica di una AA."""
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        from fitosim.io.ecowitt import EcowittObservation
+
+        fake_obs = EcowittObservation(
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            soil_moisture_pct={1: 35.0},
+            soil_battery_v={1: 1.3},
+        )
+        for model in ("WH51", "WH52"):
+            sensor = EcowittWH51SoilSensor("x", "y", "z", model=model)
+            with patch(
+                "fitosim.io.sensors.ecowitt.fetch_real_time",
+                return_value=fake_obs,
+            ):
+                ms = sensor.current_state(channel_id="1")
+            by_param = {m.parameter: m.value for m in ms}
+            assert by_param[PARAM_BATTERY_LEVEL] == pytest.approx(0.5), model
 
     def test_canonical_alias_exists(self):
         # L'alias canonico EcowittSoilSensor punta a EcowittWH51SoilSensor.

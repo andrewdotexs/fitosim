@@ -27,6 +27,7 @@ from fitosim.io.ecowitt import (
     _to_mm,
     _to_mm_per_hour,
     _to_ms_per_cm,
+    aa_battery_fraction,
     credentials_from_env,
     fetch_real_time,
     parse_ecowitt_response,
@@ -226,6 +227,14 @@ class TestRealPayloadParsing(unittest.TestCase):
         self.assertEqual(self.obs.soil_temperature_c, {})
         self.assertEqual(self.obs.soil_ec_mscm, {})
 
+    def test_soil_batteries_in_volts(self):
+        # Il blocco `battery`: una voce per WH51, in volt. Le altre voci
+        # del blocco (la pila del piezo, il flag 0/1 del WN31) non sono
+        # sonde del suolo e non entrano.
+        self.assertEqual(
+            self.obs.soil_battery_v, {1: 1.5, 2: 1.5, 3: 1.6, 4: 1.7, 5: 1.7}
+        )
+
 
 class TestWH52Parsing(unittest.TestCase):
     """
@@ -283,6 +292,24 @@ class TestWH52Parsing(unittest.TestCase):
         self.assertEqual(set(self.obs.soil_ec_mscm.keys()), {1})
         self.assertAlmostEqual(self.obs.soil_ec_mscm[1], 0.29, places=6)
 
+    def test_wh52_battery_in_volts(self):
+        # La pila del WH52 sta in `soilmoisture_ec_sensor_ch1`; il WH51
+        # del canale 3 qui non ha la sua voce, e non compare.
+        self.assertEqual(self.obs.soil_battery_v, {1: 1.48})
+
+    def test_a_battery_that_is_not_a_voltage_is_skipped(self):
+        # Un flag senza unità, o un valore che non si legge, non è una
+        # tensione: via la voce, non l'osservazione.
+        for nodo in (
+            {"time": "1789120764", "unit": "", "value": "0"},
+            {"time": "1789120764", "unit": "V", "value": "--"},
+        ):
+            with self.subTest(nodo=nodo):
+                self.payload["data"]["battery"]["soilmoisture_ec_sensor_ch1"] = nodo
+                obs = parse_ecowitt_response(self.payload)
+                self.assertEqual(obs.soil_battery_v, {})
+                self.assertAlmostEqual(obs.soil_moisture_pct[1], 64.0, places=1)
+
     def test_celsius_account_is_left_alone(self):
         # Un account in °C manda la temperatura già in °C — scritta con
         # «ºC», «°C» o col carattere unico «℃».
@@ -301,6 +328,26 @@ class TestWH52Parsing(unittest.TestCase):
         self.assertNotIn(1, obs.soil_ec_mscm)
         self.assertAlmostEqual(obs.soil_moisture_pct[1], 64.0, places=1)
         self.assertIn(1, obs.soil_temperature_c)
+
+
+class TestAABatteryFraction(unittest.TestCase):
+    """La carica di una pila AA dalla tensione: lineare fra 1,1 V (vuota)
+    e 1,5 V (carica), dentro [0, 1]."""
+
+    def test_the_ends_and_the_middle(self):
+        self.assertEqual(aa_battery_fraction(1.5), 1.0)
+        self.assertEqual(aa_battery_fraction(1.1), 0.0)
+        self.assertAlmostEqual(aa_battery_fraction(1.3), 0.5, places=9)
+
+    def test_outside_the_range_is_clamped(self):
+        # Una pila nuova sta sopra 1,5 V (1,7 V sul ferro), una finita
+        # sotto 1,1 V: la frazione resta dentro [0, 1].
+        self.assertEqual(aa_battery_fraction(1.7), 1.0)
+        self.assertEqual(aa_battery_fraction(0.9), 0.0)
+
+    def test_a_fifth_is_about_1_18_volts(self):
+        # La soglia con cui The Pot dice «batteria scarica».
+        self.assertAlmostEqual(aa_battery_fraction(1.18), 0.2, places=9)
 
 
 # =======================================================================
