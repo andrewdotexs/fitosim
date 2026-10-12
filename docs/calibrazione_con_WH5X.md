@@ -45,7 +45,9 @@ gravimetrico del manuale di calibrazione, capitolo 3. Si può aggiungere in segu
 calibrazione di Kn e del coefficiente di lavaggio richiede cicli di fertirrigazione e viene dopo.
 - **Il lisimetro**, che è il ground truth del Kc. La parte matematica è in `science/lysimeter.py`, quella fisica è il 
 progetto sorella `the-pot-lisimetro`, ancora in costruzione. Quando sarà operativo, la sua stima di Kc entrerà nella 
-regola di precedenza allo scope di catalogo, sopra la pendenza del sensore.
+regola di precedenza allo scope di catalogo, sopra la pendenza del sensore. **La parte a mano è nello strumento
+dal 2026-10-12** (`pesa`, passo 4-bis): la bilancia da cucina al posto della cella, una volta al giorno, con la
+stessa matematica.
 - **La risoluzione sub-giornaliera**, per le ragioni dette più sotto.
 
 ## L'hardware e chi fornisce cosa
@@ -267,6 +269,17 @@ Scaricare la history del WH52 con `fetch_history`, estrarre il valore delle sei 
 `Pot.update_from_sensor`. Registrare la discrepanza restituita. Per la forzante del giorno appena passato, usare i dati 
 **osservati** del WS90 e del WN32P al posto della previsione: temperatura, umidità, vento a 2 m, radiazione, pioggia. 
 Il diario riceve gli eventi non idrici.
+
+### 4-bis. Pesa, ogni mattina (facoltativo, ma vale oro)
+
+`pesa GRAMMI`, subito prima di qualunque acqua, sempre allo stesso modo e alla stessa ora: il vaso intero sulla
+bilancia da cucina da 1 g (per i tre vasi da 5 L; le cassette sono troppo grandi). Due pesate chiudono una
+giornata: i grammi persi sono millimetri sulla superficie del vaso, l'ET₀ è quella di `osserva`, e lo strumento
+stampa il Kc dell'intervallo — o perché non conta: stesso giorno, acqua entrata, giorno non osservato, sotto la
+soglia. Dopo l'irrigazione a drenaggio si pesa di nuovo, con l'`ancora`: è la massa «piena» da cui riparte il
+ciclo. `calibra` ne ricava il Kc con `science/lysimeter.py` accanto a quello della pendenza, e nella regola di
+precedenza il lisimetro sta sopra. È il lisimetro a mano: 0,03 mm per grammo contro 1,6 mm per punto della sonda,
+e nessun modello in mezzo (2026-10-12).
 
 ### 5. Confronto, a fine ciclo
 
