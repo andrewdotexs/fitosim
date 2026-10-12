@@ -1003,5 +1003,65 @@ class TestDailyAggregation(unittest.TestCase):
             self.assertIsInstance(d, DailyWeather)
 
 
+class TestSoilAd(unittest.TestCase):
+    """
+    Il grezzo `ad` delle sonde del suolo (2026-10-12): in tempo reale e
+    nella history, per canale, dal WH51 come dal WH52. È la lettura con
+    cui la calibrazione misura la finestra della sonda nel substrato:
+    la scala percentuale la applica la console, con due estremi uguali
+    per qualunque substrato.
+    """
+
+    def test_real_time_carries_the_ad_of_both_models(self):
+        payload = {
+            "code": 0, "msg": "success", "time": "1789120764",
+            "data": {
+                "soil_ch3": {
+                    "soilmoisture": {"time": "1789120764", "unit": "%", "value": "41"},
+                    "ad": {"time": "1789120764", "unit": "", "value": "210"},
+                },
+                "soil_moisture_ec_ch1": {
+                    "soilmoisture": {"time": "1789120764", "unit": "%", "value": "64"},
+                    "ad": {"time": "1789120764", "unit": "", "value": "1308"},
+                    "temperature": {"time": "1789120764", "unit": "ºF", "value": "69.98"},
+                    "ec": {"time": "1789120764", "unit": "μS/cm", "value": "290"},
+                },
+            },
+        }
+        obs = parse_ecowitt_response(payload)
+        self.assertEqual(obs.soil_moisture_pct, {1: 64.0, 3: 41.0})
+        self.assertEqual(obs.soil_ad, {1: 1308.0, 3: 210.0})
+
+    def test_a_channel_without_ad_leaves_the_dict_empty(self):
+        payload = {
+            "code": 0, "msg": "success", "time": "1789120764",
+            "data": {"soil_ch2": {"soilmoisture": {"time": "1789120764", "unit": "%", "value": "30"}}},
+        }
+        obs = parse_ecowitt_response(payload)
+        self.assertEqual(obs.soil_moisture_pct, {2: 30.0})
+        self.assertEqual(obs.soil_ad, {})
+
+    def test_history_carries_the_ad_per_point(self):
+        from fitosim.io.ecowitt import parse_ecowitt_history_response
+        payload = {
+            "code": 0, "msg": "success", "time": "1789120764",
+            "data": {
+                "soil_ch3": {
+                    "soilmoisture": {"unit": "%", "list": {"100": "41"}},
+                    "ad": {"unit": "", "list": {"100": "210"}},
+                },
+                "soil_moisture_ec_ch1": {
+                    "soilmoisture": {"unit": "%", "list": {"100": "64", "200": "63"}},
+                    "ad": {"unit": "", "list": {"100": "1308", "200": "1310"}},
+                },
+            },
+        }
+        series = parse_ecowitt_history_response(payload)
+        by_ts = {int(p.timestamp.timestamp()): p for p in series.points}
+        self.assertEqual(by_ts[100].soil_ad, {1: 1308.0, 3: 210.0})
+        self.assertEqual(by_ts[200].soil_ad, {1: 1310.0})
+        self.assertEqual(by_ts[200].soil_moisture_pct, {1: 63.0})
+
+
 if __name__ == "__main__":
     unittest.main()

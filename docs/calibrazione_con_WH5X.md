@@ -110,6 +110,32 @@ Operativamente, quindi: il punto alto lo **produci** con un'irrigazione fino a d
 **lasci emergere** dalle valli, ciclo dopo ciclo. La soglia di allerta, `alert_mm`, sta in mezzo: la frazione di 
 deplezione `p` della specie, che The Pot inizializza dal sim_group, moltiplica la TAW così ottenuta.
 
+## La finestra della sonda, e perché nella corteccia è stretta
+
+Una sonda capacitiva non misura quanta superficie tocca: misura la **permittività del volume** che il suo
+campo raggiunge — uno-due centimetri intorno alla piastra, con il campo più forte nei primi millimetri. In
+quel volume l'aria vale ε ≈ 1, il solido 2.5–4.5, l'acqua 80: la lettura è una media di volume, e la scala
+percentuale la applica la console con due estremi uguali per qualunque substrato. Due cose stringono la
+finestra fra secco e bagnato. La prima è il substrato: un mezzo grossolano trattiene meno acqua per volume
+a capacità di campo (θ 0,20 nella corteccia contro 0,40 in un terriccio fine), e con un modello di miscela
+dielettrica (CRIM) la finestra in √ε viene 1,6 per la corteccia e 1,4 per pomice e lapillo puri contro 3,2
+del terriccio universale e 4,0 del cocco-humus: **la metà**, a contatto perfetto. La seconda è il contatto:
+in un mezzo grossolano la piastra sta fra pezzi e vuoti d'aria, il volume vicino ha più aria di quello
+medio, la lettura sta sotto quella del modello e dipende dalla disposizione casuale dei pezzi — da cui la
+dispersione fra gemelli, la deriva nelle settimane dopo il rinvaso, e i veli d'acqua sulla piastra nelle
+ore dopo un'irrigazione. Il passo dell'indice è sempre un punto, ma nel cocco è un cinquantesimo della
+finestra, nella corteccia un ventesimo.
+
+Per questo dall'ancora in poi lo strumento misura la **finestra della sonda** (2026-10-12): dalla lettura
+dell'ancora (bagnato) alla più bassa osservata da allora (asciutto, finora), in punti dell'indice e nel
+grezzo `ad` che l'ancora e ogni osservazione registrano accanto all'indice. `stato` e `calibra` la
+stampano: **larga** da 30 punti in su (un punto è al più un trentesimo), **media** fra 15 e 30, **stretta**
+sotto 15 (un punto è più di un quindicesimo), e **parziale** finché il vaso non è sceso sotto la soglia,
+perché l'estremo asciutto non è ancora arrivato. Sono soglie di lettura, non di modello: una finestra
+stretta non ferma nulla, dice che la pendenza di quel vaso pesa poco e che conviene pesarlo. Le ancore per
+vaso restano la risposta ai due effetti; un «fattore di contatto» nel modello sarebbe un parametro inventato
+che le ancore rendono inutile.
+
 ## Come convergono le letture sub-giornaliere con il bilancio giornaliero
 
 Il WH52 legge ogni quindici-sessanta minuti; il bilancio avanza di un giorno. La riconciliazione è un'**aggregazione a 

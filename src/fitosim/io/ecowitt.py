@@ -310,6 +310,12 @@ class EcowittObservation:
     soil_temperature_c, soil_ec_mscm : dict[int, float]
         Temperatura del substrato (°C) ed EC (mS/cm) dei WH52, per
         canale: il WH51 non le misura, e lascia i due dict vuoti.
+    soil_ad : dict[int, float]
+        Il grezzo `ad` delle sonde del suolo, WH51 e WH52, per canale:
+        il conteggio del convertitore prima della scala percentuale,
+        che la console applica con i suoi due estremi. È la lettura
+        con cui la calibrazione misura la finestra della sonda nel
+        substrato (2026-10-12).
     soil_battery_v : dict[int, float]
         La tensione della pila (V) di ogni sonda del suolo, WH51 e WH52,
         per canale: dal blocco `battery` della risposta. Per passare a
@@ -359,6 +365,9 @@ class EcowittObservation:
     # i dict vuoti, mantenendo la retrocompatibilità.
     soil_temperature_c: dict = field(default_factory=dict)
     soil_ec_mscm: dict = field(default_factory=dict)
+    # Il grezzo del convertitore delle sonde del suolo, per canale
+    # (2026-10-12): WH51 e WH52 lo espongono tutti e due, come `ad`.
+    soil_ad: dict = field(default_factory=dict)
     # Le pile delle sonde del suolo, in volt, per canale (2026-10-12).
     soil_battery_v: dict = field(default_factory=dict)
 
@@ -563,6 +572,7 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
     soil = {}
     soil_temp = {}
     soil_ec = {}
+    soil_ad = {}
     for ch in range(1, _MAX_SOIL_CHANNELS + 1):
         section = data.get(_SOIL_SECTION_WH51.format(ch=ch))
         if section is not None:
@@ -571,12 +581,18 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
             moisture = _parse_pure_float(section.get("soilmoisture"))
             if moisture is not None:
                 soil[ch] = moisture
+            ad = _parse_pure_float(section.get("ad"))
+            if ad is not None:
+                soil_ad[ch] = ad
         section = data.get(_SOIL_SECTION_WH52.format(ch=ch))
         if section is None:
             continue
         moisture = _parse_pure_float(section.get("soilmoisture"))
         if moisture is not None:
             soil[ch] = moisture
+        ad = _parse_pure_float(section.get("ad"))
+        if ad is not None:
+            soil_ad[ch] = ad
         # La temperatura arriva con l'unità dell'account (ºF di default,
         # come tutto il resto) e l'EC in μS/cm: si convertono. Un'unità
         # sconosciuta toglie il campo, non l'osservazione — la
@@ -630,6 +646,7 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         soil_moisture_pct=soil,
         soil_temperature_c=soil_temp,
         soil_ec_mscm=soil_ec,
+        soil_ad=soil_ad,
         soil_battery_v=soil_battery,
     )
 
@@ -976,6 +993,8 @@ class EcowittSeriesPoint:
     # Campi del WH52 (sotto-tappa D fase 3 tappa 5).
     soil_temperature_c: dict = field(default_factory=dict)
     soil_ec_mscm: dict = field(default_factory=dict)
+    # Il grezzo `ad` per canale (2026-10-12), come nell'osservazione.
+    soil_ad: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1192,6 +1211,7 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
     soil_per_ch: dict[int, dict[int, float]] = {}
     soil_temp_per_ch: dict[int, dict[int, float]] = {}
     soil_ec_per_ch: dict[int, dict[int, float]] = {}
+    soil_ad_per_ch: dict[int, dict[int, float]] = {}
     for ch in range(1, _MAX_SOIL_CHANNELS + 1):
         section = data.get(_SOIL_SECTION_WH51.format(ch=ch))
         if section is not None:
@@ -1200,12 +1220,18 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
             )
             if moisture_series:
                 soil_per_ch[ch] = moisture_series
+            ad_series = _build_series_pure(section.get("ad"))
+            if ad_series:
+                soil_ad_per_ch[ch] = ad_series
         section = data.get(_SOIL_SECTION_WH52.format(ch=ch))
         if section is None:
             continue
         moisture_series = _build_series_pure(section.get("soilmoisture"))
         if moisture_series:
             soil_per_ch[ch] = moisture_series
+        ad_series = _build_series_pure(section.get("ad"))
+        if ad_series:
+            soil_ad_per_ch[ch] = ad_series
         temp_series = _build_series_dict(
             section.get("temperature"), _to_celsius
         )
@@ -1227,7 +1253,7 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
         all_timestamps.update(d.keys())
     for d in extra_hum_per_ch.values():
         all_timestamps.update(d.keys())
-    for per_ch in (soil_per_ch, soil_temp_per_ch, soil_ec_per_ch):
+    for per_ch in (soil_per_ch, soil_temp_per_ch, soil_ec_per_ch, soil_ad_per_ch):
         for d in per_ch.values():
             all_timestamps.update(d.keys())
 
@@ -1268,6 +1294,11 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
             for ch, series in soil_ec_per_ch.items()
             if ts in series
         }
+        soil_ad_at_ts = {
+            ch: series[ts]
+            for ch, series in soil_ad_per_ch.items()
+            if ts in series
+        }
         points.append(EcowittSeriesPoint(
             timestamp=datetime.fromtimestamp(ts, tz=timezone.utc),
             outdoor_temp_c=outdoor_temp.get(ts),
@@ -1284,6 +1315,7 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
             soil_moisture_pct=soil_at_ts,
             soil_temperature_c=soil_temp_at_ts,
             soil_ec_mscm=soil_ec_at_ts,
+            soil_ad=soil_ad_at_ts,
         ))
 
     return EcowittTimeSeries(
