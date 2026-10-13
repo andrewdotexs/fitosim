@@ -235,6 +235,12 @@ class TestRealPayloadParsing(unittest.TestCase):
             self.obs.soil_battery_v, {1: 1.5, 2: 1.5, 3: 1.6, 4: 1.7, 5: 1.7}
         )
 
+    def test_air_sensor_battery_flags(self):
+        # Il WN31 del canale 1 ha il suo flag («0»: a posto); una voce
+        # `t_rh_p_sensor` non c'è, e l'indoor è della console.
+        self.assertEqual(self.obs.extra_battery_low, {1: False})
+        self.assertIsNone(self.obs.indoor_battery_low)
+
 
 class TestWH52Parsing(unittest.TestCase):
     """
@@ -259,6 +265,8 @@ class TestWH52Parsing(unittest.TestCase):
                     "soilmoisture_ec_sensor_ch1": {
                         "time": "1789120764", "unit": "V", "value": "1.48",
                     },
+                    # Il WN32P dell'indoor: un flag senza unità, non i volt.
+                    "t_rh_p_sensor": {"time": "1789120764", "unit": "", "value": "0"},
                 },
                 # Un WH51 sul canale 3, accanto: le due sezioni convivono.
                 "soil_ch3": {
@@ -296,6 +304,23 @@ class TestWH52Parsing(unittest.TestCase):
         # La pila del WH52 sta in `soilmoisture_ec_sensor_ch1`; il WH51
         # del canale 3 qui non ha la sua voce, e non compare.
         self.assertEqual(self.obs.soil_battery_v, {1: 1.48})
+
+    def test_indoor_sensor_battery_flag(self):
+        # Il WN32P: «0» a posto, «1» scarica; una tensione o un valore che
+        # non si legge non sono un flag, e la voce resta None.
+        self.assertIs(self.obs.indoor_battery_low, False)
+        casi = (
+            ({"time": "1789120764", "unit": "", "value": "1"}, True),
+            ({"time": "1789120764", "unit": "V", "value": "1.3"}, None),
+            ({"time": "1789120764", "unit": "", "value": "--"}, None),
+        )
+        for nodo, atteso in casi:
+            with self.subTest(nodo=nodo):
+                self.payload["data"]["battery"]["t_rh_p_sensor"] = nodo
+                obs = parse_ecowitt_response(self.payload)
+                self.assertIs(obs.indoor_battery_low, atteso)
+        del self.payload["data"]["battery"]["t_rh_p_sensor"]
+        self.assertIsNone(parse_ecowitt_response(self.payload).indoor_battery_low)
 
     def test_a_battery_that_is_not_a_voltage_is_skipped(self):
         # Un flag senza unità, o un valore che non si legge, non è una

@@ -296,11 +296,21 @@ class EcowittObservation:
         (WH40). Chi ha entrambi può scegliere; `rain_today_mm` resta il
         preferito.
     indoor_temp_c, indoor_humidity_pct : float | None
-        Sensore interno della console base (sempre presente).
+        La sezione `indoor`: il sensore interno della console, dove la
+        console ne ha uno (GW1000, GW1100), o il WN32P — il sensore a
+        pile di temperatura, umidità e pressione che Ecowitt tratta come
+        «indoor» ovunque stia (GW2000, GW3000).
+    indoor_battery_low : bool | None
+        La pila del WN32P: True se è scarica, False se a posto, None se
+        il blocco `battery` non ha la sua voce (`t_rh_p_sensor`) — e
+        allora l'`indoor` viene dalla console, che pile non ne ha.
     extra_temp_c, extra_humidity_pct : dict[int, float]
         Sensori temp+umidità aggiuntivi (es. WN31), indicizzati per
         canale (1-8). Per le piante indoor di fitosim, il canale 1 è
         tipicamente il riferimento del microclima domestico.
+    extra_battery_low : dict[int, bool]
+        La pila di ogni WN31, per canale: True se scarica. Solo i canali
+        che hanno la voce nel blocco `battery`.
     soil_moisture_pct : dict[int, float]
         Sensori di umidità substrato WH51 e WH52, indicizzati per canale
         (1-16, condivisi fra i due modelli). È il dato più prezioso:
@@ -370,6 +380,13 @@ class EcowittObservation:
     soil_ad: dict = field(default_factory=dict)
     # Le pile delle sonde del suolo, in volt, per canale (2026-10-12).
     soil_battery_v: dict = field(default_factory=dict)
+    # Le pile dei sensori dell'aria (2026-10-13): per loro il blocco
+    # `battery` non dice i volt ma un flag — qui vero quando la pila è
+    # scarica. Per l'`indoor` None vuol dire che la voce non c'è: l'aria
+    # di dentro viene dalla console del gateway, non da un WN32P a pile.
+    indoor_battery_low: Optional[bool] = None
+    # I WN31, per canale: solo i canali che hanno la voce.
+    extra_battery_low: dict = field(default_factory=dict)
 
 
 # -----------------------------------------------------------------------
@@ -408,6 +425,15 @@ _SOIL_SECTION_WH52 = "soil_moisture_ec_ch{ch}"
 _BATTERY_WH51 = "soilmoisture_sensor_ch{ch}"
 _BATTERY_WH52 = "soilmoisture_ec_sensor_ch{ch}"
 
+# Le pile dei sensori dell'aria (2026-10-13). Nello stesso blocco il WN32P
+# — il sensore a pile di temperatura, umidità e pressione, che Ecowitt
+# mette nella sezione `indoor` e che il blocco chiama `t_rh_p_sensor` — e
+# i WN31 (`temp_humidity_sensor_chN`) non dicono i volt: un flag senza
+# unità, «0» a posto, «1» pila scarica (doc API v3, «battery»). Visto sul
+# ferro il 2026-10-13 (GW3000A + WN32P): `{"unit": "", "value": "0"}`.
+_BATTERY_INDOOR = "t_rh_p_sensor"
+_BATTERY_WN31 = "temp_humidity_sensor_ch{ch}"
+
 # La carica di una pila AA dalla sua tensione, in lineare fra le due
 # soglie. **Ecowitt non dichiara una soglia di scarica per i WH51 e i
 # WH52**, e le librerie che li leggono (aioecowitt, Home Assistant)
@@ -436,6 +462,19 @@ def _parse_volts(node: Optional[dict]) -> Optional[float]:
     if node is None or _normalize_unit(str(node.get("unit", ""))).upper() != "V":
         return None
     return _parse_pure_float(node)
+
+
+def _parse_flag(node: Optional[dict]) -> Optional[bool]:
+    """Una voce del blocco `battery` che è un flag 0/1 senza unità: True
+    se la pila è scarica («1»), False se a posto («0»); None se la voce
+    manca, ha un'unità (allora è una tensione, non un flag) o non si
+    legge."""
+    if node is None or _normalize_unit(str(node.get("unit", ""))) != "":
+        return None
+    valore = _parse_pure_float(node)
+    if valore is None:
+        return None
+    return valore >= 1
 
 
 def parse_ecowitt_response(payload: dict) -> EcowittObservation:
@@ -621,6 +660,15 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
             if volts is not None:
                 soil_battery[ch] = volts
 
+    # ---------- Le pile dei sensori dell'aria ----------
+    # Un flag, non una tensione: il WN32P dell'`indoor` e i WN31.
+    indoor_battery_low = _parse_flag(battery.get(_BATTERY_INDOOR))
+    extra_battery_low = {}
+    for ch in range(1, _MAX_EXTRA_TH_CHANNELS + 1):
+        flag = _parse_flag(battery.get(_BATTERY_WN31.format(ch=ch)))
+        if flag is not None:
+            extra_battery_low[ch] = flag
+
     return EcowittObservation(
         timestamp=timestamp,
         outdoor_temp_c=outdoor_temp_c,
@@ -648,6 +696,8 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         soil_ec_mscm=soil_ec,
         soil_ad=soil_ad,
         soil_battery_v=soil_battery,
+        indoor_battery_low=indoor_battery_low,
+        extra_battery_low=extra_battery_low,
     )
 
 
