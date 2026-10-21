@@ -595,7 +595,11 @@ entrata, l'annaffiata a fondo nella notte, lo stato prima della sonda, lo scarto
 parametri `fitosim:calibrazione:*`, che l'aggregato giornaliero tiene oltre i sei mesi dei grezzi; lo storico
 del meteo salva anche l'ET₀ FAO di Open-Meteo, la radiazione del giorno e le umidità estreme, e per chi ha la
 stazione la pioggia dei giorni passati è quella del pluviometro. Lo strumento le legge accanto al ricalcolo:
-`confronta` ha «ET₀ app» e «scarto app». Che cosa manca ancora: il grezzo AD (l'app salva la percentuale della
+`confronta` ha «ET₀ app» e «scarto app». Dalla sera dello stesso giorno (E.10-a di The Pot) la fonte dell'ET₀
+del passo può essere anche «stazione» (codice 5) o «open-meteo:ore» (4): il giorno a blocchi, Penman-Monteith
+ora per ora sulle letture della stazione o sulle ore di Open-Meteo, con lo stesso `et0_for_blocks` di A7 — e per
+chi ha la stazione l'ET₀ dell'app e quella ricalcolata dallo strumento vengono dalla stessa forzante, a passi
+diversi (le ore contro gli estremi del giorno). Che cosa manca ancora: il grezzo AD (l'app salva la percentuale della
 console; la finestra della sonda si misura in punti dell'indice, e basta).
 
 Criterio di uscita, raggiunto: `calibra` sui cinque vasi senza una cartella, un'àncora a mano o un `osserva`.
