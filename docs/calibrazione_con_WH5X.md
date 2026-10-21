@@ -589,10 +589,14 @@ per tutti i giorni insieme. I rapporti — `stato`, `confronta`, `calibra`, `gem
 della fase 0, con `--dal-db` sulla riga di comando (`scripts/calibrazione_wh5x/dal_db.py`). Ventidue test, sedici
 senza database e sei sul Postgres di prova.
 
-Che cosa manca ancora: il grezzo AD (l'app salva la percentuale della console: la finestra della sonda si misura
-in punti dell'indice); l'ET₀ del giro del mattino non persistita (qui si ricalcola dalla stazione, Penman-Monteith
-sul sole misurato, meglio ma non lo stesso numero dell'alba); le letture grezze che durano sei mesi. La pioggia
-dei vasi fuori viene dal cumulato della stazione quando c'è, altrimenti da Open-Meteo.
+Lo stesso pomeriggio (H.8-a e b di The Pot) il giro del mattino ha cominciato a scrivere le **evidenze** della
+calibrazione all'alba di ogni vaso con la sonda — la sonda alle sei, l'ET₀ del passo e la sua fonte, l'acqua
+entrata, l'annaffiata a fondo nella notte, lo stato prima della sonda, lo scarto — nella hypertable con i
+parametri `fitosim:calibrazione:*`, che l'aggregato giornaliero tiene oltre i sei mesi dei grezzi; lo storico
+del meteo salva anche l'ET₀ FAO di Open-Meteo, la radiazione del giorno e le umidità estreme, e per chi ha la
+stazione la pioggia dei giorni passati è quella del pluviometro. Lo strumento le legge accanto al ricalcolo:
+`confronta` ha «ET₀ app» e «scarto app». Che cosa manca ancora: il grezzo AD (l'app salva la percentuale della
+console; la finestra della sonda si misura in punti dell'indice, e basta).
 
 Criterio di uscita, raggiunto: `calibra` sui cinque vasi senza una cartella, un'àncora a mano o un `osserva`.
 
