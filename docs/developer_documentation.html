@@ -374,6 +374,7 @@
             <li><a href="#science-et0"><code>et0</code></a></li>
             <li><a href="#science-balance"><code>balance</code></a></li>
             <li><a href="#science-substrate"><code>substrate</code></a></li>
+            <li><a href="#science-retention"><code>retention</code></a></li>
             <li><a href="#science-dual-kc"><code>dual_kc</code></a></li>
             <li><a href="#science-pot-physics"><code>pot_physics</code></a></li>
             <li><a href="#science-saucer"><code>saucer</code></a></li>
@@ -424,7 +425,7 @@
       <span class="badge">v0.35.0</span>
       <span class="badge neutral">Python ≥ 3.10</span>
       <span class="badge info">stdlib only (core)</span>
-      <span class="badge">1562 test verdi</span>
+      <span class="badge">1578 test verdi</span>
       <span class="badge info">layer feedback fase A · calibrazione WH52</span>
       <span class="badge neutral">MIT License</span>
     </div>
@@ -751,6 +752,52 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     <p>Catalogo predefinito: <code>UNIVERSAL_POTTING_SOIL</code>, <code>PEAT_BASED</code>, <code>COCO_COIR</code>, <code>PERLITE_RICH</code>, <code>CACTUS_MIX</code>.</p>
 
     <p>Helper geometrici: <code>circular_pot_surface_area_m2</code>, <code>pot_substrate_depth_mm</code>, <code>theta_to_mm</code>, <code>mm_to_theta</code>, <code>total_available_water</code> (TAW), <code>readily_available_water</code> (RAW), <code>water_volume_*</code>.</p>
+
+    <!-- RETENTION -->
+    <h3 id="science-retention"><code>science/retention.py</code> — La curva di ritenzione e la capacità di contenitore</h3>
+
+    <p>
+      Quanta acqua tiene una colonna di substrato alta <em>h</em> a drenaggio finito (2026-10-21,
+      «la colonna, solo la matematica»). A capacità di contenitore la colonna è in equilibrio
+      idrostatico con l'acqua sul fondo: a quota <em>z</em> la tensione vale <em>z</em> centimetri
+      d'acqua, e la θ media è l'integrale della curva di ritenzione fra zero e <em>h</em>, diviso
+      <em>h</em>. La tensione media è <em>h</em>/2: a 20 cm fa −1 kPa, il punto del catalogo di The Pot
+      (De Boodt &amp; Verdonck 1972); una cassetta da 13 cm sta più bagnata, un vaso da 30 più
+      asciutto. <strong>Non è collegato al vaso</strong>: <code>Pot.fc_mm</code> resta θ<sub>FC</sub> ×
+      profondità finché la differenza non è misurata con le pesate; restano da decidere la θ a
+      saturazione dei componenti e la forma della curva per il catalogo. Fonti: Bilderback &amp;
+      Fonteno 1987; Milks, Fonteno &amp; Larson 1989 (I–III); van Genuchten 1980; Raviv &amp; Lieth 2008.
+    </p>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">VanGenuchten(theta_r, theta_s, alpha_per_cm, n)</span>
+      </div>
+      <div class="api-body">
+        <p>La curva di van Genuchten (1980) con <em>m</em> = 1 − 1/<em>n</em>: <code>theta_at(tension_cm)</code> e l'inversa <code>tension_at(theta)</code>. <code>from_points(theta_s=, theta_r=, wet=, dry=)</code> ricava α e <em>n</em> da due punti (tensione, θ) per bisezione; <code>from_catalog(theta_fc_1kpa, theta_pwp_10kpa, theta_s=, theta_r=0)</code> li prende ai 10,2 e 102 cm della convenzione dei substrati.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind dc">dataclass</span>
+        <span class="api-name">TabulatedCurve(points)</span>
+      </div>
+      <div class="api-body">
+        <p>Una curva per punti (tensione in cm, θ), il primo a tensione zero: lineare fino al secondo punto, poi lineare nel logaritmo della tensione, ferma oltre l'ultimo. Per una curva misurata, o una scheda con più punti.</p>
+      </div>
+    </div>
+
+    <div class="api">
+      <div class="api-head">
+        <span class="api-kind fn">function</span>
+        <span class="api-name">container_capacity(curve, column_height_cm, intervals=200) → float</span>
+      </div>
+      <div class="api-body">
+        <p>La θ media della colonna a drenaggio finito, con Simpson. Accanto: <code>air_space</code> (θ<sub>s</sub> − θ<sub>CC</sub>, lo spazio d'aria di Milks, Fonteno &amp; Larson III), <code>theta_profile</code> (la θ dal fondo saturo alla superficie), <code>container_capacity_by_height</code> (la tabella ciotola, cassetta, vaso alto), <code>mean_tension_cm</code> (<em>h</em>/2), <code>tension_cm_from_kpa</code> / <code>kpa_from_tension_cm</code> (1 kPa = 10,197 cm).</p>
+      </div>
+    </div>
 
     <!-- DUAL KC -->
     <h3 id="science-dual-kc"><code>science/dual_kc.py</code> — Dual Kc (FAO-56 cap. 7)</h3>
@@ -1764,8 +1811,8 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
     <h2 id="testing">7. Testing</h2>
 
     <p>
-      <code>fitosim</code> ha <strong>1562 test verdi</strong> (520 sub-test,
-      1568 con la demo end-to-end) che girano in circa dieci secondi su laptop
+      <code>fitosim</code> ha <strong>1578 test verdi</strong> (520 sub-test,
+      1584 con la demo end-to-end) che girano in circa dieci secondi su laptop
       standard. La suite è la rete di
       sicurezza primaria del refactoring.
     </p>
