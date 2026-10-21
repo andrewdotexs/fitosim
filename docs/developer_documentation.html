@@ -424,7 +424,7 @@
       <span class="badge">v0.35.0</span>
       <span class="badge neutral">Python ≥ 3.10</span>
       <span class="badge info">stdlib only (core)</span>
-      <span class="badge">1556 test verdi</span>
+      <span class="badge">1562 test verdi</span>
       <span class="badge info">layer feedback fase A · calibrazione WH52</span>
       <span class="badge neutral">MIT License</span>
     </div>
@@ -744,7 +744,7 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
         <span class="api-name">compose_substrate(name, components) → Substrate</span>
       </div>
       <div class="api-body">
-        <p>Compone un substrato da una lista di <code>MixComponent(material, fraction)</code>. Calcola θ<sub>FC</sub>/PWP come media pesata delle proprietà dei materiali.</p>
+        <p>Compone un substrato da una lista di <code>MixComponent(material, fraction)</code>. Calcola θ<sub>FC</sub>/PWP come media pesata delle proprietà dei materiali. Dal 2026-10-21 (B5) deriva anche <code>bulk_density_kg_l</code> e <code>ph_typical</code>, medie sui volumi dei soli materiali che li dichiarano, e <code>cec_meq_per_100g</code> pesata sulla massa (quota × densità) e solo se ogni materiale dichiara densità e CEC: le formule del catalogo di The Pot (A1), che il seed e i substrati personali ora chiamano da qui. <code>BaseMaterial</code> porta i tre campi, facoltativi.</p>
       </div>
     </div>
 
@@ -1764,8 +1764,8 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
     <h2 id="testing">7. Testing</h2>
 
     <p>
-      <code>fitosim</code> ha <strong>1556 test verdi</strong> (520 sub-test,
-      1562 con la demo end-to-end) che girano in circa dieci secondi su laptop
+      <code>fitosim</code> ha <strong>1562 test verdi</strong> (520 sub-test,
+      1568 con la demo end-to-end) che girano in circa dieci secondi su laptop
       standard. La suite è la rete di
       sicurezza primaria del refactoring.
     </p>

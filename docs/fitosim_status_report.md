@@ -8,6 +8,8 @@ __fitosim — Status Report__
 
 **Le pressioni di vapore dagli estremi del giorno** (21 ottobre, A9, versione 0.35.0). Dal 29 aprile, quando il Penman-Monteith è entrato con la tappa 5, le due funzioni giornaliere di `science/et0.py` calcolavano e_s come e°(T_media); FAO-56 prescrive la media di e°(T_max) ed e°(T_min), eq. 12, e avverte che la temperatura media sottostima e_s e l'ET₀, perché e° è convessa. Misurato sulle tre settimane vere dell'esempio delle stagioni, prima di cambiare: la giornaliera di fitosim stava −3.1 % (luglio), −2.0 % (gennaio) e −4.0 % (settembre) sotto la FAO eq. 6; metà dello scarto era e_s, l'altra metà e_a dalla media invece che dalle umidità estreme (eq. 17 contro eq. 19). Andrea ha scelto la terza opzione fra tre — lasciare, eq. 12 e 19, eq. 12 e 17 e 19 —: le due Penman-Monteith prendono `t_min`, `t_max`, `humidity_min` e `humidity_max` facoltativi, il selettore passa sempre gli estremi di temperatura e le umidità estreme quando ci sono, `WeatherDay` le porta (a coppia, validate) e `weather_day_from_blocks` le ricava dai blocchi; la stessa e_a entra nella radiazione netta del passo del vaso e del cammino a blocchi; la forma oraria non cambia. Quattro helper nuovi (`mean_saturation_vapor_pressure`, `actual_vapor_pressure_from_extremes`, `actual_vapor_pressure_from_mean`, `daily_vapor_pressures`) e l'esempio 18 del FAO-56 — Bruxelles, il 6 luglio — che torna a un decimo di millimetro, come test. In The Pot la stazione dà le umidità estreme alla calibrazione e alla fase 0 dello strumento; i vasi in casa cambiano dello 0.1 %, l'ET₀ di riferimento della calibrazione del 2–4 %. Nell'esempio delle stagioni la colonna di fitosim ora coincide con la FAO al decimo di percento — 40.58 contro 40.62 mm a luglio, 3.25 contro 3.26 a gennaio, 20.48 contro 20.50 a settembre —: quello che resta è il coefficiente aerodinamico, 900/(T+273) fisso nella FAO ed esplicito in fitosim. Due test del selettore riscritti, 1 556 nel core.
 
+**Le formule di miscela in un posto solo** (21 ottobre, B5, il punto rimasto aperto del blocco B dal 20 settembre). `compose_substrate` faceva solo θ_FC e θ_PWP; la densità, il pH e la CEC di un mix li derivava The Pot in due copie, il seed del catalogo e i substrati personali, con le formule di A1: densità e pH medie sui volumi dei componenti che li dichiarano, CEC pesata sulla massa (quota × densità) e solo se ogni componente dichiara densità e CEC. Da oggi le formule stanno in fitosim: `BaseMaterial` porta i tre campi facoltativi, `compose_substrate` restituisce un `Substrate` con `bulk_density_kg_l`, `ph_typical` e `cec_meq_per_100g` derivati, senza arrotondare — l'arrotondamento è del catalogo che li scrive —, e in The Pot il seed e i substrati personali chiamano la libreria al posto delle loro copie. Verificato sui 18 substrati con ricetta del catalogo vero, sulle due vie: zero differenze al quarto decimale di θ, al terzo della densità, al secondo della CEC. Sei test nuovi in fitosim, 1 562 nel core; la versione resta 0.35.0, perché nessun numero cambia. Del blocco B resta B6, che aspetta la pagina della calibrazione.
+
 **Lo strumento legge tutto dall'app** (21 ottobre, fase 1 dello strumento ridefinita). Il 1° ottobre le àncore dei cinque vasi erano state registrate nello strumento della fase 0, e da allora nessun `osserva`: i vasi vivevano in The Pot, che faceva lo stesso anello da sola — la WH52 ogni quarto d'ora, la taratura automatica dopo ogni annaffiata a fondo del diario (il tratto fermo è l'àncora), il bilancio dell'alba, la stazione sul giardino. Andrea ha chiesto se i dati dell'app bastassero: l'export no (vasi e diario, ma niente letture, tarature, albe né meteo), il database sì. Da oggi `src/the_pot/services/calibrazione_fitosim.py` legge dall'app il vaso con lo stesso adattatore di `idrica_service`, la sonda con la taratura valida in quel momento, le àncore dallo storico delle tarature, la forzante dalla stazione (Penman-Monteith sul sole misurato; senza stazione gli aggregati Open-Meteo e Hargreaves, e lo dice), l'acqua dal diario, le pesate da righe «misura» con `peso_g`, e rifà l'anello a posteriori: il modello parte dalla misura delle sei, avanza con la forzante del giorno, la lettura delle sei dopo è l'osservazione. I rapporti sono quelli della fase 0 — `stato`, `confronta`, `calibra`, `gemelli`, `pesa` — con `--dal-db` sulla riga di comando. Ventidue test in The Pot. **fitosim non cambia**: la matematica è `science/calibration.py` e `science/lysimeter.py`, chiamate come prima; cambia da dove arrivano le serie. Lo strato standalone perde così il suo ultimo utente vero oltre agli esempi, e la decisione sulla sua sorte, fissata «dopo la fase 2», si avvicina.
 
 **Che cosa manca ancora** sul lato dell'app: l'ET₀ del giro del mattino non è persistita (lo strumento la ricalcola dalla stazione, meglio ma non lo stesso numero dell'alba) e il totale di pioggia della stazione nemmeno — due scritture al giro, da fare quando la curva senza sonda dell'altra sessione è entrata; il grezzo AD non si salva, e la finestra della sonda si misura in punti dell'indice; le letture grezze durano sei mesi. **I prossimi passi**: E.10-a in The Pot (la prima àncora c'è dal 1° ottobre; si aspetta che la curva senza sonda entri in `idrica_service`, dove andrebbe il passo a blocchi); il dry-down dei gemelli per `p` (finora rosmarino-2 e lattuga-2 hanno avuto la stessa acqua dei fratelli); le pesate quando arriva la bilancia, col livello 1 del manuale (A.6); il livello 4 con una stagione di fertirrigazioni. Il lisimetro fisico resta rimandato.
@@ -30,9 +32,9 @@ __Note__
 
 Test verdi nel core
 
-1556
+1562
 
-520 sub-test; 1562 con la demo end-to-end (matplotlib); circa dieci secondi
+520 sub-test; 1568 con la demo end-to-end (matplotlib); circa dieci secondi
 
 Righe di sorgente
 
@@ -567,6 +569,12 @@ il giorno fatto di blocchi (A7): il vaso avanza a ore dentro il giorno, il passo
 strumento
 
 la calibrazione legge dall'app (fase 1 ridefinita, in The Pot): `services/calibrazione_fitosim.py` e `--dal-db`; in fitosim solo la documentazione (`calibrazione_con_WH5X.md`)
+
+21 ottobre
+
+modello
+
+B5: densità, pH e CEC del mix da `compose_substrate`, con le formule del catalogo di The Pot (A1); il seed e i substrati personali chiamano fitosim; nessun numero cambia
 
 21 ottobre
 

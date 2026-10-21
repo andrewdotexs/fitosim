@@ -24,7 +24,7 @@ il giardiniere.
 ## Stato del progetto
 
 - **Versione**: 0.35.0 (`pyproject.toml`, dal 2026-10-21: le pressioni di vapore dagli estremi del giorno, A9; 0.34.0 il 29-09, il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
-- **1556 test verdi** (520 sub-test) nel core; la demo end-to-end usa matplotlib
+- **1562 test verdi** (520 sub-test) nel core; la demo end-to-end usa matplotlib
 - **Le pressioni di vapore dagli estremi del giorno** (A9, 2026-10-21): e_s ed e_a dagli estremi del giorno nel Penman-Monteith giornaliero: la media di e°(T_max) ed e°(T_min) (FAO-56 eq. 12) al posto di e°(T_media), che la sottostima, ed e_a dalle umidità estreme (eq. 17) quando la stazione le dà, dalla media (eq. 19) altrimenti; `WeatherDay` ha `humidity_min` e `humidity_max`; la forma oraria non cambia. Misurato sulle settimane dell'esempio delle stagioni, l'ET₀ giornaliera sale del 2–4 % e coincide con la FAO di riferimento al decimo di percento; in una stanza non cambia.
 - **Il giorno fatto di blocchi** (A7, 2026-09-29): il vaso avanza a blocchi di ore dentro il giorno — `Pot.apply_blocks_from_weather`, `domain/blocks.py` con le nove decisioni e le fonti; il passo giornaliero è il caso di un blocco di 24 ore, con gli stessi numeri
 - **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
@@ -63,7 +63,9 @@ parametri noti. In questo dominio specifico la libreria copre:
 - Modello del sottovaso opzionale come componente di stato distinto, con
   riassorbimento capillare verso il substrato
 - Sostrati personalizzati: factory `compose_substrate` per i mix, con nove
-  materiali base dimostrativi (akadama, pomice, perlite, ecc.). **Il catalogo
+  materiali base dimostrativi (akadama, pomice, perlite, ecc.); dal 21-10-2026
+  (B5) deriva anche densità, pH e CEC del mix — le prime due sui volumi, la
+  CEC sulla massa — con le formule che The Pot usava in due copie. **Il catalogo
   ufficiale di specie, substrati e componenti è quello di The Pot**
   (`the-pot/catalog/`, con le fonti): le specie e i substrati definiti qui
   sono fixture per test ed esempi, e la convenzione delle costanti idriche
@@ -388,7 +390,7 @@ fitosim/
 │           ├── openmeteo.py    # adapter Open-Meteo (meteo)
 │           ├── http_json.py    # adapter generico per gateway ESP32
 │           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 1556 test verdi (core)
+├── tests/                  # 1562 test verdi (core)
 ├── examples/               # esempi e demo end-to-end
 │   ├── tappa4_complete_demo.py        # demo Garden + persistenza + allerte
 │   ├── tappa5_A_penman_monteith_demo.py

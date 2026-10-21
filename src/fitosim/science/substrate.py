@@ -728,14 +728,42 @@ class BaseMaterial:
     description : str
         Note descrittive: provenienza, granulometria tipica, range
         di valori in letteratura.
+    bulk_density_kg_l : float | None, opzionale
+        Densità apparente a secco del materiale, kg per litro (B5,
+        2026-10-21). Serve alla densità del mix, pesata sui volumi, e
+        alla massa con cui la CEC del materiale entra nella CEC del mix.
+    cec_meq_per_100g : float | None, opzionale
+        Capacità di scambio cationico del materiale, meq per 100 g di
+        sostanza secca; zero per un inerte. Entra nel mix pesata sulla
+        massa, non sui volumi (A1, 2026-09-20).
+    ph_typical : float | None, opzionale
+        pH «di natura» del materiale. Entra nel mix pesato sui volumi.
     """
 
     name: str
     theta_fc: float
     theta_pwp: float
     description: str = ""
+    bulk_density_kg_l: float | None = None
+    cec_meq_per_100g: float | None = None
+    ph_typical: float | None = None
 
     def __post_init__(self) -> None:
+        if self.bulk_density_kg_l is not None and not 0.0 < self.bulk_density_kg_l <= 3.0:
+            raise ValueError(
+                f"BaseMaterial '{self.name}': bulk_density_kg_l="
+                f"{self.bulk_density_kg_l} fuori da (0, 3] kg/L."
+            )
+        if self.cec_meq_per_100g is not None and not 0.0 <= self.cec_meq_per_100g <= 300.0:
+            raise ValueError(
+                f"BaseMaterial '{self.name}': cec_meq_per_100g="
+                f"{self.cec_meq_per_100g} fuori da [0, 300] meq/100 g."
+            )
+        if self.ph_typical is not None and not 0.0 < self.ph_typical < 14.0:
+            raise ValueError(
+                f"BaseMaterial '{self.name}': ph_typical={self.ph_typical} "
+                f"fuori dalla scala (0, 14)."
+            )
         if not 0.0 <= self.theta_pwp < self.theta_fc <= 1.0:
             raise ValueError(
                 f"BaseMaterial '{self.name}': vincolo violato "
@@ -927,6 +955,20 @@ def compose_substrate(
     rispetto a misure dirette in laboratorio, adeguata per il dominio
     del giardinaggio domestico.
 
+    Dal 2026-10-21 (B5) deriva anche le tre grandezze del tampone e del
+    peso, con le formule che il catalogo di The Pot usava in due copie
+    (il seed e i substrati personali) e che da qui vivono in un posto
+    solo: la **densità apparente** e il **pH** come medie pesate sui
+    volumi, sui soli materiali che li dichiarano (`None` se nessuno);
+    la **CEC** pesata sulla **massa** — quota in volume × densità — e
+    solo se *ogni* materiale dichiara densità e CEC, altrimenti `None`
+    (A1, 2026-09-20: un litro di torba a 120 meq/100 g pesa 0,2 kg e
+    porta 240 meq, un litro di universale a 60 ne pesa 0,35 e ne porta
+    210; la media sui volumi direbbe il doppio). Una CEC derivata a
+    zero — tutti inerti — resta `None`, perché il tampone del modello
+    vuole una CEC positiva. I valori escono senza arrotondamenti: chi
+    li scrive in un catalogo li arrotonda con la sua regola.
+
     Fino al 2026-09-20 accettava anche `depletion_fraction`, e lo
     passava a `Substrate`, che non ha quel campo: la frazione di
     deplezione è della specie, non del substrato, e chi la passava
@@ -989,5 +1031,40 @@ def compose_substrate(
     theta_fc = sum(c.fraction * c.material.theta_fc for c in components)
     theta_pwp = sum(c.fraction * c.material.theta_pwp for c in components)
 
-    return Substrate(name=name, theta_fc=theta_fc, theta_pwp=theta_pwp)
+    # Densità e pH: medie sui volumi dei soli materiali che li dichiarano.
+    con_densita = [c for c in components if c.material.bulk_density_kg_l is not None]
+    quota_densita = sum(c.fraction for c in con_densita)
+    bulk_density = (
+        sum(c.fraction * c.material.bulk_density_kg_l for c in con_densita) / quota_densita
+        if quota_densita > 0
+        else None
+    )
+    con_ph = [c for c in components if c.material.ph_typical is not None]
+    quota_ph = sum(c.fraction for c in con_ph)
+    ph_typical = (
+        sum(c.fraction * c.material.ph_typical for c in con_ph) / quota_ph
+        if quota_ph > 0
+        else None
+    )
+    # CEC: sulla massa, e solo se ogni materiale dichiara densità e CEC.
+    cec: float | None = None
+    if all(
+        c.material.bulk_density_kg_l is not None and c.material.cec_meq_per_100g is not None
+        for c in components
+    ):
+        massa = sum(c.fraction * c.material.bulk_density_kg_l for c in components)
+        scambio = sum(
+            c.fraction * c.material.bulk_density_kg_l * c.material.cec_meq_per_100g
+            for c in components
+        )
+        if massa > 0 and scambio > 0:
+            cec = scambio / massa
+    return Substrate(
+        name=name,
+        theta_fc=theta_fc,
+        theta_pwp=theta_pwp,
+        cec_meq_per_100g=cec,
+        ph_typical=ph_typical,
+        bulk_density_kg_l=bulk_density,
+    )
 

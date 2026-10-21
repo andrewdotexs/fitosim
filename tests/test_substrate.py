@@ -973,5 +973,79 @@ class TestSubstrateBulkDensity(unittest.TestCase):
             s.bulk_density_kg_l = 0.5
 
 
+class TestComposeSubstrateDerivedProperties(unittest.TestCase):
+    """
+    B5 (2026-10-21): densità, pH e CEC del mix dalle formule del catalogo
+    di The Pot (A1) — pesate sui volumi le prime due, sulla massa la terza.
+    """
+
+    def setUp(self):
+        from fitosim.science.substrate import BaseMaterial
+        self.torba = BaseMaterial(
+            "torba", 0.60, 0.20, bulk_density_kg_l=0.2, cec_meq_per_100g=120.0, ph_typical=4.5,
+        )
+        self.perlite = BaseMaterial(
+            "perlite", 0.30, 0.05, bulk_density_kg_l=0.1, cec_meq_per_100g=1.5, ph_typical=7.0,
+        )
+        self.pomice = BaseMaterial("pomice", 0.25, 0.05)
+
+    def test_density_and_ph_are_volume_weighted(self):
+        from fitosim.science.substrate import MixComponent, compose_substrate
+        mix = compose_substrate([MixComponent(self.torba, 0.75), MixComponent(self.perlite, 0.25)])
+        self.assertAlmostEqual(mix.bulk_density_kg_l, 0.75 * 0.2 + 0.25 * 0.1, places=12)
+        self.assertAlmostEqual(mix.ph_typical, 0.75 * 4.5 + 0.25 * 7.0, places=12)
+
+    def test_cec_is_mass_weighted_not_volume_weighted(self):
+        from fitosim.science.substrate import MixComponent, compose_substrate
+        mix = compose_substrate([MixComponent(self.torba, 0.75), MixComponent(self.perlite, 0.25)])
+        massa = 0.75 * 0.2 + 0.25 * 0.1
+        scambio = 0.75 * 0.2 * 120.0 + 0.25 * 0.1 * 1.5
+        self.assertAlmostEqual(mix.cec_meq_per_100g, scambio / massa, places=9)
+        # Sui volumi direbbe 90.4: la torba leggera pesa meno di quanto occupa.
+        self.assertLess(0.75 * 120.0 + 0.25 * 1.5, mix.cec_meq_per_100g)
+
+    def test_cec_needs_every_material_density_and_ph_do_not(self):
+        from fitosim.science.substrate import MixComponent, compose_substrate
+        mix = compose_substrate([MixComponent(self.torba, 0.5), MixComponent(self.pomice, 0.5)])
+        self.assertIsNone(mix.cec_meq_per_100g)
+        self.assertAlmostEqual(mix.bulk_density_kg_l, 0.2, places=12)
+        self.assertAlmostEqual(mix.ph_typical, 4.5, places=12)
+
+    def test_without_declarations_everything_stays_none(self):
+        from fitosim.science.substrate import (
+            BIONDA_PEAT,
+            PERLITE,
+            MixComponent,
+            compose_substrate,
+        )
+
+        mix = compose_substrate([MixComponent(BIONDA_PEAT, 0.7), MixComponent(PERLITE, 0.3)])
+        self.assertIsNone(mix.bulk_density_kg_l)
+        self.assertIsNone(mix.ph_typical)
+        self.assertIsNone(mix.cec_meq_per_100g)
+
+    def test_all_inert_cec_becomes_none(self):
+        from fitosim.science.substrate import (
+            BaseMaterial,
+            MixComponent,
+            compose_substrate,
+        )
+
+        sabbia = BaseMaterial("sabbia", 0.20, 0.05, bulk_density_kg_l=1.5, cec_meq_per_100g=0.0)
+        mix = compose_substrate([MixComponent(sabbia, 0.5), MixComponent(sabbia, 0.5)])
+        self.assertIsNone(mix.cec_meq_per_100g)
+        self.assertAlmostEqual(mix.bulk_density_kg_l, 1.5, places=12)
+
+    def test_base_material_validation(self):
+        from fitosim.science.substrate import BaseMaterial
+        with self.assertRaises(ValueError):
+            BaseMaterial("x", 0.5, 0.1, bulk_density_kg_l=0.0)
+        with self.assertRaises(ValueError):
+            BaseMaterial("x", 0.5, 0.1, cec_meq_per_100g=-1.0)
+        with self.assertRaises(ValueError):
+            BaseMaterial("x", 0.5, 0.1, ph_typical=14.0)
+        BaseMaterial("x", 0.5, 0.1, cec_meq_per_100g=0.0)  # l'inerte va bene
+
+
 if __name__ == "__main__":
     unittest.main()
