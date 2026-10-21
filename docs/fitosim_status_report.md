@@ -2,7 +2,13 @@ __fitosim — Status Report__
 
 *Stato dello sviluppo della libreria di simulazione FAO-56*
 
-*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+
+# Aggiornamento al 21 ottobre 2026 — la calibrazione legge dall'app
+
+**Lo strumento legge tutto dall'app** (21 ottobre, fase 1 dello strumento ridefinita). Il 1° ottobre le àncore dei cinque vasi erano state registrate nello strumento della fase 0, e da allora nessun `osserva`: i vasi vivevano in The Pot, che faceva lo stesso anello da sola — la WH52 ogni quarto d'ora, la taratura automatica dopo ogni annaffiata a fondo del diario (il tratto fermo è l'àncora), il bilancio dell'alba, la stazione sul giardino. Andrea ha chiesto se i dati dell'app bastassero: l'export no (vasi e diario, ma niente letture, tarature, albe né meteo), il database sì. Da oggi `src/the_pot/services/calibrazione_fitosim.py` legge dall'app il vaso con lo stesso adattatore di `idrica_service`, la sonda con la taratura valida in quel momento, le àncore dallo storico delle tarature, la forzante dalla stazione (Penman-Monteith sul sole misurato; senza stazione gli aggregati Open-Meteo e Hargreaves, e lo dice), l'acqua dal diario, le pesate da righe «misura» con `peso_g`, e rifà l'anello a posteriori: il modello parte dalla misura delle sei, avanza con la forzante del giorno, la lettura delle sei dopo è l'osservazione. I rapporti sono quelli della fase 0 — `stato`, `confronta`, `calibra`, `gemelli`, `pesa` — con `--dal-db` sulla riga di comando. Ventidue test in The Pot. **fitosim non cambia**: la matematica è `science/calibration.py` e `science/lysimeter.py`, chiamate come prima; cambia da dove arrivano le serie. Lo strato standalone perde così il suo ultimo utente vero oltre agli esempi, e la decisione sulla sua sorte, fissata «dopo la fase 2», si avvicina.
+
+**Che cosa manca ancora** sul lato dell'app: l'ET₀ del giro del mattino non è persistita (lo strumento la ricalcola dalla stazione, meglio ma non lo stesso numero dell'alba) e il totale di pioggia della stazione nemmeno — due scritture al giro, da fare quando la curva senza sonda dell'altra sessione è entrata; il grezzo AD non si salva, e la finestra della sonda si misura in punti dell'indice; le letture grezze durano sei mesi. **I prossimi passi**: E.10-a in The Pot (la prima àncora c'è dal 1° ottobre; si aspetta che la curva senza sonda entri in `idrica_service`, dove andrebbe il passo a blocchi); il dry-down dei gemelli per `p` (finora rosmarino-2 e lattuga-2 hanno avuto la stessa acqua dei fratelli); le pesate quando arriva la bilancia, col livello 1 del manuale (A.6); il livello 4 con una stagione di fertirrigazioni. Il lisimetro fisico resta rimandato.
 
 # Aggiornamento al 29 settembre 2026 — il giorno fatto di blocchi
 
@@ -553,6 +559,12 @@ i serbatoi nutritivi N, P₂O₅, K₂O (`science/nutrients.py`, versione 0.32.0
 modello
 
 il giorno fatto di blocchi (A7): il vaso avanza a ore dentro il giorno, il passo giornaliero è un blocco di 24 ore, nove decisioni con le fonti in `domain/blocks.py`; l'esempio delle stagioni; versione 0.34.0
+
+21 ottobre
+
+strumento
+
+la calibrazione legge dall'app (fase 1 ridefinita, in The Pot): `services/calibrazione_fitosim.py` e `--dal-db`; in fitosim solo la documentazione (`calibrazione_con_WH5X.md`), la versione resta 0.34.0
 
 Da settembre le consegne non hanno più un numero nel titolo del commit: la versione si alza in `pyproject.toml`, e il repository è condiviso con The Pot, che monta fitosim come dipendenza editabile.
 

@@ -237,6 +237,11 @@ contamina gli altri.
 
 ## La procedura, passo per passo
 
+*Dal 21 ottobre 2026 i passi 1–4 li fa l'app da sola per un vaso con la sonda sotto: il setup è il vaso in
+The Pot, l'àncora è la taratura automatica dopo un'annaffiata «a fondo» del diario, la previsione e
+l'osservazione sono il giro del mattino. Lo strumento li legge con `--dal-db` (fase 1 ridefinita, più
+sotto); i passi restano qui per chi lavora senza l'app, e per capire che cosa l'app sta facendo.*
+
 ### 0. Diario
 
 Prima di tutto un diario degli eventi: data, ora approssimativa, vaso, cosa è successo. Irrigazioni e piogge le vede il 
@@ -397,7 +402,7 @@ persistenza nei modelli veri con una migrazione Alembic. Le credenziali dei gate
 | Fase | Dove | Consegna | Cosa dimostra | Criterio di uscita |
 |---|---|---|---|---|
 | 0 | `the-pot/scripts/calibrazione_wh5x/` | la CLI dell'anello, sui cinque vasi — **completa** al 2026-09-19 | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera su ciascun vaso, almeno un'osservazione con discrepanza stampata, il rumore fra i gemelli misurato in entrambe le coppie con `gemelli` |
-| 1 | `src/the_pot/services/` | lo strumento legge gateway e canali da `dispositivi` (H.2-a, già in app) | niente registro doppio | un vaso calibrato con gateway e canale presi da «I tuoi dispositivi» |
+| 1 | `src/the_pot/services/calibrazione_fitosim.py` + `--dal-db` | **ridefinita e fatta il 2026-10-21**: lo strumento legge tutto dall'app — sonda, tarature, diario, stazione, albe, pesate — e rifà l'anello a posteriori | un registro solo, quello dell'app | `calibra`, `confronta`, `gemelli` e `stato` sui cinque vasi senza una cartella né un'àncora a mano |
 | 2 | `src/the_pot/services/` + `web/` | pagina di calibrazione | il flusso in sei passi guidato dal browser | un ciclo intero condotto dalla pagina |
 | 3 | nessuna | la calibrazione stessa | proposte con confidenza crescente | dal terzo ciclo la prima proposta, dal quinto una utilizzabile |
 
@@ -563,16 +568,33 @@ Criterio di uscita: `ancora` registrata alla prima irrigazione a drenaggio su ci
 discrepanza per almeno un giorno; `confronta` che stampa previsto contro osservato; lo scarto fra le θ dei due
 rosmarini e fra le due cassette misurato su almeno un ciclo, che da lì in poi è il pavimento di ogni RMSE.
 
-### Fase 1: lo strumento si collega ai dispositivi dell'app
+### Fase 1, ridefinita: lo strumento legge tutto dall'app (fatta il 2026-10-21)
 
-La registrazione dei gateway **esiste già**: `dispositivi.py` (H.2-a) registra i gateway Ecowitt via cloud, scopre i
-canali e li mette sotto un vaso — «si registra in I tuoi dispositivi, si mette sotto un vaso, si tara». La prima
-stesura di questa roadmap proponeva di costruirla, senza controllare. La fase 1 è quindi il contrario: il
-`gateways.py` dello strumento sparisce e l'anello legge gateway e mappature canale → vaso da `dispositivi`; da
-verificare che i WH52 (θ, temperatura ed EC nella sezione `soil_moisture_ec_chN`) e il WN32P nello slot indoor
-passino dalla scoperta com'è.
+La prima stesura diceva «lo strumento legge i gateway da `dispositivi`». Nel frattempo i cinque vasi sono entrati
+nell'app, e l'app ha fatto da sola l'anello di questa fase 0: la WH52 letta ogni quarto d'ora, la **taratura
+automatica** che dopo ogni annaffiata a fondo del diario chiude una finestra di due ore e prende il tratto fermo
+come lettura bagnata — è l'àncora del passo 2, senza che nessuno la registri —, il bilancio dell'alba, la stazione
+sul giardino. Le àncore del 1° ottobre stavano in tutte e due le parti; le osservazioni solo nell'app. Due
+registri per la stessa cosa, e quello a mano resta indietro. La fase 1 è diventata quindi: **lo strumento legge
+tutto dall'app** e rifà l'anello a posteriori.
 
-Criterio di uscita: lo strumento gira su un vaso i cui gateway e canale vengono da «I tuoi dispositivi».
+`src/the_pot/services/calibrazione_fitosim.py` legge il vaso con lo stesso join e lo stesso adattatore di
+`idrica_service`; la sonda dai tratti di `sensor_routing` con la taratura valida in quel momento (lo storico delle
+tarature, ripercorso); le àncore dallo storico delle tarature (applicate o proposte); la forzante dalla stazione
+(minima e massima, umidità, vento a 2 m, radiazione integrata, pioggia dal cumulato) o, senza, dagli aggregati
+Open-Meteo del giro del mattino (Hargreaves, e lo dice); l'acqua dal diario; le pesate da righe «misura» del
+diario con `peso_g`. Per ogni giorno D con la lettura delle sei di D e di D+1 il modello parte dalla misura,
+avanza con la forzante osservata e la lettura dopo è l'osservazione: lo scarto è il segnale, come in `osserva`,
+per tutti i giorni insieme. I rapporti — `stato`, `confronta`, `calibra`, `gemelli`, `pesa` — sono gli stessi
+della fase 0, con `--dal-db` sulla riga di comando (`scripts/calibrazione_wh5x/dal_db.py`). Ventidue test, sedici
+senza database e sei sul Postgres di prova.
+
+Che cosa manca ancora: il grezzo AD (l'app salva la percentuale della console: la finestra della sonda si misura
+in punti dell'indice); l'ET₀ del giro del mattino non persistita (qui si ricalcola dalla stazione, Penman-Monteith
+sul sole misurato, meglio ma non lo stesso numero dell'alba); le letture grezze che durano sei mesi. La pioggia
+dei vasi fuori viene dal cumulato della stazione quando c'è, altrimenti da Open-Meteo.
+
+Criterio di uscita, raggiunto: `calibra` sui cinque vasi senza una cartella, un'àncora a mano o un `osserva`.
 
 ### Fase 2: la pagina di calibrazione
 
