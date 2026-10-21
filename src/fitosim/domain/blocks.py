@@ -74,6 +74,7 @@ from fitosim.science.et0 import (
     compute_et,
     compute_et0_penman_monteith,
     compute_et_penman_monteith_physical,
+    daily_vapor_pressures,
     distribute_daily_et0,
     soil_heat_flux_interval,
 )
@@ -450,8 +451,9 @@ def _distributed_daily_et0(
     rn_day: float | None = None
     wind: float | None = None
     if day.has_full_weather:
-        t_mean = (day.t_min + day.t_max) / 2.0
-        ea = actual_vapor_pressure(t_mean, day.humidity_relative)
+        _e_s, ea = daily_vapor_pressures(
+            day.t_min, day.t_max, day.humidity_relative, day.humidity_min, day.humidity_max,
+        )
         rn_day = net_radiation(
             solar_radiation_mj=day.solar_radiation_mj_m2_day,
             extraterrestrial_radiation_mj=extraterrestrial_radiation(latitude_deg, j),
@@ -463,6 +465,7 @@ def _distributed_daily_et0(
     et_result = compute_et(
         t_min=day.t_min, t_max=day.t_max, latitude_deg=latitude_deg, j=j,
         humidity_relative=day.humidity_relative, wind_speed_m_s=wind,
+        humidity_min=day.humidity_min, humidity_max=day.humidity_max,
         net_radiation_mj_m2_day=rn_day,
         stomatal_resistance_s_m=stomatal_resistance_s_m, crop_height_m=crop_height_m,
         elevation_m=elevation_m,

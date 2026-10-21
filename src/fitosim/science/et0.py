@@ -203,6 +203,91 @@ def actual_vapor_pressure(
     return humidity_relative * saturation_vapor_pressure(temperature_c)
 
 
+def mean_saturation_vapor_pressure(t_min: float, t_max: float) -> float:
+    """
+    Pressione di vapore a saturazione media del giorno e_s, in kPa: la
+    media di e°(T_max) ed e°(T_min) (FAO-56 eq. 12).
+
+    Perché non e°(T_media): e° cresce in modo esponenziale con la
+    temperatura, quindi la media delle due e° sta sopra la e° della
+    temperatura media, e FAO-56 (cap. 3) avverte che usare T_media
+    sottostima e_s, il deficit di vapore e l'ET₀. Fino ad A9 (2026-10-21)
+    le due Penman-Monteith giornaliere usavano e°(T_media): misurato
+    sulle settimane dell'esempio delle stagioni valeva l'1–3 % di ET₀ in
+    meno, e la differenza cresce con l'escursione termica del giorno.
+    """
+    if t_min > t_max:
+        raise ValueError(f"t_min ({t_min}) non può superare t_max ({t_max}).")
+    return (saturation_vapor_pressure(t_max) + saturation_vapor_pressure(t_min)) / 2.0
+
+
+def actual_vapor_pressure_from_extremes(
+    t_min: float, t_max: float, humidity_min: float, humidity_max: float,
+) -> float:
+    """
+    Pressione di vapore attuale e_a dalle umidità estreme del giorno
+    (FAO-56 eq. 17): e_a = [e°(T_min)·UR_max + e°(T_max)·UR_min] / 2.
+
+    L'umidità relativa massima si ha all'alba, con la temperatura
+    minima; la minima nel primo pomeriggio, con la massima. Le due
+    coppie danno la stessa e_a vista da due momenti diversi, e la media
+    è la stima che FAO-56 preferisce quando una stazione registra gli
+    estremi. Le umidità sono frazioni 0..1.
+    """
+    if t_min > t_max:
+        raise ValueError(f"t_min ({t_min}) non può superare t_max ({t_max}).")
+    for nome, valore in (("humidity_min", humidity_min), ("humidity_max", humidity_max)):
+        if not 0.0 <= valore <= 1.0:
+            raise ValueError(f"{nome} ({valore}) deve essere una frazione tra 0 e 1.")
+    if humidity_min > humidity_max:
+        raise ValueError(
+            f"humidity_min ({humidity_min}) non può superare humidity_max ({humidity_max})."
+        )
+    return (
+        saturation_vapor_pressure(t_min) * humidity_max
+        + saturation_vapor_pressure(t_max) * humidity_min
+    ) / 2.0
+
+
+def actual_vapor_pressure_from_mean(
+    t_min: float, t_max: float, humidity_relative: float,
+) -> float:
+    """
+    Pressione di vapore attuale e_a dall'umidità relativa media del
+    giorno (FAO-56 eq. 19): e_a = UR_media · e_s, con e_s dall'eq. 12.
+    È la strada quando la stazione dà una sola umidità per il giorno.
+    """
+    if not 0.0 <= humidity_relative <= 1.0:
+        raise ValueError(
+            f"humidity_relative ({humidity_relative}) deve essere una "
+            f"frazione tra 0 e 1 (per il 65% passa 0.65, non 65)."
+        )
+    return humidity_relative * mean_saturation_vapor_pressure(t_min, t_max)
+
+
+def daily_vapor_pressures(
+    t_min: float,
+    t_max: float,
+    humidity_relative: float,
+    humidity_min: float | None = None,
+    humidity_max: float | None = None,
+) -> tuple[float, float]:
+    """
+    (e_s, e_a) di un giorno dai suoi estremi (A9): e_s dall'eq. 12;
+    e_a dall'eq. 17 quando ci sono le due umidità estreme, altrimenti
+    dall'eq. 19 con la media. È la coppia che entra nel Penman-Monteith
+    giornaliero e nella radiazione netta: chi calcola R_n prima del
+    selettore la prende da qui, così le due parlano la stessa lingua.
+    Le umidità estreme vanno insieme: una sola è un errore.
+    """
+    if (humidity_min is None) != (humidity_max is None):
+        raise ValueError("humidity_min e humidity_max vanno date insieme, o nessuna delle due.")
+    e_s = mean_saturation_vapor_pressure(t_min, t_max)
+    if humidity_min is not None and humidity_max is not None:
+        return e_s, actual_vapor_pressure_from_extremes(t_min, t_max, humidity_min, humidity_max)
+    return e_s, actual_vapor_pressure_from_mean(t_min, t_max, humidity_relative)
+
+
 def atmospheric_pressure(elevation_m: float) -> float:
     """
     Pressione atmosferica P alla quota specificata, in kPa.
@@ -459,6 +544,10 @@ def compute_et_penman_monteith_physical(
     elevation_m: float = 0.0,
     soil_heat_flux_mj_m2_day: float = 0.0,
     hours: float = 24.0,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    humidity_min: float | None = None,
+    humidity_max: float | None = None,
 ) -> float:
     """
     Evapotraspirazione ET secondo l'equazione fisica di Penman-Monteith,
@@ -572,10 +661,23 @@ def compute_et_penman_monteith_physical(
 
     Solleva
     -------
+    t_min, t_max : float, opzionali
+        Gli estremi del giorno (A9, 2026-10-21). Con loro e_s è la media
+        di e°(T_max) ed e°(T_min) (FAO-56 eq. 12) e non e°(T_media), che
+        la sottostima; `temperature_c` resta la media del giorno, per Δ
+        (eq. 13) e per la densità dell'aria. Vanno insieme, o nessuno:
+        la forma oraria dei blocchi non li passa, e usa e°(T_ora).
+    humidity_min, humidity_max : float, opzionali
+        Le umidità relative estreme del giorno, frazioni 0..1, insieme
+        o nessuna, e solo con gli estremi di temperatura: con loro e_a
+        segue l'eq. 17; senza, l'eq. 19 dalla media `humidity_relative`.
+
+    Solleva
+    -------
     ValueError
         Se i parametri di input violano i loro vincoli fisici
         (umidità fuori da [0,1], vento o resistenze non positive,
-        durata non positiva).
+        durata non positiva, estremi spaiati).
     """
     if hours <= 0:
         raise ValueError(f"hours ({hours}) deve essere positivo.")
@@ -583,9 +685,24 @@ def compute_et_penman_monteith_physical(
     # Ognuno è testato indipendentemente, e qui li componiamo nella
     # forma finale dell'equazione di Penman-Monteith.
 
-    # Termodinamica del vapore d'acqua a questa temperatura.
-    e_s = saturation_vapor_pressure(temperature_c)
-    e_a = actual_vapor_pressure(temperature_c, humidity_relative)
+    # Termodinamica del vapore d'acqua. Con gli estremi del giorno (A9,
+    # 2026-10-21) e_s ed e_a seguono FAO-56 eq. 12 e 17/19; senza — la
+    # forma oraria dei blocchi, o chi ha una temperatura sola — valgono
+    # e°(T) e UR·e°(T) a questa temperatura (eq. 53 per l'ora). Δ resta
+    # alla temperatura media (eq. 13), come la densità dell'aria.
+    if (t_min is None) != (t_max is None):
+        raise ValueError("t_min e t_max vanno dati insieme, o nessuno dei due.")
+    if t_min is not None and t_max is not None:
+        e_s, e_a = daily_vapor_pressures(
+            t_min, t_max, humidity_relative, humidity_min, humidity_max,
+        )
+    else:
+        if humidity_min is not None or humidity_max is not None:
+            raise ValueError(
+                "Le umidità estreme (eq. 17) vogliono anche t_min e t_max."
+            )
+        e_s = saturation_vapor_pressure(temperature_c)
+        e_a = actual_vapor_pressure(temperature_c, humidity_relative)
     delta = slope_vapor_pressure(temperature_c)
 
     # Pressione atmosferica e costante psicrometrica per questa quota.
@@ -648,6 +765,10 @@ def compute_et0_penman_monteith(
     elevation_m: float = 0.0,
     soil_heat_flux_mj_m2_day: float = 0.0,
     hours: float = 24.0,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    humidity_min: float | None = None,
+    humidity_max: float | None = None,
 ) -> float:
     """
     Evapotraspirazione di riferimento ET₀ secondo Penman-Monteith FAO-56,
@@ -718,6 +839,10 @@ def compute_et0_penman_monteith(
         elevation_m=elevation_m,
         soil_heat_flux_mj_m2_day=soil_heat_flux_mj_m2_day,
         hours=hours,
+        t_min=t_min,
+        t_max=t_max,
+        humidity_min=humidity_min,
+        humidity_max=humidity_max,
     )
 
 
@@ -835,6 +960,8 @@ def compute_et(
     stomatal_resistance_s_m: Optional[float] = None,
     crop_height_m: Optional[float] = None,
     elevation_m: float = 0.0,
+    humidity_min: float | None = None,
+    humidity_max: float | None = None,
 ) -> EtResult:
     """
     Selettore "best available" tra le tre formule di evapotraspirazione
@@ -888,6 +1015,11 @@ def compute_et(
     humidity_relative : float, opzionale
         Umidità relativa media giornaliera, frazione 0..1. Necessaria
         per Penman-Monteith.
+    humidity_min, humidity_max : float, opzionali
+        Le umidità relative minima e massima del giorno, frazioni 0..1,
+        insieme o nessuna (A9, 2026-10-21): con loro e_a segue FAO-56
+        eq. 17, senza l'eq. 19 dalla media. Gli estremi di temperatura
+        entrano sempre: e_s è la media di e°(T_max) ed e°(T_min), eq. 12.
     wind_speed_m_s : float, opzionale
         Velocità del vento a 2 metri di altezza, in m/s. Necessaria
         per Penman-Monteith.
@@ -992,8 +1124,9 @@ def compute_et(
 
     if weather_complete and species_params_complete:
         # Caso migliore: Penman-Monteith fisico con tutti i parametri.
-        # Usiamo la temperatura media perché Penman-Monteith opera su
-        # T media giornaliera, non su min/max separati come Hargreaves.
+        # La temperatura media per Δ e per l'aria; gli estremi per e_s
+        # ed e_a (A9: FAO-56 eq. 12 e 17/19), che con T_media sola
+        # verrebbero sottostimati.
         t_mean = (t_min + t_max) / 2.0
         value = compute_et_penman_monteith_physical(
             temperature_c=t_mean,
@@ -1003,6 +1136,10 @@ def compute_et(
             stomatal_resistance_s_m=stomatal_resistance_s_m,
             crop_height_m=crop_height_m,
             elevation_m=elevation_m,
+            t_min=t_min,
+            t_max=t_max,
+            humidity_min=humidity_min,
+            humidity_max=humidity_max,
         )
         return EtResult(
             value_mm=value, method=EtMethod.PENMAN_MONTEITH_PHYSICAL,
@@ -1018,6 +1155,10 @@ def compute_et(
             wind_speed_m_s=wind_speed_m_s,
             net_radiation_mj_m2_day=net_radiation_mj_m2_day,
             elevation_m=elevation_m,
+            t_min=t_min,
+            t_max=t_max,
+            humidity_min=humidity_min,
+            humidity_max=humidity_max,
         )
         return EtResult(
             value_mm=value, method=EtMethod.PENMAN_MONTEITH_STANDARD,

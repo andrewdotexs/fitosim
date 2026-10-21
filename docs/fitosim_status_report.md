@@ -4,7 +4,9 @@ __fitosim — Status Report__
 
 *Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
 
-# Aggiornamento al 21 ottobre 2026 — la calibrazione legge dall'app
+# Aggiornamento al 21 ottobre 2026 — la calibrazione legge dall'app, e le pressioni di vapore dagli estremi
+
+**Le pressioni di vapore dagli estremi del giorno** (21 ottobre, A9, versione 0.35.0). Dal 29 aprile, quando il Penman-Monteith è entrato con la tappa 5, le due funzioni giornaliere di `science/et0.py` calcolavano e_s come e°(T_media); FAO-56 prescrive la media di e°(T_max) ed e°(T_min), eq. 12, e avverte che la temperatura media sottostima e_s e l'ET₀, perché e° è convessa. Misurato sulle tre settimane vere dell'esempio delle stagioni, prima di cambiare: la giornaliera di fitosim stava −3.1 % (luglio), −2.0 % (gennaio) e −4.0 % (settembre) sotto la FAO eq. 6; metà dello scarto era e_s, l'altra metà e_a dalla media invece che dalle umidità estreme (eq. 17 contro eq. 19). Andrea ha scelto la terza opzione fra tre — lasciare, eq. 12 e 19, eq. 12 e 17 e 19 —: le due Penman-Monteith prendono `t_min`, `t_max`, `humidity_min` e `humidity_max` facoltativi, il selettore passa sempre gli estremi di temperatura e le umidità estreme quando ci sono, `WeatherDay` le porta (a coppia, validate) e `weather_day_from_blocks` le ricava dai blocchi; la stessa e_a entra nella radiazione netta del passo del vaso e del cammino a blocchi; la forma oraria non cambia. Quattro helper nuovi (`mean_saturation_vapor_pressure`, `actual_vapor_pressure_from_extremes`, `actual_vapor_pressure_from_mean`, `daily_vapor_pressures`) e l'esempio 18 del FAO-56 — Bruxelles, il 6 luglio — che torna a un decimo di millimetro, come test. In The Pot la stazione dà le umidità estreme alla calibrazione e alla fase 0 dello strumento; i vasi in casa cambiano dello 0.1 %, l'ET₀ di riferimento della calibrazione del 2–4 %. Nell'esempio delle stagioni la colonna di fitosim ora coincide con la FAO al decimo di percento — 40.58 contro 40.62 mm a luglio, 3.25 contro 3.26 a gennaio, 20.48 contro 20.50 a settembre —: quello che resta è il coefficiente aerodinamico, 900/(T+273) fisso nella FAO ed esplicito in fitosim. Due test del selettore riscritti, 1 556 nel core.
 
 **Lo strumento legge tutto dall'app** (21 ottobre, fase 1 dello strumento ridefinita). Il 1° ottobre le àncore dei cinque vasi erano state registrate nello strumento della fase 0, e da allora nessun `osserva`: i vasi vivevano in The Pot, che faceva lo stesso anello da sola — la WH52 ogni quarto d'ora, la taratura automatica dopo ogni annaffiata a fondo del diario (il tratto fermo è l'àncora), il bilancio dell'alba, la stazione sul giardino. Andrea ha chiesto se i dati dell'app bastassero: l'export no (vasi e diario, ma niente letture, tarature, albe né meteo), il database sì. Da oggi `src/the_pot/services/calibrazione_fitosim.py` legge dall'app il vaso con lo stesso adattatore di `idrica_service`, la sonda con la taratura valida in quel momento, le àncore dallo storico delle tarature, la forzante dalla stazione (Penman-Monteith sul sole misurato; senza stazione gli aggregati Open-Meteo e Hargreaves, e lo dice), l'acqua dal diario, le pesate da righe «misura» con `peso_g`, e rifà l'anello a posteriori: il modello parte dalla misura delle sei, avanza con la forzante del giorno, la lettura delle sei dopo è l'osservazione. I rapporti sono quelli della fase 0 — `stato`, `confronta`, `calibra`, `gemelli`, `pesa` — con `--dal-db` sulla riga di comando. Ventidue test in The Pot. **fitosim non cambia**: la matematica è `science/calibration.py` e `science/lysimeter.py`, chiamate come prima; cambia da dove arrivano le serie. Lo strato standalone perde così il suo ultimo utente vero oltre agli esempi, e la decisione sulla sua sorte, fissata «dopo la fase 2», si avvicina.
 
@@ -18,7 +20,7 @@ __fitosim — Status Report__
 
 **The Pot** riceverà i blocchi dopo la prima ancora del WH52; fino ad allora il suo passo resta giornaliero, e lo strumento di calibrazione confronta cali giornalieri in ogni caso.
 
-__Il quadro al 29 settembre 2026__
+__Il quadro al 21 ottobre 2026__
 
 __Metrica__
 
@@ -28,9 +30,9 @@ __Note__
 
 Test verdi nel core
 
-1520
+1556
 
-515 sub-test; 1526 con la demo end-to-end (matplotlib); circa dieci secondi
+520 sub-test; 1562 con la demo end-to-end (matplotlib); circa dieci secondi
 
 Righe di sorgente
 
@@ -58,7 +60,7 @@ esportazione fedele del giardino (luglio)
 
 Versione
 
-0.34.0
+0.35.0
 
 `pyproject.toml`; continua la serie dei commit `v0_NN`, fermata a `v0_30` il 22 luglio
 
@@ -564,7 +566,13 @@ il giorno fatto di blocchi (A7): il vaso avanza a ore dentro il giorno, il passo
 
 strumento
 
-la calibrazione legge dall'app (fase 1 ridefinita, in The Pot): `services/calibrazione_fitosim.py` e `--dal-db`; in fitosim solo la documentazione (`calibrazione_con_WH5X.md`), la versione resta 0.34.0
+la calibrazione legge dall'app (fase 1 ridefinita, in The Pot): `services/calibrazione_fitosim.py` e `--dal-db`; in fitosim solo la documentazione (`calibrazione_con_WH5X.md`)
+
+21 ottobre
+
+modello
+
+A9: e_s ed e_a dagli estremi del giorno nel Penman-Monteith giornaliero: la media di e°(T_max) ed e°(T_min) (FAO-56 eq. 12) al posto di e°(T_media), che la sottostima, ed e_a dalle umidità estreme (eq. 17) quando la stazione le dà, dalla media (eq. 19) altrimenti; `WeatherDay` ha `humidity_min` e `humidity_max`; la forma oraria non cambia; versione 0.35.0
 
 Da settembre le consegne non hanno più un numero nel titolo del commit: la versione si alza in `pyproject.toml`, e il repository è condiviso con The Pot, che monta fitosim come dipendenza editabile.
 

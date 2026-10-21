@@ -421,10 +421,10 @@
     <p class="subtitle">Motore scientifico Python per la simulazione FAO-56 del bilancio idrico e chimico di piante in vaso.</p>
 
     <div class="badges">
-      <span class="badge">v0.34.0</span>
+      <span class="badge">v0.35.0</span>
       <span class="badge neutral">Python ≥ 3.10</span>
       <span class="badge info">stdlib only (core)</span>
-      <span class="badge">1520 test verdi</span>
+      <span class="badge">1556 test verdi</span>
       <span class="badge info">layer feedback fase A · calibrazione WH52</span>
       <span class="badge neutral">MIT License</span>
     </div>
@@ -662,11 +662,11 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
         <span class="api-name">compute_et(weather, species, latitude_deg, current_date) → EtResult</span>
       </div>
       <div class="api-body">
-        <p>Selettore <em>best available</em>: prova PM fisico → PM standard → Hargreaves nell'ordine e ritorna il primo applicabile.</p>
+        <p>Selettore <em>best available</em>: prova PM fisico → PM standard → Hargreaves nell'ordine e ritorna il primo applicabile. Dal 2026-10-21 (A9) passa alle due Penman-Monteith gli estremi del giorno: e_s è la media di e°(T_max) ed e°(T_min) (FAO-56 eq. 12), e_a viene dalle umidità estreme <code>humidity_min</code>/<code>humidity_max</code> (eq. 17) quando ci sono, dalla media (eq. 19) altrimenti; Δ resta alla temperatura media.</p>
       </div>
     </div>
 
-    <p>Altre funzioni esposte (helper pubblici): <code>saturation_vapor_pressure</code>, <code>slope_vapor_pressure</code>, <code>actual_vapor_pressure</code>, <code>atmospheric_pressure</code>, <code>psychrometric_constant</code>, <code>aerodynamic_resistance</code>, <code>et0_hargreaves_samani</code>, <code>compute_et0_penman_monteith</code>, <code>compute_et_penman_monteith_physical</code> — tutte e due con <code>hours</code> (24 = giornaliera; 1 = la forma oraria di FAO-56, eq. 53; A7, 2026-09-29) —, <code>soil_heat_flux_interval</code> (G di giorno e di notte, eq. 45–46), <code>distribute_daily_et0</code> (l'ET₀ del giorno sui blocchi in proporzione a R<sub>a</sub>).</p>
+    <p>Altre funzioni esposte (helper pubblici): <code>saturation_vapor_pressure</code>, <code>slope_vapor_pressure</code>, <code>actual_vapor_pressure</code>, <code>mean_saturation_vapor_pressure</code>, <code>actual_vapor_pressure_from_extremes</code>, <code>actual_vapor_pressure_from_mean</code>, <code>daily_vapor_pressures</code> (A9: FAO-56 eq. 12, 17, 19), <code>atmospheric_pressure</code>, <code>psychrometric_constant</code>, <code>aerodynamic_resistance</code>, <code>et0_hargreaves_samani</code>, <code>compute_et0_penman_monteith</code>, <code>compute_et_penman_monteith_physical</code> — tutte e due con <code>hours</code> (24 = giornaliera; 1 = la forma oraria di FAO-56, eq. 53; A7, 2026-09-29) —, <code>soil_heat_flux_interval</code> (G di giorno e di notte, eq. 45–46), <code>distribute_daily_et0</code> (l'ET₀ del giorno sui blocchi in proporzione a R<sub>a</sub>).</p>
 
     <!-- BALANCE -->
     <h3 id="science-balance"><code>science/balance.py</code> — Bilancio idrico giornaliero</h3>
@@ -1764,8 +1764,8 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
     <h2 id="testing">7. Testing</h2>
 
     <p>
-      <code>fitosim</code> ha <strong>1520 test verdi</strong> (515 sub-test,
-      1526 con la demo end-to-end) che girano in circa dieci secondi su laptop
+      <code>fitosim</code> ha <strong>1556 test verdi</strong> (520 sub-test,
+      1562 con la demo end-to-end) che girano in circa dieci secondi su laptop
       standard. La suite è la rete di
       sicurezza primaria del refactoring.
     </p>
@@ -1920,7 +1920,7 @@ python -m pytest --cov=fitosim --cov-report=term-missing</code></pre>
     </table>
 
     <footer>
-      Generato per <code>fitosim</code> v0.34.0 · Documentazione tecnica per sviluppatori.<br>
+      Generato per <code>fitosim</code> v0.35.0 · Documentazione tecnica per sviluppatori.<br>
       Per documenti complementari vedere <code>docs/fitosim_user_manual.md</code> (manuale utente), <code>docs/fitosim_calibration_manual.md</code> e <code>docs/calibrazione_con_WH5X.md</code> (calibrazione), <code>docs/fitosim_status_report.md</code> (status report), <code>docs/uml/</code> (diagrammi); i PDF in <code>docs/pdf/</code>.
     </footer>
 

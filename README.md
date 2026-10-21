@@ -23,8 +23,9 @@ il giardiniere.
 
 ## Stato del progetto
 
-- **Versione**: 0.34.0 (`pyproject.toml`, dal 2026-09-29: il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
-- **1520 test verdi** (515 sub-test) nel core; la demo end-to-end usa matplotlib
+- **Versione**: 0.35.0 (`pyproject.toml`, dal 2026-10-21: le pressioni di vapore dagli estremi del giorno, A9; 0.34.0 il 29-09, il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
+- **1556 test verdi** (520 sub-test) nel core; la demo end-to-end usa matplotlib
+- **Le pressioni di vapore dagli estremi del giorno** (A9, 2026-10-21): e_s ed e_a dagli estremi del giorno nel Penman-Monteith giornaliero: la media di e°(T_max) ed e°(T_min) (FAO-56 eq. 12) al posto di e°(T_media), che la sottostima, ed e_a dalle umidità estreme (eq. 17) quando la stazione le dà, dalla media (eq. 19) altrimenti; `WeatherDay` ha `humidity_min` e `humidity_max`; la forma oraria non cambia. Misurato sulle settimane dell'esempio delle stagioni, l'ET₀ giornaliera sale del 2–4 % e coincide con la FAO di riferimento al decimo di percento; in una stanza non cambia.
 - **Il giorno fatto di blocchi** (A7, 2026-09-29): il vaso avanza a blocchi di ore dentro il giorno — `Pot.apply_blocks_from_weather`, `domain/blocks.py` con le nove decisioni e le fonti; il passo giornaliero è il caso di un blocco di 24 ore, con gli stessi numeri
 - **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
 - **Linguaggio**: Python ≥ 3.10
@@ -387,7 +388,7 @@ fitosim/
 │           ├── openmeteo.py    # adapter Open-Meteo (meteo)
 │           ├── http_json.py    # adapter generico per gateway ESP32
 │           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 1520 test verdi (core)
+├── tests/                  # 1556 test verdi (core)
 ├── examples/               # esempi e demo end-to-end
 │   ├── tappa4_complete_demo.py        # demo Garden + persistenza + allerte
 │   ├── tappa5_A_penman_monteith_demo.py

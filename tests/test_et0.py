@@ -22,20 +22,28 @@ from fitosim.science.et0 import (
     EtMethod,
     EtResult,
     actual_vapor_pressure,
+    actual_vapor_pressure_from_extremes,
+    actual_vapor_pressure_from_mean,
     aerodynamic_resistance,
     atmospheric_pressure,
     compute_et,
     compute_et0_penman_monteith,
     compute_et_penman_monteith_physical,
+    daily_vapor_pressures,
     distribute_daily_et0,
     et0_hargreaves_samani,
+    mean_saturation_vapor_pressure,
     mj_per_m2_to_mm_water,
     psychrometric_constant,
     saturation_vapor_pressure,
     slope_vapor_pressure,
     soil_heat_flux_interval,
 )
-from fitosim.science.radiation import day_of_year
+from fitosim.science.radiation import (
+    day_of_year,
+    extraterrestrial_radiation,
+    net_radiation,
+)
 
 
 class TestUnitConversion(unittest.TestCase):
@@ -698,8 +706,18 @@ class TestComputeEtSelector(unittest.TestCase):
             humidity_relative=0.60, wind_speed_m_s=1.5,
             net_radiation_mj_m2_day=self.rn,
             elevation_m=150.0,
+            t_min=20.0, t_max=32.0,
         )
         self.assertEqual(result.value_mm, direct)
+        # Dal 2026-10-21 (A9) il selettore passa gli estremi del giorno:
+        # con la sola temperatura media e_s sarebbe sottostimata.
+        solo_media = compute_et0_penman_monteith(
+            temperature_c=26.0,
+            humidity_relative=0.60, wind_speed_m_s=1.5,
+            net_radiation_mj_m2_day=self.rn,
+            elevation_m=150.0,
+        )
+        self.assertGreater(result.value_mm, solo_media)
 
     def test_pm_physical_path_matches_direct_call(self):
         # Stessa verifica per Penman-Monteith fisico.
@@ -715,6 +733,7 @@ class TestComputeEtSelector(unittest.TestCase):
             net_radiation_mj_m2_day=self.rn,
             stomatal_resistance_s_m=100.0, crop_height_m=0.30,
             elevation_m=150.0,
+            t_min=20.0, t_max=32.0,
         )
         self.assertEqual(result.value_mm, direct)
 
@@ -841,6 +860,141 @@ class TestDistributeDailyEt0(unittest.TestCase):
             distribute_daily_et0(1.0, [])
         with self.assertRaises(ValueError):
             distribute_daily_et0(1.0, [1.0, -0.5])
+
+
+class TestDailyVaporPressures(unittest.TestCase):
+    """
+    A9 (2026-10-21): e_s ed e_a dagli estremi del giorno, FAO-56 cap. 3,
+    contro gli esempi svolti del capitolo.
+    """
+
+    def test_fao56_example_3_mean_saturation_vapor_pressure(self):
+        # Esempio 3: T_max 24.5, T_min 15 → e_s 2.39 kPa (eq. 12). Con la
+        # temperatura media, 19.75 °C, verrebbe 2.30: è la sottostima di
+        # cui FAO-56 avverte, perché e° è convessa.
+        self.assertAlmostEqual(mean_saturation_vapor_pressure(15.0, 24.5), 2.39, places=2)
+        self.assertLess(saturation_vapor_pressure(19.75), 2.35)
+
+    def test_fao56_example_5_actual_vapor_pressure_from_extremes(self):
+        # Esempio 5: T_min 18, T_max 25, UR_max 82 %, UR_min 54 % → e_a 1.70 kPa (eq. 17).
+        self.assertAlmostEqual(
+            actual_vapor_pressure_from_extremes(18.0, 25.0, 0.54, 0.82), 1.70, places=2,
+        )
+
+    def test_eq_19_from_the_mean_humidity(self):
+        e_s = mean_saturation_vapor_pressure(15.0, 24.5)
+        self.assertAlmostEqual(
+            actual_vapor_pressure_from_mean(15.0, 24.5, 0.60), 0.60 * e_s, places=9,
+        )
+
+    def test_the_daily_pair_prefers_the_extremes_when_given(self):
+        e_s, e_a_17 = daily_vapor_pressures(18.0, 25.0, 0.68, 0.54, 0.82)
+        _, e_a_19 = daily_vapor_pressures(18.0, 25.0, 0.68)
+        self.assertAlmostEqual(e_s, mean_saturation_vapor_pressure(18.0, 25.0), places=9)
+        self.assertAlmostEqual(e_a_17, 1.70, places=2)
+        self.assertNotAlmostEqual(e_a_17, e_a_19, places=2)
+
+    def test_invalid_inputs_raise(self):
+        with self.assertRaises(ValueError):
+            mean_saturation_vapor_pressure(25.0, 18.0)
+        with self.assertRaises(ValueError):
+            actual_vapor_pressure_from_extremes(18.0, 25.0, 0.9, 0.5)
+        with self.assertRaises(ValueError):
+            actual_vapor_pressure_from_extremes(18.0, 25.0, 54.0, 82.0)
+        with self.assertRaises(ValueError):
+            daily_vapor_pressures(18.0, 25.0, 0.6, 0.5, None)
+        with self.assertRaises(ValueError):
+            actual_vapor_pressure_from_mean(18.0, 25.0, 1.5)
+
+
+class TestPenmanMonteithWithExtremes(unittest.TestCase):
+    """Le due Penman-Monteith giornaliere con gli estremi del giorno (A9)."""
+
+    def setUp(self):
+        self.comuni = {
+            "humidity_relative": 0.60, "wind_speed_m_s": 1.5,
+            "net_radiation_mj_m2_day": 14.5, "elevation_m": 150.0,
+        }
+
+    def test_the_extremes_raise_et0_above_the_mean_temperature_alone(self):
+        # Con T_media sola e_s è sottostimata (FAO-56 cap. 3): con gli
+        # estremi l'ET₀ sale, di qualche percento su un balcone d'estate.
+        senza = compute_et0_penman_monteith(temperature_c=26.0, **self.comuni)
+        con = compute_et0_penman_monteith(
+            temperature_c=26.0, t_min=20.0, t_max=32.0, **self.comuni,
+        )
+        self.assertGreater(con, senza)
+        self.assertLess((con - senza) / senza, 0.10)
+
+    def test_equal_extremes_are_the_same_as_none(self):
+        # La forma oraria non passa gli estremi: con T_min = T_max = T la
+        # media delle e° è e°(T), e non cambia niente.
+        a = compute_et0_penman_monteith(temperature_c=20.0, hours=1.0, **self.comuni)
+        b = compute_et0_penman_monteith(
+            temperature_c=20.0, hours=1.0, t_min=20.0, t_max=20.0, **self.comuni,
+        )
+        self.assertEqual(a, b)
+
+    def test_the_humidity_extremes_move_e_a(self):
+        specie = {"stomatal_resistance_s_m": 100.0, "crop_height_m": 0.30}
+        eq19 = compute_et_penman_monteith_physical(
+            temperature_c=26.0, t_min=20.0, t_max=32.0, **specie, **self.comuni,
+        )
+        eq17 = compute_et_penman_monteith_physical(
+            temperature_c=26.0, t_min=20.0, t_max=32.0,
+            humidity_min=0.35, humidity_max=0.90, **specie, **self.comuni,
+        )
+        self.assertNotAlmostEqual(eq17, eq19, places=3)
+
+    def test_unpaired_extremes_raise(self):
+        with self.assertRaises(ValueError):
+            compute_et0_penman_monteith(temperature_c=26.0, t_min=20.0, **self.comuni)
+        with self.assertRaises(ValueError):
+            compute_et0_penman_monteith(
+                temperature_c=26.0, humidity_min=0.3, humidity_max=0.9, **self.comuni,
+            )
+
+    def test_the_selector_takes_the_humidity_extremes(self):
+        comuni = {
+            "t_min": 20.0, "t_max": 32.0, "latitude_deg": 45.47, "j": 200,
+            "humidity_relative": 0.60, "wind_speed_m_s": 1.5,
+            "net_radiation_mj_m2_day": 14.5, "elevation_m": 150.0,
+        }
+        eq19 = compute_et(**comuni)
+        eq17 = compute_et(humidity_min=0.35, humidity_max=0.90, **comuni)
+        self.assertIs(eq17.method, EtMethod.PENMAN_MONTEITH_STANDARD)
+        self.assertNotAlmostEqual(eq17.value_mm, eq19.value_mm, places=3)
+
+
+class TestFao56Example18(unittest.TestCase):
+    """
+    L'esempio 18 del FAO-56 — Bruxelles, il 6 luglio — con la catena
+    giornaliera intera: e_s ed e_a dagli estremi, R_a, R_n, ET₀.
+    """
+
+    def test_the_daily_chain_matches_the_worked_example(self):
+        j = day_of_year(date(2026, 7, 6))
+        self.assertEqual(j, 187)
+        e_s, e_a = daily_vapor_pressures(12.3, 21.5, 0.735, 0.63, 0.84)
+        self.assertAlmostEqual(e_s, 1.997, places=3)
+        self.assertAlmostEqual(e_a, 1.409, places=3)
+        ra = extraterrestrial_radiation(50.8, j)
+        self.assertAlmostEqual(ra, 41.09, places=1)
+        rn = net_radiation(
+            solar_radiation_mj=22.07, extraterrestrial_radiation_mj=ra,
+            t_max_c=21.5, t_min_c=12.3, actual_vapor_pressure_kpa=e_a, elevation_m=100.0,
+        )
+        self.assertAlmostEqual(rn, 13.28, places=1)
+        result = compute_et(
+            t_min=12.3, t_max=21.5, latitude_deg=50.8, j=j,
+            humidity_relative=0.735, wind_speed_m_s=2.78,
+            net_radiation_mj_m2_day=rn, elevation_m=100.0,
+            humidity_min=0.63, humidity_max=0.84,
+        )
+        self.assertIs(result.method, EtMethod.PENMAN_MONTEITH_STANDARD)
+        # FAO-56 dà 3.9 mm/giorno col coefficiente 900 fisso a 20 °C;
+        # fitosim usa ρ_a·c_p esplicito, e sta entro un decimo.
+        self.assertAlmostEqual(result.value_mm, 3.9, delta=0.1)
 
 
 if __name__ == "__main__":

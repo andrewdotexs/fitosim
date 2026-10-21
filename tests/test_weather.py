@@ -11,7 +11,7 @@ import unittest
 from dataclasses import FrozenInstanceError
 from datetime import date
 
-from fitosim.domain.weather import WeatherDay
+from fitosim.domain.weather import WeatherBlock, WeatherDay, weather_day_from_blocks
 
 
 class TestWeatherDayStructure(unittest.TestCase):
@@ -91,6 +91,63 @@ class TestWeatherDayHasFullWeather(unittest.TestCase):
             humidity_relative=0.60,
         )
         self.assertFalse(w.has_full_weather)
+
+
+class TestWeatherDayExtremes(unittest.TestCase):
+    """
+    A9 (2026-10-21): le umidità relative estreme del giorno, facoltative e
+    a coppia, e la validazione che il giorno fa su se stesso.
+    """
+
+    def test_extremes_are_optional_and_kept(self):
+        w = WeatherDay(date_=date(2026, 7, 19), t_min=20.0, t_max=32.0)
+        self.assertIsNone(w.humidity_min)
+        self.assertIsNone(w.humidity_max)
+        w = WeatherDay(
+            date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+            humidity_relative=0.60, humidity_min=0.35, humidity_max=0.90,
+        )
+        self.assertEqual((w.humidity_min, w.humidity_max), (0.35, 0.90))
+
+    def test_unpaired_extremes_raise(self):
+        with self.assertRaises(ValueError):
+            WeatherDay(date_=date(2026, 7, 19), t_min=20.0, t_max=32.0, humidity_min=0.35)
+
+    def test_out_of_range_or_inverted_values_raise(self):
+        with self.assertRaises(ValueError):
+            WeatherDay(
+                date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+                humidity_min=35.0, humidity_max=90.0,
+            )
+        with self.assertRaises(ValueError):
+            WeatherDay(
+                date_=date(2026, 7, 19), t_min=20.0, t_max=32.0,
+                humidity_min=0.90, humidity_max=0.35,
+            )
+        with self.assertRaises(ValueError):
+            WeatherDay(date_=date(2026, 7, 19), t_min=20.0, t_max=32.0, humidity_relative=65.0)
+
+    def test_t_min_above_t_max_raises(self):
+        with self.assertRaises(ValueError):
+            WeatherDay(date_=date(2026, 7, 19), t_min=32.0, t_max=20.0)
+
+    def test_the_day_from_blocks_derives_the_extremes(self):
+        giorno = date(2026, 7, 19)
+        blocchi = [
+            WeatherBlock(giorno, 0, 6, 18.0, humidity_relative=0.90),
+            WeatherBlock(giorno, 6, 6, 24.0, humidity_relative=0.50),
+            WeatherBlock(giorno, 12, 6, 31.0, humidity_relative=0.40),
+            WeatherBlock(giorno, 18, 6, 25.0, humidity_relative=0.80),
+        ]
+        w = weather_day_from_blocks(blocchi)
+        self.assertAlmostEqual(w.humidity_relative, 0.65)
+        self.assertEqual((w.humidity_min, w.humidity_max), (0.40, 0.90))
+        # Un blocco senza umidità: niente media e niente estremi.
+        senza = blocchi[:3] + [WeatherBlock(giorno, 18, 6, 25.0)]
+        w = weather_day_from_blocks(senza)
+        self.assertIsNone(w.humidity_relative)
+        self.assertIsNone(w.humidity_min)
+        self.assertIsNone(w.humidity_max)
 
 
 if __name__ == "__main__":

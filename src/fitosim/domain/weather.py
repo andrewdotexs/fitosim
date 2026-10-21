@@ -86,6 +86,12 @@ class WeatherDay:
         Radiazione solare globale Rs, in MJ/m²/giorno. È la grandezza
         misurata direttamente dal piranometro. Stesso comportamento
         delle altre due quando assente.
+    humidity_min, humidity_max : float, opzionali
+        Le umidità relative minima e massima del giorno, frazioni 0..1
+        (A9, 2026-10-21). Vanno insieme, o nessuna. Con loro la
+        pressione di vapore attuale segue FAO-56 eq. 17; senza, l'eq. 19
+        dalla media. Una stazione che campiona ogni quarto d'ora le ha;
+        Open-Meteo le dà come aggregati del giorno.
     """
 
     date_: date
@@ -94,6 +100,33 @@ class WeatherDay:
     humidity_relative: Optional[float] = None
     wind_speed_m_s: Optional[float] = None
     solar_radiation_mj_m2_day: Optional[float] = None
+    humidity_min: float | None = None
+    humidity_max: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.t_min > self.t_max:
+            raise ValueError(
+                f"t_min ({self.t_min}) non può superare t_max ({self.t_max})."
+            )
+        if (self.humidity_min is None) != (self.humidity_max is None):
+            raise ValueError(
+                "humidity_min e humidity_max vanno date insieme, o nessuna delle due."
+            )
+        for nome in ("humidity_relative", "humidity_min", "humidity_max"):
+            valore = getattr(self, nome)
+            if valore is not None and not 0.0 <= valore <= 1.0:
+                raise ValueError(
+                    f"{nome} ({valore}) deve essere una frazione tra 0 e 1."
+                )
+        if (
+            self.humidity_min is not None
+            and self.humidity_max is not None
+            and self.humidity_min > self.humidity_max
+        ):
+            raise ValueError(
+                f"humidity_min ({self.humidity_min}) non può superare "
+                f"humidity_max ({self.humidity_max})."
+            )
 
     @property
     def has_full_weather(self) -> bool:
@@ -228,6 +261,9 @@ def weather_day_from_blocks(blocks: Sequence[WeatherBlock]) -> WeatherDay:
     Le temperature dei blocchi sono medie: la minima e la massima del
     giorno che ne escono sono un po' più strette degli estremi veri
     che una stazione registra a 5 minuti (qualche decimo di grado).
+    Lo stesso vale per le umidità estreme (A9), che escono dai blocchi
+    quando tutti hanno l'umidità: la minima e la massima delle medie
+    dei blocchi.
     """
     validate_day_blocks(blocks)
     total_hours = sum(b.hours for b in blocks)
@@ -238,6 +274,7 @@ def weather_day_from_blocks(blocks: Sequence[WeatherBlock]) -> WeatherDay:
         return sum(v * b.hours for v, b in zip(values, blocks)) / total_hours  # type: ignore[operator]
 
     solar = [b.solar_radiation_mj_m2 for b in blocks]
+    humidities = [b.humidity_relative for b in blocks]
     return WeatherDay(
         date_=blocks[0].date_,
         t_min=min(b.t_c for b in blocks),
@@ -247,6 +284,8 @@ def weather_day_from_blocks(blocks: Sequence[WeatherBlock]) -> WeatherDay:
         solar_radiation_mj_m2_day=(
             None if any(s is None for s in solar) else sum(solar)  # type: ignore[arg-type]
         ),
+        humidity_min=(None if any(h is None for h in humidities) else min(humidities)),  # type: ignore[type-var]
+        humidity_max=(None if any(h is None for h in humidities) else max(humidities)),  # type: ignore[type-var]
     )
 
 

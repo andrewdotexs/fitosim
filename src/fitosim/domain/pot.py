@@ -87,8 +87,8 @@ from fitosim.science.dual_kc import (
 )
 from fitosim.science.et0 import (
     EtMethod,
-    actual_vapor_pressure,
     compute_et,
+    daily_vapor_pressures,
 )
 from fitosim.science.indoor import estimate_indoor_radiation
 from fitosim.science.nutrients import (
@@ -2107,10 +2107,15 @@ class Pot:
         # selettore ricadrà su Hargreaves.
         rn_mj_m2_day: Optional[float] = None
         if weather.has_full_weather:
-            t_mean = (weather.t_min + weather.t_max) / 2.0
             j = day_of_year(weather.date_)
             ra = extraterrestrial_radiation(effective_latitude, j)
-            ea = actual_vapor_pressure(t_mean, weather.humidity_relative)
+            # e_a dagli estremi del giorno (A9, 2026-10-21): la stessa che
+            # entra nel Penman-Monteith, così R_n e l'ET parlano la stessa
+            # lingua (FAO-56 eq. 17 con le umidità estreme, eq. 19 senza).
+            _e_s, ea = daily_vapor_pressures(
+                weather.t_min, weather.t_max, weather.humidity_relative,
+                weather.humidity_min, weather.humidity_max,
+            )
             rn_mj_m2_day = net_radiation(
                 solar_radiation_mj=weather.solar_radiation_mj_m2_day,
                 extraterrestrial_radiation_mj=ra,
@@ -2144,6 +2149,8 @@ class Pot:
             latitude_deg=effective_latitude,
             j=day_of_year(weather.date_),
             humidity_relative=weather.humidity_relative,
+            humidity_min=weather.humidity_min,
+            humidity_max=weather.humidity_max,
             wind_speed_m_s=effective_wind_m_s,
             net_radiation_mj_m2_day=rn_mj_m2_day,
             stomatal_resistance_s_m=self.species.stomatal_resistance_s_m,

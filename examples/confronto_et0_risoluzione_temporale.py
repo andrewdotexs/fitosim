@@ -46,8 +46,10 @@ I sei metodi a confronto
               (eq. 17), R_nl con gli estremi (eq. 39), G = 0 (eq. 42).
   PM 24h fito Penman-Monteith giornaliera come la calcola fitosim nel
               cammino giornaliero (`compute_et0_penman_monteith` +
-              `net_radiation`, la catena di `Pot.apply_balance_step_from_weather`):
-              e_s = e°(T_mean), e_a = RH_mean · e°(T_mean).
+              `net_radiation`, la catena di `Pot.apply_balance_step_from_weather`).
+              Dal 21-10-2026 (A9) e_s ed e_a vengono dagli estremi del
+              giorno come nella FAO (eq. 12 e 17): resta il coefficiente
+              aerodinamico, ρ_a·c_p/r_a esplicito contro 900/(T+273).
   PM 6h/4h/1h Penman-Monteith a blocchi, con le funzioni della libreria
               (`domain.blocks.et0_for_blocks`): la eq. 53 di FAO-56 a
               passo generico (`compute_et0_penman_monteith(..., hours)`),
@@ -103,9 +105,9 @@ from fitosim.domain.pot import Location, Pot
 from fitosim.domain.species import ROSEMARY
 from fitosim.domain.weather import WeatherBlock, weather_day_from_blocks
 from fitosim.science.et0 import (
-    actual_vapor_pressure,
     atmospheric_pressure,
     compute_et0_penman_monteith,
+    daily_vapor_pressures,
     et0_hargreaves_samani,
     psychrometric_constant,
     saturation_vapor_pressure,
@@ -437,16 +439,24 @@ def et0_pm_giornaliera_fao56(giorno: date) -> float:
 
 
 def et0_pm_giornaliera_fitosim(giorno: date) -> float:
-    """La catena di `Pot.apply_balance_step_from_weather`, senza vaso."""
-    t_max, t_min, _, _, u2, rs = estremi_del_giorno(giorno)
+    """
+    La catena di `Pot.apply_balance_step_from_weather`, senza vaso, con il
+    `WeatherDay` che una stazione dà: la media dell'umidità e i suoi
+    estremi. Dal 21 ottobre 2026 (A9) e_s ed e_a vengono dagli estremi del
+    giorno (FAO-56 eq. 12 e 17) e non da e°(T_media): quello che resta
+    fra questa colonna e la FAO qui sopra è il coefficiente aerodinamico,
+    900/(T+273) fisso nella FAO, ρ_a·c_p/r_a esplicito in fitosim.
+    """
+    t_max, t_min, rh_max, rh_min, u2, rs = estremi_del_giorno(giorno)
     t_mean = (t_max + t_min) / 2.0
     rh_mean = sum(o[1] for o in METEO[giorno.isoformat()]) / 24 / 100.0
     ra = extraterrestrial_radiation(LATITUDINE, day_of_year(giorno))
-    ea = actual_vapor_pressure(t_mean, rh_mean)
+    _es, ea = daily_vapor_pressures(t_min, t_max, rh_mean, rh_min, rh_max)
     rn = net_radiation(rs, ra, t_max, t_min, ea, QUOTA_M)
     return compute_et0_penman_monteith(
         temperature_c=t_mean, humidity_relative=rh_mean, wind_speed_m_s=u2,
         net_radiation_mj_m2_day=rn, elevation_m=QUOTA_M,
+        t_min=t_min, t_max=t_max, humidity_min=rh_min, humidity_max=rh_max,
     )
 
 
