@@ -414,7 +414,7 @@ persistenza nei modelli veri con una migrazione Alembic. Le credenziali dei gate
 |---|---|---|---|---|
 | 0 | `the-pot/scripts/calibrazione_wh5x/` | la CLI dell'anello, sui cinque vasi — **completa** al 2026-09-19 | Ecowitt funziona sull'account; l'anello si chiude end-to-end | un'ancora registrata a un'irrigazione vera su ciascun vaso, almeno un'osservazione con discrepanza stampata, il rumore fra i gemelli misurato in entrambe le coppie con `gemelli` |
 | 1 | `src/the_pot/services/calibrazione_fitosim.py` + `--dal-db` | **ridefinita e fatta il 2026-10-21**: lo strumento legge tutto dall'app — sonda, tarature, diario, stazione, albe, pesate — e rifà l'anello a posteriori | un registro solo, quello dell'app | `calibra`, `confronta`, `gemelli` e `stato` sui cinque vasi senza una cartella né un'àncora a mano |
-| 2 | `src/the_pot/services/` + `web/` | pagina di calibrazione | il flusso in sei passi guidato dal browser | un ciclo intero condotto dalla pagina |
+| 2 | `src/the_pot/services/` + `web/` | pagina di calibrazione — **a fatta il 2026-10-22**: la console nell'area riservata (`/admin/calibrazione`, `web/console_calibrazione.py`) legge `stato`, `confronta`, `calibra`, `gemelli` e `stacco` dall'app; b i gesti, c le proposte (H.8-c) | il flusso in sei passi guidato dal browser | un ciclo intero condotto dalla pagina |
 | 3 | nessuna | la calibrazione stessa | proposte con confidenza crescente | dal terzo ciclo la prima proposta, dal quinto una utilizzabile |
 
 ### I cinque vasi
