@@ -332,6 +332,17 @@ letteratura. La misura è dei gemelli:
 - Se lo stacco non arriva prima di θ_PWP, `p` di quella specie in quel substrato è 1: la banda −1…−10 kPa è tutta
   riserva pronta, e il limite del vaso è il substrato, non la pianta. È il caso atteso per il rosmarino nel drenante.
 
+**Il rapporto `stacco`** (22-10-2026, `calibrazione_fitosim.stacco`, `--dal-db stacco ASCIUTTO BAGNATO`) fa
+questo conto da solo, dai dati dell'app. Da quando l'asciutto non si bagna più — l'ultima acqua del suo diario, o
+`--da-quando` — i giorni prima sono «trattati uguali» e lì si misura il pavimento: il RMSE dello scarto fra i cali
+giornalieri dei due (la θ delle sei meno quella delle sei dopo; i giorni con acqua in uno dei due, diario o pioggia,
+non contano), o con meno di tre giorni uguali il rumore delle θ di quei giorni (quattro letture in uno scarto di cali:
+due volte il pavimento per vaso), mai sotto un quarto di punto della sonda. Dopo è il dry-down: lo scarto è il calo del
+bagnato meno quello dell'asciutto, positivo quando l'asciutto rallenta, e lo stacco è il primo giorno da cui resta
+oltre il pavimento per due giorni di fila — un giorno solo è rumore. Il rapporto dice θ_FC (l'ultima àncora
+dell'asciutto, o il catalogo), θ_PWP (il catalogo), `p_oss` e il `p` di FAO-56 accanto; senza stacco, se l'asciutto
+è arrivato a un punto da θ_PWP, dice «il limite è il substrato, p = 1»; altrimenti «in corso».
+
 Dopo i primi dry-down si decide se aggiungere il terzo punto dell'acqua, `θ(−1500 kPa)`, ai componenti del
 catalogo: θ_PWP tornerebbe un pavimento fisico, `p` il `p` di FAO, e −10 kPa resterebbe il limite del substrato
 (`soglia = max(FC − p·TAW_FAO, θ₋₁₀)`). Un lavoro come quello della CEC, con le fonti, da fare con i dati in mano.
