@@ -78,6 +78,7 @@ sezione `data` e il `code` di esito) sono validati strettamente.
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -195,6 +196,27 @@ def _to_hpa(value: float, unit: str) -> float:
     raise ValueError(f"Unità di pressione non riconosciuta: {unit!r}")
 
 
+def _to_liters(value: float, unit: str) -> float:
+    """Converte un volume d'acqua in litri."""
+    u = unit.strip()
+    if u in ("L", "l"):
+        return value
+    if u in ("gal", "Gal", "gallon"):
+        # Il gallone americano: 3.785411784 L esatti.
+        return value * 3.785411784
+    raise ValueError(f"Unità di volume non riconosciuta: {unit!r}")
+
+
+def _to_liters_per_minute(value: float, unit: str) -> float:
+    """Converte una portata in litri al minuto."""
+    u = unit.strip()
+    if u in ("L/min", "l/min", "LPM"):
+        return value
+    if u in ("gal/min", "GPM", "gpm"):
+        return value * 3.785411784
+    raise ValueError(f"Unità di portata non riconosciuta: {unit!r}")
+
+
 def _to_ms_per_cm(value: float, unit: str) -> float:
     """
     Converte una conducibilità elettrica in mS/cm (che coincide con dS/m,
@@ -256,6 +278,52 @@ def _parse_pure_float(node: Optional[dict]) -> Optional[float]:
 
 
 # -----------------------------------------------------------------------
+#  EcowittValve — una valvola IoT del gateway
+# -----------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class EcowittValve:
+    """
+    Una valvola IoT del gateway — il WFC01 — com'è nel tempo reale del
+    cloud (2026-10-25). Tutti i campi tranne i primi due sono opzionali,
+    come per le sonde: None vuol dire che il cloud non l'ha detto.
+
+    Attributi
+    ---------
+    device_id : int
+        L'id del dispositivo, decimale: lo stesso del gateway in locale
+        (`get_iot_device_list`). Il cloud lo scrive in esadecimale nel
+        nome del blocco.
+    model : str
+        Il modello, minuscolo: «wfc01».
+    is_open : bool | None
+        Se la valvola è aperta, da `status`.
+    flow_l_min : float | None
+        La portata di adesso, in litri al minuto.
+    water_temp_c : float | None
+        La temperatura dell'acqua nella valvola, in °C: il manuale dà
+        l'allarme del gelo sotto i 5 °C.
+    daily_l, daily_on : float | None, date | None
+        I litri passati nel giorno del gateway, e quel giorno.
+    monthly_l, monthly_in : float | None, str | None
+        I litri del mese, e il mese come «2026-10».
+    observed_at : datetime | None
+        L'istante dello stato, in UTC.
+    """
+
+    device_id: int
+    model: str
+    is_open: Optional[bool] = None
+    flow_l_min: Optional[float] = None
+    water_temp_c: Optional[float] = None
+    daily_l: Optional[float] = None
+    daily_on: Optional[date] = None
+    monthly_l: Optional[float] = None
+    monthly_in: Optional[str] = None
+    observed_at: Optional[datetime] = None
+
+
+# -----------------------------------------------------------------------
 #  EcowittObservation — il dato consumato dal motore di fitosim
 # -----------------------------------------------------------------------
 
@@ -296,14 +364,16 @@ class EcowittObservation:
         (WH40). Chi ha entrambi può scegliere; `rain_today_mm` resta il
         preferito.
     indoor_temp_c, indoor_humidity_pct : float | None
-        La sezione `indoor`: il sensore interno della console, dove la
-        console ne ha uno (GW1000, GW1100), o il WN32P — il sensore a
-        pile di temperatura, umidità e pressione che Ecowitt tratta come
-        «indoor» ovunque stia (GW2000, GW3000).
+        La sezione `indoor`: il sensore integrato del gateway — che il
+        GW2000 ha sul cavo, e il GW3000 dentro — o, quando è registrato,
+        il WN32P: il sensore a pile di temperatura, umidità e pressione
+        che Ecowitt mette al posto dell'integrato, ovunque stia (corretto
+        il 2026-10-25: prima diceva che GW2000 e GW3000 l'integrato non
+        l'hanno).
     indoor_battery_low : bool | None
         La pila del WN32P: True se è scarica, False se a posto, None se
         il blocco `battery` non ha la sua voce (`t_rh_p_sensor`) — e
-        allora l'`indoor` viene dalla console, che pile non ne ha.
+        allora l'`indoor` viene dal sensore integrato, che pile non ne ha.
     extra_temp_c, extra_humidity_pct : dict[int, float]
         Sensori temp+umidità aggiuntivi (es. WN31), indicizzati per
         canale (1-8). Per le piante indoor di fitosim, il canale 1 è
@@ -330,6 +400,11 @@ class EcowittObservation:
         La tensione della pila (V) di ogni sonda del suolo, WH51 e WH52,
         per canale: dal blocco `battery` della risposta. Per passare a
         una frazione di carica c'è `aa_battery_fraction`.
+    valves : dict[int, EcowittValve]
+        Le valvole IoT del gateway — il WFC01 —, per id del dispositivo
+        (2026-10-25). Il cloud le mette in un blocco col nome del modello
+        e l'id in esadecimale, `WFC01-00004728`; l'id qui è quello
+        decimale, lo stesso che il gateway dà in locale.
 
     Note
     ----
@@ -387,6 +462,8 @@ class EcowittObservation:
     indoor_battery_low: Optional[bool] = None
     # I WN31, per canale: solo i canali che hanno la voce.
     extra_battery_low: dict = field(default_factory=dict)
+    # Le valvole IoT (2026-10-25), per id decimale: `EcowittValve`.
+    valves: dict = field(default_factory=dict)
 
 
 # -----------------------------------------------------------------------
@@ -433,6 +510,15 @@ _BATTERY_WH52 = "soilmoisture_ec_sensor_ch{ch}"
 # ferro il 2026-10-13 (GW3000A + WN32P): `{"unit": "", "value": "0"}`.
 _BATTERY_INDOOR = "t_rh_p_sensor"
 _BATTERY_WN31 = "temp_humidity_sensor_ch{ch}"
+
+# Le valvole IoT (2026-10-25, visto sul ferro: GW3000A + WFC01). Il blocco
+# ha il nome del modello e l'id del dispositivo in esadecimale a otto
+# cifre — `WFC01-00004728` è il 18216 che il gateway dà in locale — e
+# dentro `daily` e `monthly` (i litri del contalitri, col `day` e il
+# `month`), `status` («0» chiusa, «1» aperta), `flow_rate` (L/min) e
+# `temperature` (dell'acqua). La pila della valvola nel blocco `battery`
+# non c'è.
+_VALVE_SECTION = re.compile(r"^(WFC\d{2})-([0-9A-Fa-f]{1,8})$")
 
 # La carica di una pila AA dalla sua tensione, in lineare fra le due
 # soglie. **Ecowitt non dichiara una soglia di scarica per i WH51 e i
@@ -698,7 +784,78 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         soil_battery_v=soil_battery,
         indoor_battery_low=indoor_battery_low,
         extra_battery_low=extra_battery_low,
+        valves=_parse_valves(data),
     )
+
+
+def _parse_valves(data: dict) -> dict:
+    """
+    Le valvole IoT della risposta, per id decimale. Un blocco per
+    valvola, col nome del modello e l'id esadecimale: `WFC01-00004728`.
+    Un nodo che non si legge, o con un'unità sconosciuta, toglie quel
+    campo e non la valvola — la regola di robustezza delle sonde.
+    """
+    valves = {}
+    for key, section in data.items():
+        match = _VALVE_SECTION.match(key)
+        if match is None or not isinstance(section, dict):
+            continue
+        device_id = int(match.group(2), 16)
+        status = section.get("status")
+        valves[device_id] = EcowittValve(
+            device_id=device_id,
+            model=match.group(1).lower(),
+            # `status` è lo stesso flag 0/1 senza unità delle pile.
+            is_open=_parse_flag(status),
+            flow_l_min=_parse_or_none(section.get("flow_rate"), _to_liters_per_minute),
+            water_temp_c=_parse_or_none(section.get("temperature"), _to_celsius),
+            daily_l=_parse_or_none(section.get("daily"), _to_liters),
+            daily_on=_parse_day(section.get("daily")),
+            monthly_l=_parse_or_none(section.get("monthly"), _to_liters),
+            monthly_in=_parse_month(section.get("monthly")),
+            observed_at=_parse_time(status),
+        )
+    return valves
+
+
+def _parse_or_none(node: Optional[dict], converter) -> Optional[float]:
+    """`_parse_node_to`, con l'unità sconosciuta che dà None invece di
+    sollevare: il campo se ne va, l'osservazione resta."""
+    try:
+        return _parse_node_to(node, converter)
+    except ValueError:
+        return None
+
+
+def _parse_time(node: Optional[dict]) -> Optional[datetime]:
+    """L'istante di un nodo (`time`, secondi epoch), in UTC."""
+    if not node:
+        return None
+    try:
+        return datetime.fromtimestamp(int(node.get("time")), tz=timezone.utc)
+    except (ValueError, TypeError, OverflowError, OSError):
+        return None
+
+
+def _parse_day(node: Optional[dict]) -> Optional[date]:
+    """Il giorno del contalitri giornaliero (`day`, «20261025»): quello
+    del gateway, nel suo fuso."""
+    if not node:
+        return None
+    try:
+        return datetime.strptime(str(node.get("day")), "%Y%m%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_month(node: Optional[dict]) -> Optional[str]:
+    """Il mese del contalitri mensile (`month`, «202610»), come «2026-10»."""
+    if not node:
+        return None
+    testo = str(node.get("month") or "")
+    if not re.fullmatch(r"\d{6}", testo) or not 1 <= int(testo[4:]) <= 12:
+        return None
+    return f"{testo[:4]}-{testo[4:]}"
 
 
 # -----------------------------------------------------------------------

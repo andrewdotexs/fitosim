@@ -20,9 +20,12 @@ from unittest.mock import patch
 
 from fitosim.io.ecowitt import (
     EcowittObservation,
+    EcowittValve,
     _build_real_time_url,
     _to_celsius,
     _to_hpa,
+    _to_liters,
+    _to_liters_per_minute,
     _to_m_per_second,
     _to_mm,
     _to_mm_per_hour,
@@ -353,6 +356,98 @@ class TestWH52Parsing(unittest.TestCase):
         self.assertNotIn(1, obs.soil_ec_mscm)
         self.assertAlmostEqual(obs.soil_moisture_pct[1], 64.0, places=1)
         self.assertIn(1, obs.soil_temperature_c)
+
+
+class TestValveParsing(unittest.TestCase):
+    """
+    Le valvole IoT (2026-10-25): il blocco del WFC01 com'è arrivato dal
+    cloud per il GW3000A di Andrea, accanto alle sonde. Il nome del blocco
+    porta l'id in esadecimale, `WFC01-00004728`; in locale il gateway
+    dice 18216, che è lo stesso numero.
+    """
+
+    def setUp(self):
+        self.payload = {
+            "code": 0,
+            "msg": "success",
+            "time": "1792963249",
+            "data": {
+                "indoor": {
+                    "temperature": {"time": "1792963208", "unit": "℃", "value": "18.1"},
+                },
+                "soil_moisture_ec_ch1": {
+                    "soilmoisture": {"time": "1792963208", "unit": "%", "value": "42"},
+                },
+                "WFC01-00004728": {
+                    "daily": {"value": "12.5", "unit": "L", "day": "20261025"},
+                    "monthly": {"value": "40.0", "unit": "L", "month": "202610"},
+                    "status": {"value": "1", "unit": "", "time": "1792963215"},
+                    "flow_rate": {"value": "6.4", "unit": "L/min", "time": "1792963215"},
+                    "temperature": {"value": "19.2", "unit": "℃", "time": "1792963215"},
+                },
+            },
+        }
+
+    def test_the_block_becomes_a_valve_by_its_decimal_id(self):
+        obs = parse_ecowitt_response(self.payload)
+        self.assertEqual(set(obs.valves), {18216})
+        valvola = obs.valves[18216]
+        self.assertIsInstance(valvola, EcowittValve)
+        self.assertEqual(valvola.model, "wfc01")
+        self.assertIs(valvola.is_open, True)
+        self.assertAlmostEqual(valvola.flow_l_min, 6.4)
+        self.assertAlmostEqual(valvola.water_temp_c, 19.2)
+        self.assertAlmostEqual(valvola.daily_l, 12.5)
+        self.assertEqual(valvola.daily_on.isoformat(), "2026-10-25")
+        self.assertAlmostEqual(valvola.monthly_l, 40.0)
+        self.assertEqual(valvola.monthly_in, "2026-10")
+        self.assertEqual(
+            valvola.observed_at, datetime.fromtimestamp(1792963215, tz=timezone.utc)
+        )
+        # Le sonde accanto restano quelle di sempre.
+        self.assertEqual(obs.soil_moisture_pct, {1: 42.0})
+
+    def test_closed_valve_and_no_valves(self):
+        self.payload["data"]["WFC01-00004728"]["status"]["value"] = "0"
+        self.assertIs(parse_ecowitt_response(self.payload).valves[18216].is_open, False)
+        del self.payload["data"]["WFC01-00004728"]
+        self.assertEqual(parse_ecowitt_response(self.payload).valves, {})
+
+    def test_an_imperial_account_is_converted(self):
+        blocco = self.payload["data"]["WFC01-00004728"]
+        blocco["daily"] = {"value": "2.0", "unit": "gal", "day": "20261025"}
+        blocco["flow_rate"] = {"value": "1.0", "unit": "GPM", "time": "1792963215"}
+        blocco["temperature"] = {"value": "41.0", "unit": "℉", "time": "1792963215"}
+        valvola = parse_ecowitt_response(self.payload).valves[18216]
+        self.assertAlmostEqual(valvola.daily_l, 7.570823568)
+        self.assertAlmostEqual(valvola.flow_l_min, 3.785411784)
+        self.assertAlmostEqual(valvola.water_temp_c, 5.0)
+
+    def test_an_unreadable_field_drops_the_field_not_the_valve(self):
+        blocco = self.payload["data"]["WFC01-00004728"]
+        blocco["flow_rate"] = {"value": "6.4", "unit": "m3/h", "time": "1792963215"}
+        blocco["temperature"] = {"value": "--", "unit": "℃", "time": "1792963215"}
+        blocco["daily"] = {"value": "1.0", "unit": "L", "day": "ieri"}
+        blocco["monthly"] = {"value": "1.0", "unit": "L", "month": "202613"}
+        valvola = parse_ecowitt_response(self.payload).valves[18216]
+        self.assertIsNone(valvola.flow_l_min)
+        self.assertIsNone(valvola.water_temp_c)
+        self.assertIsNone(valvola.daily_on)
+        self.assertIsNone(valvola.monthly_in)
+        self.assertAlmostEqual(valvola.daily_l, 1.0)
+
+    def test_blocks_that_are_not_valves_are_ignored(self):
+        self.payload["data"]["WFC01-xyz"] = {"status": {"value": "1", "unit": ""}}
+        self.payload["data"]["WFC01-00004729"] = "non un blocco"
+        self.assertEqual(set(parse_ecowitt_response(self.payload).valves), {18216})
+
+    def test_volume_and_flow_conversions(self):
+        self.assertEqual(_to_liters(3.0, "L"), 3.0)
+        self.assertAlmostEqual(_to_liters(1.0, "gal"), 3.785411784)
+        self.assertEqual(_to_liters_per_minute(6.0, "L/min"), 6.0)
+        self.assertAlmostEqual(_to_liters_per_minute(1.0, "gal/min"), 3.785411784)
+        with self.assertRaises(ValueError):
+            _to_liters(1.0, "m3")
 
 
 class TestAABatteryFraction(unittest.TestCase):

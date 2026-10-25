@@ -2,7 +2,11 @@ __fitosim — Status Report__
 
 *Stato dello sviluppo della libreria di simulazione FAO-56*
 
-*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+
+# Aggiornamento al 25 ottobre 2026 — la valvola WFC01 nel tempo reale di Ecowitt
+
+**Le valvole IoT** (25 ottobre, versione 0.36.0). È arrivato il WFC01 di Andrea, accoppiato al GW3000A, e il tempo reale del cloud lo porta in un blocco suo, accanto alle sonde: il nome del modello con l'id del dispositivo in esadecimale a otto cifre (`WFC01-00004728`, che in locale il gateway chiama 18216), e dentro `daily` e `monthly` (i litri del contalitri, col giorno e il mese), `status` (il flag 0/1), `flow_rate` e `temperature` dell'acqua. `EcowittObservation.valves` li porta per id decimale come `EcowittValve` — `is_open`, `flow_l_min`, `water_temp_c`, `daily_l` e `daily_on`, `monthly_l` e `monthly_in`, `observed_at` —, con i galloni e i °F di un account americano convertiti e la regola delle sonde: un campo che non si legge se ne va, la valvola resta. La pila della valvola nel blocco `battery` non c'è. Già che c'ero, il docstring dell'`indoor` è corretto: il GW2000 e il GW3000 il sensore integrato ce l'hanno, e il WN32P registrato ne prende il posto. Sei test nuovi, 1 584 nel core.
 
 # Aggiornamento al 21 ottobre 2026 — la calibrazione legge dall'app, e le pressioni di vapore dagli estremi
 
