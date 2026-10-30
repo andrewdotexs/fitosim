@@ -323,6 +323,25 @@ class EcowittValve:
     observed_at: Optional[datetime] = None
 
 
+@dataclass(frozen=True)
+class EcowittCamera:
+    """
+    L'ultima foto di una webcam Ecowitt — la HP10 — com'è nel tempo reale
+    del cloud (2026-10-30). La webcam ha un MAC suo e si interroga come un
+    gateway: la risposta ha solo il blocco `camera`, con la foto.
+
+    Attributi
+    ---------
+    url : str
+        L'indirizzo della foto sul cloud di Ecowitt, http o https.
+    taken_at : datetime | None
+        L'istante della foto, in UTC; None se il cloud non l'ha detto.
+    """
+
+    url: str
+    taken_at: Optional[datetime] = None
+
+
 # -----------------------------------------------------------------------
 #  EcowittObservation — il dato consumato dal motore di fitosim
 # -----------------------------------------------------------------------
@@ -405,6 +424,9 @@ class EcowittObservation:
         (2026-10-25). Il cloud le mette in un blocco col nome del modello
         e l'id in esadecimale, `WFC01-00004728`; l'id qui è quello
         decimale, lo stesso che il gateway dà in locale.
+    camera : EcowittCamera | None
+        L'ultima foto della webcam (2026-10-30), quando il MAC
+        interrogato è quello di una HP10; None per un gateway.
 
     Note
     ----
@@ -464,6 +486,8 @@ class EcowittObservation:
     extra_battery_low: dict = field(default_factory=dict)
     # Le valvole IoT (2026-10-25), per id decimale: `EcowittValve`.
     valves: dict = field(default_factory=dict)
+    # La foto della webcam (2026-10-30): `EcowittCamera`.
+    camera: Optional[EcowittCamera] = None
 
 
 # -----------------------------------------------------------------------
@@ -785,6 +809,7 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
         indoor_battery_low=indoor_battery_low,
         extra_battery_low=extra_battery_low,
         valves=_parse_valves(data),
+        camera=_parse_camera(data),
     )
 
 
@@ -816,6 +841,22 @@ def _parse_valves(data: dict) -> dict:
             observed_at=_parse_time(status),
         )
     return valves
+
+
+def _parse_camera(data: dict) -> Optional[EcowittCamera]:
+    """
+    La foto della webcam: `camera.photo`, con `url` e `time`. Senza un
+    indirizzo http o https non c'è una foto da mostrare, e la webcam
+    resta None; un `time` che non si legge toglie solo l'istante.
+    """
+    section = data.get("camera")
+    photo = section.get("photo") if isinstance(section, dict) else None
+    if not isinstance(photo, dict):
+        return None
+    url = photo.get("url")
+    if not isinstance(url, str) or not re.match(r"https?://\S+$", url.strip()):
+        return None
+    return EcowittCamera(url=url.strip(), taken_at=_parse_time(photo))
 
 
 def _parse_or_none(node: Optional[dict], converter) -> Optional[float]:

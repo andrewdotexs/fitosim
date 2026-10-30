@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fitosim.io.ecowitt import (
+    EcowittCamera,
     EcowittObservation,
     EcowittValve,
     _build_real_time_url,
@@ -448,6 +449,75 @@ class TestValveParsing(unittest.TestCase):
         self.assertAlmostEqual(_to_liters_per_minute(1.0, "gal/min"), 3.785411784)
         with self.assertRaises(ValueError):
             _to_liters(1.0, "m3")
+
+
+
+class TestCameraParsing(unittest.TestCase):
+    """
+    La webcam HP10 (2026-10-30): il suo MAC si interroga come un gateway,
+    e la risposta ha solo il blocco `camera`, com'è arrivata dal cloud per
+    la webcam di Andrea — nessun sensore accanto.
+    """
+
+    def setUp(self):
+        self.payload = {
+            "code": 0,
+            "msg": "success",
+            "time": "1793360138",
+            "data": {
+                "camera": {
+                    "photo": {
+                        "time": "1793360098",
+                        "url": "https://osswww.ecowitt.net/images/webcam/v0/2026_10_30/364483/f088b7f46fc17471117e6130d711d4f3.jpg",
+                    }
+                }
+            },
+        }
+
+    def test_the_photo_has_its_url_and_time(self):
+        obs = parse_ecowitt_response(self.payload)
+        self.assertIsInstance(obs.camera, EcowittCamera)
+        self.assertEqual(
+            obs.camera.url,
+            "https://osswww.ecowitt.net/images/webcam/v0/2026_10_30/364483/f088b7f46fc17471117e6130d711d4f3.jpg",
+        )
+        self.assertEqual(
+            obs.camera.taken_at, datetime.fromtimestamp(1793360098, tz=timezone.utc)
+        )
+        # L'istante della risposta resta quello di root.
+        self.assertEqual(obs.timestamp, datetime.fromtimestamp(1793360138, tz=timezone.utc))
+
+    def test_a_webcam_has_no_sensors(self):
+        obs = parse_ecowitt_response(self.payload)
+        self.assertIsNone(obs.outdoor_temp_c)
+        self.assertIsNone(obs.indoor_temp_c)
+        self.assertEqual(obs.soil_moisture_pct, {})
+        self.assertEqual(obs.valves, {})
+
+    def test_a_gateway_has_no_camera(self):
+        del self.payload["data"]["camera"]
+        self.payload["data"]["indoor"] = {
+            "temperature": {"time": "1793360098", "unit": "℃", "value": "18.1"},
+        }
+        self.assertIsNone(parse_ecowitt_response(self.payload).camera)
+
+    def test_without_an_address_there_is_no_photo(self):
+        for url in (None, "", "   ", "ftp://osswww.ecowitt.net/x.jpg", "javascript:alert(1)", 42):
+            with self.subTest(url=url):
+                self.payload["data"]["camera"]["photo"]["url"] = url
+                self.assertIsNone(parse_ecowitt_response(self.payload).camera)
+        self.payload["data"]["camera"] = {"photo": "non un blocco"}
+        self.assertIsNone(parse_ecowitt_response(self.payload).camera)
+        self.payload["data"]["camera"] = []
+        self.assertIsNone(parse_ecowitt_response(self.payload).camera)
+
+    def test_an_unreadable_time_drops_the_time_not_the_photo(self):
+        self.payload["data"]["camera"]["photo"]["time"] = "--"
+        camera = parse_ecowitt_response(self.payload).camera
+        self.assertIsNone(camera.taken_at)
+        self.assertTrue(camera.url.endswith(".jpg"))
+        del self.payload["data"]["camera"]["photo"]["time"]
+        self.assertIsNone(parse_ecowitt_response(self.payload).camera.taken_at)
 
 
 class TestAABatteryFraction(unittest.TestCase):

@@ -2,7 +2,11 @@ __fitosim — Status Report__
 
 *Stato dello sviluppo della libreria di simulazione FAO-56*
 
-*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 30 ottobre, del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+
+# Aggiornamento al 30 ottobre 2026 — la webcam HP10 nel tempo reale di Ecowitt
+
+**La foto della webcam** (30 ottobre, versione 0.37.0). La HP10 di Andrea ha un MAC suo e si interroga come un gateway, con le stesse chiavi: il tempo reale del cloud non porta sensori ma un blocco solo, `camera.photo`, con l'indirizzo dell'ultima foto sul cloud di Ecowitt (`url`) e il suo istante (`time`, secondi epoch). `EcowittObservation.camera` la porta come `EcowittCamera` — `url` e `taken_at` in UTC —, None per un gateway. Un indirizzo che non è http o https non è una foto, e la webcam resta None; un istante che non si legge toglie solo l'istante. Lo storico del cloud con `call_back=camera` torna vuoto: di una webcam c'è solo l'ultima foto. Cinque test nuovi, 1 589 nel core.
 
 # Aggiornamento al 25 ottobre 2026 — la valvola WFC01 nel tempo reale di Ecowitt
 
