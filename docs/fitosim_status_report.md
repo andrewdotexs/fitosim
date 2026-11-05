@@ -2,7 +2,11 @@ __fitosim — Status Report__
 
 *Stato dello sviluppo della libreria di simulazione FAO-56*
 
-*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 30 ottobre, del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 5 novembre, del 30 ottobre, del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+
+# Aggiornamento al 5 novembre 2026 — quanto asciuga il materiale, un numero del vaso
+
+**Il numero del materiale** (5 novembre, versione 0.38.0). Il Kp conosceva cinque classi di materiale (`PotMaterial`), con una tabella di fattori scritta a intuito; The Pot ha dieci materiali nel catalogo, e un numero per ciascuno, che mostrava all'utente senza che il calcolo lo usasse. `Pot.material_factor`, facoltativo, prende il posto della tabella in `kp`, e `pot_correction_factor` lo accetta come argomento; None vuol dire la tabella, e chi non lo passa non vede cambiare niente (1.00 è un numero, non «niente»). I numeri veri stanno nel catalogo di The Pot, con le loro fonti: la libreria non ne guadagna di nuovi. Sopravvive al JSON e a SQLite (schema v9, colonna `pots.material_factor`, NULL per i vasi che c'erano). Sei test nuovi, 1 595 nel core.
 
 # Aggiornamento al 30 ottobre 2026 — la webcam HP10 nel tempo reale di Ecowitt
 

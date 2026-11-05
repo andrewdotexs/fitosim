@@ -133,7 +133,11 @@ from fitosim.science.substrate import (
 # Versione 8 (A4, 2026-09-20): la colonna facoltativa
 # ec_stress_slope_pct_per_mscm sulla tabella species, la pendenza della
 # rampa salina del Kn. NULL vuol dire «la globale», 12 % per mS/cm.
-SCHEMA_VERSION = 8
+#
+# Versione 9 (0.38.0, 2026-11-05): la colonna facoltativa material_factor
+# sulla tabella pots, quanto asciuga il materiale rispetto alla plastica.
+# NULL vuol dire «la tabella delle cinque classi».
+SCHEMA_VERSION = 9
 
 
 # =======================================================================
@@ -297,6 +301,7 @@ SCHEMA_STATEMENTS: List[str] = [
         plant_height_m           REAL,
         canopy_width_m           REAL,
         canopy_height_m          REAL,
+        material_factor          REAL,
         UNIQUE (garden_id, label),
         FOREIGN KEY (garden_id) REFERENCES gardens(id) ON DELETE CASCADE,
         FOREIGN KEY (species_id) REFERENCES species(id) ON DELETE RESTRICT,
@@ -694,6 +699,9 @@ class GardenPersistence:
             if current < 8:
                 self._migrate_v7_to_v8()
                 current = 8
+            if current < 9:
+                self._migrate_v8_to_v9()
+                current = 9
             # Aggiorna la versione registrata.
             self._conn.execute(
                 "INSERT INTO schema_metadata (version) VALUES (?)",
@@ -907,6 +915,21 @@ class GardenPersistence:
                     self._conn.execute(
                         f"ALTER TABLE species ADD COLUMN {column} {sql_type}"
                     )
+
+    def _migrate_v8_to_v9(self) -> None:
+        """
+        Migrazione dalla versione 8 alla versione 9.
+
+        Cambiamento: la colonna facoltativa material_factor sulla tabella
+        pots. I vasi che c'erano restano NULL, cioè la tabella delle cinque
+        classi: si comportano come prima. Idempotente come le altre.
+        """
+        if self._table_exists("pots") and not self._column_exists(
+            "pots", "material_factor"
+        ):
+            self._conn.execute(
+                "ALTER TABLE pots ADD COLUMN material_factor REAL"
+            )
 
     def _table_exists(self, table_name: str) -> bool:
         """True se la tabella esiste nel database."""
@@ -1639,6 +1662,8 @@ class GardenPersistence:
             pot.plant_height_m,
             pot.canopy_width_m,
             pot.canopy_height_m,
+            # Il numero del materiale (v9): NULL = la tabella delle classi.
+            pot.material_factor,
         )
 
         if existing:
@@ -1656,7 +1681,8 @@ class GardenPersistence:
                     planting_date = ?, notes = ?, channel_id = ?,
                     latitude_deg = ?, elevation_m = ?,
                     room_id = ?, light_exposure = ?,
-                    plant_height_m = ?, canopy_width_m = ?, canopy_height_m = ?
+                    plant_height_m = ?, canopy_width_m = ?, canopy_height_m = ?,
+                    material_factor = ?
                 WHERE id = ?
                 """,
                 params + (existing["id"],),
@@ -1676,10 +1702,11 @@ class GardenPersistence:
                 saucer_capacity_mm, saucer_capillary_rate, saucer_evap_coef,
                 planting_date, notes, channel_id,
                 latitude_deg, elevation_m, room_id, light_exposure,
-                plant_height_m, canopy_width_m, canopy_height_m
+                plant_height_m, canopy_width_m, canopy_height_m,
+                material_factor
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?
             )
             """,
             (garden_id, pot.label) + params,
@@ -1924,7 +1951,10 @@ class GardenPersistence:
             kwargs["light_exposure"] = LightExposure(pot_row["light_exposure"])
         # Le misure della pianta (v6, H.1-c). `keys()` perché un database
         # aperto in sola lettura a metà migrazione potrebbe non averle.
-        for column in ("plant_height_m", "canopy_width_m", "canopy_height_m"):
+        for column in (
+            "plant_height_m", "canopy_width_m", "canopy_height_m",
+            "material_factor",
+        ):
             if column in pot_row.keys() and pot_row[column] is not None:
                 kwargs[column] = pot_row[column]
         if state_row is not None:

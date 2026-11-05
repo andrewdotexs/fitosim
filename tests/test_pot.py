@@ -419,6 +419,38 @@ class TestPotKp(unittest.TestCase):
         )
         self.assertAlmostEqual(pot.kp, expected, places=10)
 
+    def test_material_factor_replaces_the_class_table(self):
+        # Il numero del materiale prende il posto della classe: la stessa
+        # terracotta scura a mezz'ombra, con 1.50 invece dell'1.30 di tabella.
+        from fitosim.science.pot_physics import PotColor, PotMaterial, SunExposure
+        from dataclasses import replace
+        di_tabella = replace(
+            _make_basil_pot(),
+            pot_material=PotMaterial.TERRACOTTA,
+            pot_color=PotColor.DARK,
+            sun_exposure=SunExposure.PARTIAL_SHADE,
+        )
+        col_numero = replace(di_tabella, material_factor=1.5)
+        self.assertAlmostEqual(col_numero.kp, 1.5 * 1.10 * 0.70, places=10)
+        self.assertAlmostEqual(di_tabella.kp, 1.3 * 1.10 * 0.70, places=10)
+
+    def test_material_factor_of_one_is_not_the_class(self):
+        # 1.00 è un numero, non «niente»: un vaso che asciuga come la plastica
+        # non deve ricadere sull'1.30 della classe.
+        from fitosim.science.pot_physics import PotMaterial
+        from dataclasses import replace
+        pot = replace(
+            _make_basil_pot(), pot_material=PotMaterial.TERRACOTTA, material_factor=1.0,
+        )
+        self.assertAlmostEqual(pot.kp, 1.0, places=10)
+
+    def test_material_factor_must_be_positive(self):
+        from dataclasses import replace
+        for valore in (0.0, -1.0):
+            with self.subTest(valore=valore):
+                with self.assertRaises(ValueError):
+                    replace(_make_basil_pot(), material_factor=valore)
+
 
 class TestCurrentEtcWithKp(unittest.TestCase):
     """

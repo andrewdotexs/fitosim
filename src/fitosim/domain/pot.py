@@ -493,6 +493,11 @@ class Pot:
     pot_material : PotMaterial, opzionale
         Materiale del contenitore. Default PLASTIC (riferimento neutro).
         Influenza la perdita laterale per evaporazione.
+    material_factor : float | None, opzionale
+        Quanto asciuga il materiale rispetto alla plastica, se chi usa il
+        vaso ne ha un numero suo (The Pot lo tiene nel suo catalogo: dieci
+        materiali, non cinque). Prende il posto del fattore di `pot_material`
+        in `kp`. None = la tabella delle cinque classi.
     pot_color : PotColor, opzionale
         Colore prevalente. Default MEDIUM (neutro). Modula
         l'assorbimento solare.
@@ -733,8 +738,16 @@ class Pot:
     canopy_width_m: float | None = None
     canopy_height_m: float | None = None
     notes: str = ""
+    # Il numero del materiale (0.38.0), dopo `notes` per non spostare chi
+    # costruisce il vaso per posizione.
+    material_factor: float | None = None
 
     def __post_init__(self) -> None:
+        if self.material_factor is not None and self.material_factor <= 0:
+            raise ValueError(
+                f"Vaso '{self.label}': material_factor deve essere "
+                f"positivo se specificato (ricevuto {self.material_factor})."
+            )
         if self.pot_volume_l <= 0:
             raise ValueError(
                 f"Vaso '{self.label}': pot_volume_l deve essere "
@@ -1201,12 +1214,14 @@ class Pot:
         materiale (porosità laterale), colore (assorbimento solare)
         ed esposizione (carico radiativo effettivo). Per un vaso con
         i default (PLASTIC, MEDIUM, FULL_SUN) Kp = 1.00, e il modello
-        si comporta come il FAO-56 base.
+        si comporta come il FAO-56 base. Il materiale è `material_factor`
+        quando c'è, altrimenti la tabella di `pot_material`.
         """
         return pot_correction_factor(
             material=self.pot_material,
             color=self.pot_color,
             exposure=self.sun_exposure,
+            material_factor=self.material_factor,
         )
 
     # -------------------------------------------------------------------

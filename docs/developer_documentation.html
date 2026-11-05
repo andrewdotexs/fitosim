@@ -822,7 +822,7 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
 
     <p>Enum: <code>PotMaterial</code> (PLASTIC, GLAZED_CERAMIC, TERRACOTTA, WOOD, METAL), <code>PotColor</code> (LIGHT, MEDIUM, DARK), <code>SunExposure</code> (FULL_SUN, PARTIAL_SHADE, SHADE).</p>
 
-    <p>Funzione: <code>pot_correction_factor(material, color, exposure) → float</code>. Kp = f_material × f_color × f_exposure. Range tipico 0.43–1.43 (terracotta +30%, ombra −55%).</p>
+    <p>Funzione: <code>pot_correction_factor(material, color, exposure, material_factor=None) → float</code>. Kp = f_material × f_color × f_exposure. Range tipico 0.43–1.43 (terracotta +30%, ombra −55%). <code>Pot.material_factor</code>, se c'è, prende il posto della tabella di <code>PotMaterial</code>: The Pot ci passa il numero del suo catalogo.</p>
 
     <!-- SAUCER -->
     <h3 id="science-saucer"><code>science/saucer.py</code> — Sottovaso</h3>

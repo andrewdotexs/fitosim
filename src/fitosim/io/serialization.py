@@ -454,6 +454,8 @@ def _pot_to_dict(
         "plant_height_m": pot.plant_height_m,
         "canopy_width_m": pot.canopy_width_m,
         "canopy_height_m": pot.canopy_height_m,
+        # Il numero del materiale (0.38.0): facoltativo come le misure.
+        "material_factor": pot.material_factor,
     }
     state_fields = {
         "state_mm": pot.state_mm,
@@ -526,6 +528,7 @@ def _dict_to_pot(
     for field_name in (
         "latitude_deg", "elevation_m", "room_id",
         "plant_height_m", "canopy_width_m", "canopy_height_m",
+        "material_factor",
     ):
         if static.get(field_name) is not None:
             kwargs[field_name] = static[field_name]

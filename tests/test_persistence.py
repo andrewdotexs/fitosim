@@ -1163,6 +1163,28 @@ class TestRoomsAndIndoorPotPersistence(unittest.TestCase):
         ))
         return garden
 
+    def test_round_trip_material_factor(self):
+        # Il numero del materiale torna com'era, e un vaso senza resta senza:
+        # None vuol dire la tabella delle classi, non 1.00.
+        from fitosim.domain.garden import Garden
+        from fitosim.domain.pot import Pot, Location
+        from datetime import date
+
+        garden = Garden(name="Balcone")
+        for label, fattore in (("col-numero", 1.5), ("senza", None)):
+            garden.add_pot(Pot(
+                label=label, species=_make_basil(),
+                substrate=_make_universal_substrate(),
+                pot_volume_l=2.0, pot_diameter_cm=15.0,
+                location=Location.OUTDOOR,
+                planting_date=date(2026, 6, 1),
+                material_factor=fattore,
+            ))
+        self.persistence.save_garden(garden)
+        loaded = self.persistence.load_garden("Balcone")
+        self.assertEqual(loaded.get_pot("col-numero").material_factor, 1.5)
+        self.assertIsNone(loaded.get_pot("senza").material_factor)
+
     def test_round_trip_room_basic(self):
         # Salva e ricarica un garden con una Room base (senza
         # microclima corrente).
@@ -1613,6 +1635,41 @@ class TestSpeciesConfigRoundTrip(unittest.TestCase):
                 cursor = p._conn.execute("PRAGMA table_info(species)")
                 cols = [r["name"] for r in cursor.fetchall()]
                 self.assertEqual(cols.count("ec_stress_slope_pct_per_mscm"), 1)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_v8_database_migrates_to_v9(self):
+        # Un database v8 (pots senza la colonna) migra una volta sola.
+        import os
+        import sqlite3
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            conn = sqlite3.connect(tmp_path)
+            conn.execute("""
+                CREATE TABLE schema_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version INTEGER NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE pots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    garden_id INTEGER NOT NULL,
+                    label TEXT NOT NULL
+                )
+            """)
+            conn.execute("INSERT INTO schema_metadata (version) VALUES (8)")
+            conn.commit()
+            conn.close()
+
+            with GardenPersistence(tmp_path) as p:
+                cols = [r["name"] for r in p._conn.execute("PRAGMA table_info(pots)")]
+                self.assertEqual(cols.count("material_factor"), 1)
+                p._migrate_v8_to_v9()   # idempotente
+                cols = [r["name"] for r in p._conn.execute("PRAGMA table_info(pots)")]
+                self.assertEqual(cols.count("material_factor"), 1)
         finally:
             os.unlink(tmp_path)
 

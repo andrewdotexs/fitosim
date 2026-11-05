@@ -297,6 +297,7 @@ def pot_correction_factor(
     material: PotMaterial,
     color: PotColor,
     exposure: SunExposure,
+    material_factor: float | None = None,
 ) -> float:
     """
     Coefficiente di vaso composto Kp = f_material × f_color × f_exposure.
@@ -317,14 +318,22 @@ def pot_correction_factor(
         Colore prevalente.
     exposure : SunExposure
         Esposizione solare tipica.
+    material_factor : float | None, opzionale
+        Il fattore del materiale, se chi chiama ne ha uno suo: prende il
+        posto della tabella delle cinque classi. Con None vale la tabella.
 
     Ritorna
     -------
     float
         Kp adimensionale, tipicamente nell'intervallo [0.4, 1.5].
     """
+    f_material = (
+        material_factor
+        if material_factor is not None
+        else material_correction_factor(material)
+    )
     return (
-        material_correction_factor(material)
+        f_material
         * color_correction_factor(color)
         * exposure_correction_factor(exposure)
     )

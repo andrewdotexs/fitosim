@@ -581,6 +581,14 @@ class TestRoundTripFidelity(unittest.TestCase):
         garden.add_pot(Pot(**kwargs))
         return garden
 
+    def test_material_factor_survives(self):
+        # Col numero torna il numero; senza resta None, cioè la tabella.
+        from fitosim.domain.species import BASIL
+        loaded = self._round_trip(self._garden_with(BASIL, material_factor=1.5))
+        self.assertEqual(loaded.get_pot("vaso-1").material_factor, 1.5)
+        loaded = self._round_trip(self._garden_with(BASIL))
+        self.assertIsNone(loaded.get_pot("vaso-1").material_factor)
+
     def test_all_catalog_species_survive(self):
         from fitosim.domain.species import ALL_SPECIES
         for sp in ALL_SPECIES:
