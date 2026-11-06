@@ -274,6 +274,44 @@ class TestEt0ForBlocks(unittest.TestCase):
         self.assertEqual(own[22].rs_rso, pre_sunset)
 
 
+class TestBlocksAtTheLowerBound(unittest.TestCase):
+    """Anche a blocchi il limite inferiore ferma il flusso: la traccia dice l'ET uscita."""
+
+    def _pot_just_above_the_floor(self) -> Pot:
+        pot = _basil_pot()
+        pot.state_mm = pot.pwp_mm + 0.05
+        return pot
+
+    def test_the_trace_says_the_water_that_left(self):
+        pot = self._pot_just_above_the_floor()
+        # Un ET₀ enorme: è il solo modo perché Ks lasci toccare il limite.
+        result = pot.apply_balance_blocks(_sun_profile_blocks(200.0), DAY)
+        before = pot.pwp_mm + 0.05
+        for trace in result.blocks:
+            self.assertAlmostEqual(before - trace.et_c_mm, trace.state_after_mm, places=9)
+            before = trace.state_after_mm
+        self.assertAlmostEqual(result.et_c_mm, sum(t.et_c_mm for t in result.blocks), places=9)
+        self.assertEqual(result.balance_result.et_actual, result.et_c_mm)
+        self.assertGreaterEqual(pot.state_mm, pot.pwp_mm)
+
+    def test_a_reading_below_the_floor_stays_there(self):
+        pot = _basil_pot()
+        pot.update_from_sensor(theta_observed=pot.substrate.theta_pwp - 0.05)
+        reading_mm = pot.state_mm
+        result = pot.apply_balance_blocks(_sun_profile_blocks(4.0), DAY)
+        self.assertEqual(pot.state_mm, reading_mm)
+        self.assertEqual(result.et_c_mm, 0.0)
+
+    def test_a_single_24h_block_at_the_floor_is_the_daily_step(self):
+        daily = self._pot_just_above_the_floor()
+        blocks = self._pot_just_above_the_floor()
+        d = daily.apply_balance_step(200.0, 0.0, DAY, t_mean_c=22.0)
+        b = blocks.apply_balance_blocks([BalanceBlock(0, 24, 200.0)], DAY, t_mean_c=22.0)
+        self.assertEqual(blocks.state_mm, daily.state_mm)
+        self.assertEqual(b.balance_result.et_actual, d.et_actual)
+        self.assertEqual(b.nutrient_result, daily.last_nutrient_step)
+
+
 class TestPotBalanceBlocks(unittest.TestCase):
     """`Pot.apply_balance_blocks`: l'invariante e gli effetti dei blocchi."""
 

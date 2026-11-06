@@ -1394,6 +1394,9 @@ class Pot:
         """
         Evapotraspirazione reale della coltura nel vaso, in mm/giorno.
 
+        È quanto il vaso chiede oggi. Se è al limite inferiore ne esce
+        meno: quello che esce davvero è `BalanceStepResult.et_actual`.
+
         Combina ET₀ del giorno con tutti i moltiplicatori in cascata,
         scegliendo automaticamente tra modello single Kc (default,
         tradizionale FAO-56 cap. 6) e dual-Kc (FAO-56 cap. 7) in base
@@ -1543,8 +1546,9 @@ class Pot:
         `apply_balance_blocks`). Sottovaso, ET_c con Ks sullo stato
         corrente, secchio, drenaggio nel sottovaso, D_e. Ritorna
         (esito, ET_c, evaporazione dal substrato, traspirazione), tutti
-        in mm sul passo; i nutrienti li fa il chiamante, una volta al
-        giorno (D5 di `domain/blocks.py`).
+        in mm sul passo e tutti quelli usciti davvero, al netto di ciò che
+        il limite inferiore ha fermato; i nutrienti li fa il chiamante,
+        una volta al giorno (D5 di `domain/blocks.py`).
 
         L'unico numero che dipende dalla durata è il tasso capillare
         del sottovaso, definito «per giorno»: su un passo più corto
@@ -1611,6 +1615,22 @@ class Pot:
         )
         self.state_mm = result.new_state
 
+        # Quello che il limite ha negato non esce dal vaso: prima si riduce
+        # l'evaporazione, poi la traspirazione. La superficie però continua
+        # ad asciugarsi anche col grosso del vaso fermo al limite (FAO-56
+        # eq. 73 la porta sotto il punto di appassimento), e D_e segue
+        # l'evaporazione chiesta: senza, Kr non arriverebbe mai a zero.
+        soil_evap_demand_mm = soil_evap_mm
+        if result.et_actual < et_c_mm:
+            shortfall = et_c_mm - result.et_actual
+            cut_e = min(soil_evap_mm, shortfall)
+            soil_evap_mm -= cut_e
+            if self.supports_dual_kc:
+                transpiration_mm = max(0.0, transpiration_mm - (shortfall - cut_e))
+            else:
+                transpiration_mm = result.et_actual * TRANSPIRATION_SHARE_SINGLE_KC
+            et_c_mm = result.et_actual
+
         # === Passi 4-5: il drenaggio finisce nel sottovaso ===
         if has_saucer:
             # Il drenaggio in eccesso entra nel piattino, fino al limite
@@ -1631,7 +1651,7 @@ class Pot:
         if self.supports_dual_kc:
             self.de_mm = update_de(
                 de_mm_previous=self.de_mm,
-                evaporation_mm=soil_evap_mm,
+                evaporation_mm=soil_evap_demand_mm,
                 water_input_mm=water_input_mm,
                 tew_mm=self.substrate.tew_mm,  # type: ignore[arg-type]
             )
@@ -1749,6 +1769,10 @@ class Pot:
         segno (observed - predicted), si aggiorna state_mm per
         allinearsi al sensore, e si restituisce un SensorUpdateResult
         con tutti i dati raccolti durante l'operazione.
+
+        Una lettura sotto θ_PWP resta com'è: il passo dopo non la alza,
+        perché il limite inferiore ferma il flusso e non lo stato, e
+        l'acqua che entra si somma tutta.
 
         Due modalità d'uso
         -------------------
@@ -2251,6 +2275,7 @@ class Pot:
             under_alert=legacy_result.under_alert,
             deficit=legacy_result.deficit,
             et_method=et_result.method,
+            et_actual=legacy_result.et_actual,
         )
 
     def apply_balance_step_from_indoor(
@@ -2443,6 +2468,7 @@ class Pot:
             under_alert=legacy_result.under_alert,
             deficit=legacy_result.deficit,
             et_method=et_result.method,
+            et_actual=legacy_result.et_actual,
         )
 
     # ===================================================================
@@ -3170,6 +3196,7 @@ class Pot:
             drainage=total_drainage,
             under_alert=under_alert,
             deficit=max(0.0, self.alert_mm - self.state_mm) if under_alert else 0.0,
+            et_actual=total_et_c,
         )
         return (
             BlocksStepResult(

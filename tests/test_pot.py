@@ -21,7 +21,9 @@ from fitosim.domain.species import (
     Species,
     actual_et_c,
 )
+from fitosim.domain.blocks import BalanceBlock
 from fitosim.science.balance import water_balance_step_mm
+from fitosim.science.nutrients import TRANSPIRATION_SHARE_SINGLE_KC
 from fitosim.science.substrate import (
     Substrate,
     UNIVERSAL_POTTING_SOIL,
@@ -853,6 +855,153 @@ def _make_dual_kc_pot(state_mm: float = -1.0) -> Pot:
         planting_date=date(2026, 4, 1),
         state_mm=state_mm,
     )
+
+
+class TestLowerBoundStopsTheFlow(unittest.TestCase):
+    """Il limite inferiore ferma il flusso: non crea acqua, non alza lo stato."""
+
+    DAY = date(2026, 7, 1)
+
+    def _dry_down(self, pot: Pot, et_0_mm: float, days: int) -> float:
+        """Asciuga il vaso e controlla il bilancio a ogni passo; ritorna l'ET totale."""
+        total = 0.0
+        for offset in range(days):
+            before = pot.state_mm
+            result = pot.apply_balance_step(et_0_mm, 0.0, self.DAY + timedelta(days=offset))
+            self.assertAlmostEqual(before - result.et_actual, pot.state_mm, places=9)
+            self.assertGreaterEqual(result.et_actual, 0.0)
+            total += result.et_actual
+        return total
+
+    def test_the_water_leaving_a_dry_down_is_the_water_available(self):
+        pot = _make_dual_kc_pot()
+        total_et = self._dry_down(pot, 4.0, 200)
+        self.assertAlmostEqual(pot.state_mm, pot.pwp_mm, places=9)
+        self.assertAlmostEqual(total_et, pot.fc_mm - pot.pwp_mm, places=9)
+
+    def test_the_surface_dries_out_with_the_bulk_stopped_at_the_floor(self):
+        # D_e segue l'evaporazione chiesta: senza, Kr non arriverebbe mai a
+        # zero e un vaso dimenticato continuerebbe a chiedere acqua.
+        pot = _make_dual_kc_pot()
+        self._dry_down(pot, 4.0, 200)
+        self.assertAlmostEqual(pot.de_mm, pot.substrate.tew_mm, places=9)
+
+    def test_a_reading_below_the_floor_stays_there(self):
+        for pot in (_make_dual_kc_pot(), _make_basil_pot()):
+            with self.subTest(dual_kc=pot.supports_dual_kc):
+                pot.update_from_sensor(theta_observed=pot.substrate.theta_pwp - 0.05)
+                reading_mm = pot.state_mm
+                result = pot.apply_balance_step(4.0, 0.0, self.DAY)
+                self.assertEqual(pot.state_mm, reading_mm)
+                self.assertEqual(result.et_actual, 0.0)
+
+    def test_water_into_a_reading_below_the_floor_adds_exactly(self):
+        for pot in (_make_dual_kc_pot(), _make_basil_pot()):
+            with self.subTest(dual_kc=pot.supports_dual_kc):
+                pot.update_from_sensor(theta_observed=pot.substrate.theta_pwp - 0.05)
+                reading_mm = pot.state_mm
+                pot.apply_balance_step(4.0, 3.0, self.DAY)
+                self.assertAlmostEqual(pot.state_mm, reading_mm + 3.0, places=9)
+
+    def _pot_just_above_the_floor(self) -> Pot:
+        pot = _make_dual_kc_pot()
+        pot.state_mm = pot.pwp_mm + 0.05
+        pot.de_mm = 0.0
+        return pot
+
+    def test_what_the_floor_denies_comes_from_evaporation_first(self):
+        # Poca acqua sopra il limite: la traspirazione chiesta (piccola, col
+        # Ks in fondo alla rampa) esce tutta, l'evaporazione prende il resto.
+        pot = self._pot_just_above_the_floor()
+        et_asked, evaporation_asked = pot._current_et_c_dual_kc(
+            et_0_mm=4.0, current_date=self.DAY, kn=pot._current_kn(),
+        )
+        transpiration_asked = et_asked - evaporation_asked
+        self.assertLess(transpiration_asked, 0.05)
+        self.assertGreater(evaporation_asked, 0.05)
+
+        result = pot.apply_balance_blocks([BalanceBlock(0, 24, 4.0)], self.DAY)
+
+        self.assertAlmostEqual(result.et_c_mm, 0.05, places=9)
+        self.assertAlmostEqual(result.transpiration_mm, transpiration_asked, places=9)
+        self.assertAlmostEqual(
+            result.soil_evaporation_mm, 0.05 - transpiration_asked, places=9,
+        )
+        # La superficie segue l'evaporazione chiesta, non quella uscita.
+        self.assertAlmostEqual(pot.de_mm, evaporation_asked, places=9)
+
+    def test_only_with_no_evaporation_left_the_floor_cuts_transpiration(self):
+        # Un ET₀ enorme: la traspirazione chiesta da sola supera l'acqua.
+        pot = self._pot_just_above_the_floor()
+        et_asked, evaporation_asked = pot._current_et_c_dual_kc(
+            et_0_mm=2000.0, current_date=self.DAY, kn=pot._current_kn(),
+        )
+        self.assertGreater(et_asked - evaporation_asked, 0.05)
+
+        result = pot.apply_balance_blocks([BalanceBlock(0, 24, 2000.0)], self.DAY)
+
+        self.assertAlmostEqual(result.soil_evaporation_mm, 0.0, places=9)
+        self.assertAlmostEqual(result.transpiration_mm, 0.05, places=9)
+        self.assertAlmostEqual(result.et_c_mm, 0.05, places=9)
+
+    def test_single_kc_at_the_floor_closes_too(self):
+        pot = _make_basil_pot()
+        self.assertFalse(pot.supports_dual_kc)
+        pot.state_mm = pot.pwp_mm + 0.05
+        before = pot.state_mm
+        # Un ET₀ enorme: è il solo modo perché Ks lasci toccare il limite.
+        result = pot.apply_balance_step(200.0, 0.0, self.DAY)
+        self.assertAlmostEqual(result.et_actual, before - pot.pwp_mm, places=9)
+        self.assertAlmostEqual(pot.state_mm, pot.pwp_mm, places=9)
+
+    def test_single_kc_transpiration_is_a_share_of_the_water_that_left(self):
+        pot = _make_basil_pot()
+        pot.state_mm = pot.pwp_mm + 0.05
+        result = pot.apply_balance_blocks([BalanceBlock(0, 24, 200.0)], self.DAY)
+        self.assertAlmostEqual(result.et_c_mm, 0.05, places=9)
+        self.assertAlmostEqual(
+            result.transpiration_mm, 0.05 * TRANSPIRATION_SHARE_SINGLE_KC, places=9,
+        )
+
+    def test_the_weather_step_carries_et_actual(self):
+        from fitosim.domain.weather import WeatherDay
+
+        pot = Pot(
+            label="basil-dual-kc-meteo", species=_make_basil_with_kcb(),
+            substrate=_make_substrate_with_rew_tew(), pot_volume_l=2.0,
+            pot_diameter_cm=18.0, location=Location.OUTDOOR,
+            planting_date=date(2026, 4, 1), latitude_deg=45.5, elevation_m=120.0,
+        )
+        pot.state_mm = pot.pwp_mm + 0.05
+        pot.de_mm = 0.0
+        before = pot.state_mm
+        result = pot.apply_balance_step_from_weather(
+            WeatherDay(date_=self.DAY, t_min=18.0, t_max=30.0),
+            water_input_mm=0.0, current_date=self.DAY,
+        )
+        self.assertAlmostEqual(result.et_actual, before - pot.state_mm, places=9)
+        self.assertAlmostEqual(pot.state_mm, pot.pwp_mm, places=9)
+
+    def test_the_balance_closes_on_any_sequence(self):
+        # Passi, piogge e letture della sonda a caso, anche sotto il limite.
+        import random
+
+        rng = random.Random(20261106)
+        for pot in (_make_dual_kc_pot(), _make_basil_pot()):
+            with self.subTest(dual_kc=pot.supports_dual_kc):
+                for offset in range(2000):
+                    if rng.random() < 0.05:
+                        pot.update_from_sensor(theta_observed=rng.uniform(0.02, 0.45))
+                    water_mm = rng.choice((0.0, 0.0, 0.0, rng.uniform(0.0, 30.0)))
+                    before = pot.state_mm
+                    result = pot.apply_balance_step(
+                        rng.uniform(0.0, 8.0), water_mm, self.DAY + timedelta(days=offset),
+                    )
+                    self.assertAlmostEqual(
+                        before + water_mm - result.et_actual - result.drainage,
+                        pot.state_mm, places=9,
+                    )
+                    self.assertLessEqual(pot.state_mm, pot.fc_mm)
 
 
 class TestDualKcSupport(unittest.TestCase):
@@ -3402,6 +3551,17 @@ class TestPotApplyBalanceStepFromIndoor(unittest.TestCase):
         )
         self.assertEqual(result.et_method, EtMethod.PENMAN_MONTEITH_PHYSICAL)
         self.assertLess(result.new_state, pot.fc_mm)  # ha perso acqua
+
+    def test_the_indoor_step_carries_et_actual(self):
+        pot = self._make_indoor_basil_pot()
+        before = pot.state_mm
+        result = pot.apply_balance_step_from_indoor(
+            microclimate=self._make_daily_microclimate(),
+            water_input_mm=0.0,
+            current_date=date(2026, 7, 19),
+        )
+        self.assertGreater(result.et_actual, 0.0)
+        self.assertAlmostEqual(result.et_actual, before - result.new_state, places=9)
 
     def test_continuous_mode_summer_higher_than_winter(self):
         # Modo continuo: in estate (outdoor 24) la perdita è maggiore

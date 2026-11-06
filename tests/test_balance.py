@@ -85,6 +85,49 @@ class TestCoreBalance(unittest.TestCase):
         result = water_balance_step(**args)
         self.assertAlmostEqual(result.new_state, 0.15, places=6)
 
+    def test_et_takes_only_the_water_above_the_floor(self):
+        # Sopra il limite restano 0.05: esce quello, non lo 0.30 chiesto.
+        args = self._simple_args(current_state=0.20, et_c=0.30)
+        result = water_balance_step(**args)
+        self.assertAlmostEqual(result.et_actual, 0.05, places=12)
+        self.assertAlmostEqual(0.20 - result.et_actual, result.new_state, places=12)
+
+    def test_without_the_floor_et_actual_is_the_et_asked(self):
+        result = water_balance_step(**self._simple_args(et_c=0.05))
+        self.assertEqual(result.et_actual, 0.05)
+
+    def test_a_state_below_the_floor_is_not_raised(self):
+        # Una lettura della sonda sotto il limite: non esce niente e lo
+        # stato resta dov'è. Il limite non aggiunge acqua.
+        args = self._simple_args(current_state=0.10, et_c=0.05)
+        result = water_balance_step(**args)
+        self.assertEqual(result.new_state, 0.10)
+        self.assertEqual(result.et_actual, 0.0)
+        self.assertTrue(result.under_alert)
+        self.assertAlmostEqual(result.deficit, 0.175, places=12)
+
+    def test_water_into_a_state_below_the_floor_adds_exactly(self):
+        args = self._simple_args(current_state=0.10, water_input=0.02, et_c=0.05)
+        result = water_balance_step(**args)
+        self.assertAlmostEqual(result.new_state, 0.12, places=12)
+        self.assertEqual(result.et_actual, 0.0)
+
+    def test_water_crossing_the_floor_pays_only_the_part_above(self):
+        # 0.10 + 0.10 = 0.20: sopra il limite c'è 0.05, e l'ET chiesta è 0.08.
+        args = self._simple_args(current_state=0.10, water_input=0.10, et_c=0.08)
+        result = water_balance_step(**args)
+        self.assertAlmostEqual(result.et_actual, 0.05, places=12)
+        self.assertAlmostEqual(result.new_state, 0.15, places=12)
+
+    def test_the_balance_closes_with_drainage_too(self):
+        args = self._simple_args(current_state=0.35, water_input=0.20, et_c=0.02)
+        result = water_balance_step(**args)
+        self.assertEqual(result.et_actual, 0.02)
+        self.assertAlmostEqual(result.drainage, 0.13, places=12)
+        self.assertAlmostEqual(
+            0.35 + 0.20 - result.et_actual - result.drainage, result.new_state, places=12,
+        )
+
     def test_alert_triggers_below_threshold(self):
         # Stato che cade esattamente sotto la soglia di allerta deve
         # settare under_alert e riportare il deficit giusto.

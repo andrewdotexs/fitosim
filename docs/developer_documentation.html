@@ -677,6 +677,9 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
       contenuto idrico del substrato secondo FAO-56. Traccia lo stato idrico
       giornaliero, genera flag di allerta quando si scende sotto RAW
       (<em>readily available water</em>), gestisce drenaggio come overflow.
+      Il limite inferiore ferma il flusso: l'ET prende solo l'acqua sopra
+      θ_PWP, e uno stato già sotto (una lettura della sonda) ci resta finché
+      non arriva acqua. Il bilancio si chiude a ogni passo.
     </p>
 
     <div class="api">
@@ -685,7 +688,7 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
         <span class="api-name">BalanceStepResult</span>
       </div>
       <div class="api-body">
-        <p>Esito immutabile di un passo: nuovo stato, drenaggio, flag allerta, deficit.</p>
+        <p>Esito immutabile di un passo: nuovo stato, drenaggio, flag allerta, deficit, e <code>et_actual</code>, l'ET uscita davvero (<code>current_et_c</code> dice quella chiesta).</p>
       </div>
     </div>
 

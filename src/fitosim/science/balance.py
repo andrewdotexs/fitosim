@@ -4,13 +4,16 @@ Bilancio idrico giornaliero di un vaso.
 Il modulo implementa l'equazione di aggiornamento discreta dello stato
 idrico del substrato, che è l'anima del motore di allerta irrigazione:
 
-    stato(t+1) = clip( stato(t) + input(t) − ET_c(t),  min,  max )
+    ET_eff(t)  = min( ET_c(t),  max(0, stato(t) + input(t) − min) )
+    stato(t+1) = min( stato(t) + input(t) − ET_eff(t),  max )
 
 dove l'eccesso oltre il massimo (capacità di campo) si disperde come
-drenaggio, e il minimo (punto di appassimento) rappresenta la condizione
-limite sotto la quale, per convenzione, lo stato non scende nella
-simulazione. Una soglia intermedia — di solito capacità di campo meno
-l'acqua facilmente disponibile RAW — definisce il livello sotto al quale
+drenaggio, e il minimo (punto di appassimento) ferma il flusso: l'ET
+prende solo l'acqua che sta sopra il minimo, così il limite non crea né
+toglie acqua e il bilancio si chiude a ogni passo. Uno stato che parte
+sotto il minimo (una lettura della sonda) resta dov'è finché non arriva
+acqua. Una soglia intermedia — di solito capacità di campo meno l'acqua
+facilmente disponibile RAW — definisce il livello sotto al quale
 l'algoritmo considera di dover raccomandare un'irrigazione.
 
 Unità di misura
@@ -61,8 +64,9 @@ class BalanceStepResult:
     ---------
     new_state : float
         Stato idrico aggiornato, nell'unità usata in input (θ, mm, o
-        altro sistema coerente). Garantito dentro l'intervallo
-        [lower_bound, upper_bound].
+        altro sistema coerente). Mai sopra upper_bound; sotto lower_bound
+        solo se ci è partito (una lettura della sonda) e l'acqua entrata
+        non basta a riportarlo sopra.
     drainage : float
         Eccesso d'acqua disperso come drenaggio, ovvero la quantità di
         input che avrebbe portato lo stato sopra upper_bound ed è stata
@@ -83,6 +87,12 @@ class BalanceStepResult:
         formula sia stata usata. La distinzione None vs valore esplicito
         permette al chiamante di sapere se la tracciabilità del metodo
         è disponibile per quel risultato specifico.
+    et_actual : float | None, opzionale
+        Quanta ET è uscita davvero nel passo: `et_c`, o meno se il limite
+        inferiore l'ha fermata. Con questo numero il bilancio si chiude:
+        new_state = stato + input − et_actual − drainage. Tutti i passi di
+        fitosim lo valorizzano; None resta per chi costruisce il risultato
+        a mano.
     """
 
     new_state: float
@@ -90,6 +100,7 @@ class BalanceStepResult:
     under_alert: bool
     deficit: float
     et_method: Optional[EtMethod] = None
+    et_actual: Optional[float] = None
 
 
 def water_balance_step(
@@ -106,7 +117,8 @@ def water_balance_step(
     Esegue un singolo passo temporale (tipicamente giornaliero)
     dell'equazione di aggiornamento:
 
-        stato_nuovo = clip(stato + input − et_c,  lower,  upper)
+        et_eff      = min(et_c, max(0, stato + input − lower))
+        stato_nuovo = min(stato + input − et_eff, upper)
 
     Parametri
     ---------
@@ -117,16 +129,17 @@ def water_balance_step(
         Ingresso netto d'acqua nel giorno (irrigazione + pioggia
         efficace). Deve essere ≥ 0.
     et_c : float
-        Evapotraspirazione effettiva della coltura nel giorno. Deve
-        essere ≥ 0.
+        Evapotraspirazione chiesta nel giorno, con Ks e gli altri
+        coefficienti già applicati. Deve essere ≥ 0. Quella che esce
+        davvero è `et_actual` nel risultato.
     upper_bound : float
         Limite superiore dello stato (capacità di campo). L'eccesso
         viene conteggiato come drenaggio.
     lower_bound : float
-        Limite inferiore dello stato (punto di appassimento). Lo stato
-        viene comunque clippato a questo valore; nella realtà agronomica
-        la pianta muore prima di arrivarci, ma nella simulazione puntuale
-        evitiamo di produrre stati fisicamente impossibili.
+        Limite inferiore dello stato (punto di appassimento). Ferma l'ET
+        ma non alza lo stato: uno stato già sotto ci resta, e l'acqua che
+        entra si somma tutta finché non lo riporta sopra. In fitosim θ_PWP
+        è a −10 kPa, non un secco fisico: una sonda può leggere di meno.
     alert_threshold : float
         Valore dello stato sotto al quale scatta l'allerta operativa.
         Deve stare fra lower_bound e upper_bound.
@@ -161,10 +174,11 @@ def water_balance_step(
             f"upper_bound ({upper_bound})."
         )
 
-    # Aggiornamento pre-clipping: è lo stato che si avrebbe se non ci
-    # fossero né saturazione (drenaggio) né soglia minima (punto
-    # d'appassimento).
-    raw_new = current_state + water_input - et_c
+    # Il limite inferiore ferma il flusso, non alza lo stato: l'ET prende
+    # solo l'acqua che sta sopra il limite, e uno stato che parte sotto
+    # (una lettura della sonda) resta dov'è finché non arriva acqua.
+    et_actual = min(et_c, max(0.0, current_state + water_input - lower_bound))
+    raw_new = current_state + water_input - et_actual
 
     # Clipping superiore: l'acqua in eccesso rispetto alla capacità di
     # campo non resta nel vaso, si disperde attraverso i fori di
@@ -177,12 +191,6 @@ def water_balance_step(
         drainage = 0.0
         new_state = raw_new
 
-    # Clipping inferiore: sotto PWP lo stato perde significato fisico
-    # (la pianta sarebbe già morta). Clippiamo per sicurezza numerica e
-    # per permettere simulazioni lunghe senza stati aberranti.
-    if new_state < lower_bound:
-        new_state = lower_bound
-
     # Valutazione della soglia operativa di allerta.
     under_alert = new_state < alert_threshold
     deficit = max(0.0, alert_threshold - new_state)
@@ -192,6 +200,7 @@ def water_balance_step(
         drainage=drainage,
         under_alert=under_alert,
         deficit=deficit,
+        et_actual=et_actual,
     )
 
 
