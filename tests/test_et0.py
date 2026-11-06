@@ -985,16 +985,20 @@ class TestFao56Example18(unittest.TestCase):
             t_max_c=21.5, t_min_c=12.3, actual_vapor_pressure_kpa=e_a, elevation_m=100.0,
         )
         self.assertAlmostEqual(rn, 13.28, places=1)
+        # L'esempio misura il vento a 10 m (10 km/h = 2.78 m/s); `compute_et`
+        # lo vuole a 2 m, e FAO-56 lo converte con l'eq. 47:
+        # u2 = 0.748 · 2.78 = 2.078 m/s.
         result = compute_et(
             t_min=12.3, t_max=21.5, latitude_deg=50.8, j=j,
-            humidity_relative=0.735, wind_speed_m_s=2.78,
+            humidity_relative=0.735, wind_speed_m_s=2.078,
             net_radiation_mj_m2_day=rn, elevation_m=100.0,
             humidity_min=0.63, humidity_max=0.84,
         )
         self.assertIs(result.method, EtMethod.PENMAN_MONTEITH_STANDARD)
-        # FAO-56 dà 3.9 mm/giorno col coefficiente 900 fisso a 20 °C;
-        # fitosim usa ρ_a·c_p esplicito, e sta entro un decimo.
-        self.assertAlmostEqual(result.value_mm, 3.9, delta=0.1)
+        # FAO-56 stampa 2.81 + 1.07 = 3.88 mm/giorno, poi arrotondato a 3.9.
+        # La tolleranza è l'arrotondamento di quel valore: ρ_a·c_p esplicito
+        # contro il coefficiente 900 pesa circa un millesimo di millimetro.
+        self.assertAlmostEqual(result.value_mm, 3.88, delta=0.005)
 
 
 if __name__ == "__main__":
