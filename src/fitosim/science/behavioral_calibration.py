@@ -109,7 +109,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Sequence
 
-from fitosim.domain.species import Species
+from fitosim.domain.species import KC_MAX_PLAUSIBLE, KC_MIN_PLAUSIBLE, Species
 
 
 # Soglie di numerosità. Sono più alte di quelle della calibrazione da
@@ -139,11 +139,6 @@ OBSERVATION_RATIO_MAX = 4.0
 # d'accordo, un utente che a volte anticipa e a volte posticipa
 # produrrebbe una mediana spostata senza che ci sia un vero bias.
 MIN_CONSISTENCY = 0.67
-
-# Estremi entro cui mantenere i Kc corretti, per restare dentro il
-# range di validità di Species (0 < Kc < 2).
-KC_FLOOR = 0.05
-KC_CEILING = 1.95
 
 
 @dataclass(frozen=True)
@@ -457,7 +452,7 @@ def apply_kc_correction(
     def _scale(value: Optional[float]) -> Optional[float]:
         if value is None:
             return None
-        return max(KC_FLOOR, min(KC_CEILING, value * factor))
+        return max(KC_MIN_PLAUSIBLE, min(KC_MAX_PLAUSIBLE, value * factor))
 
     return dataclasses.replace(
         species,

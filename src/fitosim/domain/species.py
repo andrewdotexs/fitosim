@@ -53,6 +53,20 @@ from enum import Enum
 from fitosim.science.balance import stress_coefficient_ks
 from fitosim.science.substrate import DEFAULT_DEPLETION_FRACTION, Substrate
 
+# Il limite unico di un Kc, per tutto il pacchetto: `Species` lo valida, le
+# calibrazioni scartano le stime che ne escono, `apply_kc_correction` ci si
+# ferma. Il massimo è incluso, così una stima accettata entra nella specie.
+#
+# Il Kc di fitosim è riferito alla bocca del vaso, e una chioma grande su un
+# vaso piccolo supera 2: in letteratura i contenitori arrivano a 4.7 (Schuch &
+# Burger 1997, J. Amer. Soc. Hort. Sci. 122:727) e oltre 5 (Treder et al. 2017,
+# Infrastructure and Ecology of Rural Areas III/2:1213). Anche 2.50 può quindi
+# tagliare un valore vero: per alzarlo servono le pesate. Nel catalogo di
+# The Pot il massimo è 1.15, e il limite resta una guardia contro gli errori
+# di trascrizione.
+KC_MIN_PLAUSIBLE = 0.05
+KC_MAX_PLAUSIBLE = 2.50
+
 
 class PhenologicalStage(Enum):
     """
@@ -221,10 +235,10 @@ class Species:
 
     Vincoli
     -------
-    - Ogni kc_* deve essere in (0, 2): valori tipici vanno da 0.3 a 1.2;
-      imporre un limite superiore di 2 cattura errori di trascrizione
-      evidenti senza escludere casi estremi (es. Kc di colture ad alta
-      densità fogliare in specifici microclimi).
+    - Ogni kc_* deve essere in (0, KC_MAX_PLAUSIBLE]: valori tipici vanno
+      da 0.3 a 1.2; il limite superiore cattura errori di trascrizione
+      evidenti senza escludere i casi veri (una chioma grande su un vaso
+      piccolo), e lo condividono le calibrazioni.
     - depletion_fraction deve essere in (0, 1]; valori tipici 0.3-0.7.
     - initial_stage_days e mid_stage_days devono essere positivi.
 
@@ -371,10 +385,11 @@ class Species:
             ("kc_mid", self.kc_mid),
             ("kc_late", self.kc_late),
         ):
-            if not 0.0 < value < 2.0:
+            if not 0.0 < value <= KC_MAX_PLAUSIBLE:
                 raise ValueError(
                     f"Specie '{self.common_name}': {name}={value} è "
-                    f"fuori range plausibile (0, 2). Controlla il valore."
+                    f"fuori range plausibile (0, {KC_MAX_PLAUSIBLE}]. "
+                    f"Controlla il valore."
                 )
         if not 0.0 < self.depletion_fraction <= 1.0:
             raise ValueError(
@@ -404,10 +419,10 @@ class Species:
                 ("kcb_mid", self.kcb_mid, self.kc_mid),
                 ("kcb_late", self.kcb_late, self.kc_late),
             ):
-                if not 0.0 < kcb_value < 2.0:
+                if not 0.0 < kcb_value <= KC_MAX_PLAUSIBLE:
                     raise ValueError(
                         f"Specie '{self.common_name}': {name}={kcb_value} "
-                        f"è fuori range plausibile (0, 2)."
+                        f"è fuori range plausibile (0, {KC_MAX_PLAUSIBLE}]."
                     )
                 if kcb_value > kc_value:
                     raise ValueError(

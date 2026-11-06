@@ -76,6 +76,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Iterable, Optional
 
+from fitosim.domain.species import KC_MAX_PLAUSIBLE, KC_MIN_PLAUSIBLE
 from fitosim.science.balance import stress_coefficient_ks
 from fitosim.science.substrate import (
     DEFAULT_DEPLETION_FRACTION,
@@ -101,12 +102,11 @@ DEFAULT_MIN_WINDOW_DEPLETION = 0.03   # calo minimo in θ perché il segnale
 DEFAULT_RISE_TOLERANCE = 0.01     # risalita in θ tollerata come rumore
                                   # (oltre questa soglia = apporto idrico)
 
-# Limiti di plausibilità fisica per una stima di Kc. Fuori da questo
-# intervallo la finestra è quasi certamente contaminata (irrigazione
-# non registrata, glitch del sensore, substrato che drena ancora) e
-# viene scartata anziché inquinare la mediana.
-KC_MIN_PLAUSIBLE = 0.05
-KC_MAX_PLAUSIBLE = 2.50
+# I limiti di plausibilità di una stima di Kc sono quelli di `Species`
+# (`KC_MIN_PLAUSIBLE`, `KC_MAX_PLAUSIBLE`). Fuori da quell'intervallo la
+# finestra è quasi certamente contaminata (irrigazione non registrata,
+# glitch del sensore, substrato che drena ancora) e viene scartata anziché
+# inquinare la mediana.
 
 # Soglie di numerosità per i livelli di confidenza. Sono regole di
 # pollice basate sull'osservazione che con meno di 5 cicli di

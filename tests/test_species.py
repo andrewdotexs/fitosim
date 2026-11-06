@@ -18,6 +18,7 @@ from fitosim.domain.species import (
     CITRUS,
     DEFAULT_ANNUAL_GROWTH_STAGES,
     KC_BARE_SOIL_FLOOR,
+    KC_MAX_PLAUSIBLE,
     KCB_BARE_SOIL,
     LETTUCE,
     ROSEMARY,
@@ -134,13 +135,23 @@ class TestSpeciesDataclass(unittest.TestCase):
             )
 
     def test_unreasonably_high_kc_rejected(self):
-        # Kc > 2 indica quasi certamente un errore di trascrizione.
+        # Oltre il limite unico, quasi certamente un errore di trascrizione.
         with self.assertRaises(ValueError):
             Species(
                 common_name="Bad", scientific_name="x",
-                kc_initial=0.5, kc_mid=2.5, kc_late=0.8,
+                kc_initial=0.5, kc_mid=KC_MAX_PLAUSIBLE + 0.01, kc_late=0.8,
                 depletion_fraction=0.4,
             )
+
+    def test_the_kc_limit_is_included(self):
+        # Il limite è chiuso come nelle calibrazioni: una stima che le
+        # calibrazioni accettano entra nella specie.
+        s = Species(
+            common_name="Grande", scientific_name="x",
+            kc_initial=0.5, kc_mid=KC_MAX_PLAUSIBLE, kc_late=0.8,
+            depletion_fraction=0.4,
+        )
+        self.assertEqual(s.kc_mid, KC_MAX_PLAUSIBLE)
 
     def test_invalid_depletion_fraction_rejected(self):
         with self.assertRaises(ValueError):

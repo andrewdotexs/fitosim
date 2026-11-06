@@ -78,6 +78,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Sequence
 
+from fitosim.domain.species import KC_MAX_PLAUSIBLE, KC_MIN_PLAUSIBLE
+
 # Densità dell'acqua assunta pari a 1 g/cm³. Alle temperature
 # domestiche il valore vero sta tra 0.997 e 1.000: l'errore che
 # introduciamo è inferiore al 0.3%, molto sotto la ripetibilità di una
@@ -93,11 +95,10 @@ MIN_INTERVALS_FOR_LOW_CONFIDENCE = 3
 MIN_INTERVALS_FOR_MEDIUM_CONFIDENCE = 5
 MIN_INTERVALS_FOR_HIGH_CONFIDENCE = 10
 
-# Limiti di plausibilità per un Kc misurato. Fuori da qui l'intervallo
-# è quasi certamente contaminato: una potatura non dichiarata, una
-# pioggia non contabilizzata, o una pesata sbagliata.
-KC_MIN_PLAUSIBLE = 0.05
-KC_MAX_PLAUSIBLE = 2.50
+# I limiti di plausibilità di un Kc misurato sono quelli di `Species`
+# (`KC_MIN_PLAUSIBLE`, `KC_MAX_PLAUSIBLE`). Fuori da lì l'intervallo è quasi
+# certamente contaminato: una potatura non dichiarata, una pioggia non
+# contabilizzata, o una pesata sbagliata.
 
 
 @dataclass(frozen=True)

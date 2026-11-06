@@ -255,11 +255,26 @@ class TestApplyCorrection(unittest.TestCase):
         self.assertLessEqual(corrected.kcb_mid, corrected.kc_mid)
 
     def test_result_stays_within_validity_range(self):
-        # Il pomodoro ha kc_mid=1.15: raddoppiarlo sforerebbe il limite
-        # di validita' di Species (Kc < 2). Il valore viene limitato.
-        from fitosim.domain.species import TOMATO
-        corrected = apply_kc_correction(TOMATO, 2.0)
-        self.assertLess(corrected.kc_mid, 2.0)
+        # Il pomodoro ha kc_mid=1.15: triplicarlo sforerebbe il limite
+        # unico di Kc. Il valore viene limitato.
+        from fitosim.domain.species import KC_MAX_PLAUSIBLE, TOMATO
+        corrected = apply_kc_correction(TOMATO, 3.0)
+        self.assertEqual(corrected.kc_mid, KC_MAX_PLAUSIBLE)
+
+    def test_a_kc_the_calibrations_accept_is_applied_as_it_is(self):
+        # 2.3 sta dentro le calibrazioni: non si ferma a 1.95, e il
+        # rapporto fra gli stadi resta quello del catalogo.
+        corrected = apply_kc_correction(BASIL, 2.3 / BASIL.kc_mid)
+        self.assertAlmostEqual(corrected.kc_mid, 2.3)
+        self.assertAlmostEqual(
+            corrected.kc_late / corrected.kc_mid, BASIL.kc_late / BASIL.kc_mid,
+        )
+
+    def test_the_kc_limit_is_one_for_the_whole_package(self):
+        from fitosim.domain import species
+        from fitosim.science import calibration, lysimeter
+        self.assertEqual(calibration.KC_MAX_PLAUSIBLE, species.KC_MAX_PLAUSIBLE)
+        self.assertEqual(lysimeter.KC_MAX_PLAUSIBLE, species.KC_MAX_PLAUSIBLE)
 
     def test_original_species_is_untouched(self):
         # L'override e' locale per costruzione: il catalogo globale non
