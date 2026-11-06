@@ -89,11 +89,8 @@ dei contenitori per produzione ornamentale, che documentano
 estensivamente le differenze tra materiali e colori) e tarati sul
 buon senso del giardinaggio domestico. Sono **stime ragionevoli, non
 misure esatte**: un giardiniere con dati WH51 reali del proprio vaso
-li potrà calibrare nel tempo.
-
-Riferimento di letteratura: Beeson (2007), "Determining plant-available
-water of plants in containers from measurements of evapotranspiration",
-HortScience 42(7).
+li potrà calibrare nel tempo. Il modulo non ha una fonte puntuale per
+questi numeri.
 """
 
 from enum import Enum
