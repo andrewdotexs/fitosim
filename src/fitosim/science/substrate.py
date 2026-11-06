@@ -780,16 +780,8 @@ class BaseMaterial:
 # −10 kPa, densità e fonti). Questi nove servono a `compose_substrate`
 # nei test e negli esempi, con la convenzione da suolo agrario.
 #
-# Valori di θ_FC e θ_PWP in letteratura agronomica vivaistica e
-# bonsaistica, mediane di range pubblicati. Coperture per ciascun
-# materiale documentate nelle stringhe `description`.
-#
-# Riferimenti principali:
-#   - Beeson (2007), HortScience 42(7)
-#   - Bilderback et al. (2005), Best Management Practices: Guide for
-#     Producing Container-Grown Plants
-#   - Wageningen UR, Substrate Hydraulic Properties Database
-#   - Letteratura italo-giapponese su substrati bonsaistici
+# Sono valori dimostrativi, senza una fonte puntuale: i range nelle stringhe
+# `description` sono indicativi, non citazioni. Le fonti stanno nel catalogo.
 
 BIONDA_PEAT = BaseMaterial(
     name="Torba bionda",
@@ -797,7 +789,7 @@ BIONDA_PEAT = BaseMaterial(
     theta_pwp=0.10,
     description=(
         "Torba di sfagno poco decomposta (H1-H3 sulla scala von Post). "
-        "Range pubblicato: θ_FC 0.50-0.65, θ_PWP 0.08-0.13. "
+        "Range indicativo: θ_FC 0.50-0.65, θ_PWP 0.08-0.13. "
         "Alta porosità, ottima ritenzione idrica, povera di nutrienti."
     ),
 )
@@ -808,7 +800,7 @@ BRUNA_PEAT = BaseMaterial(
     theta_pwp=0.15,
     description=(
         "Torba più decomposta (H4-H7), particelle più fini. "
-        "Range pubblicato: θ_FC 0.45-0.58, θ_PWP 0.12-0.18. "
+        "Range indicativo: θ_FC 0.45-0.58, θ_PWP 0.12-0.18. "
         "Maggiore ritenzione di nutrienti rispetto alla bionda, "
         "drenaggio più lento."
     ),
@@ -820,7 +812,7 @@ PERLITE = BaseMaterial(
     theta_pwp=0.02,
     description=(
         "Vetro vulcanico espanso, granulometria 2-5 mm tipica per "
-        "giardinaggio. Range pubblicato: θ_FC 0.05-0.12, θ_PWP "
+        "giardinaggio. Range indicativo: θ_FC 0.05-0.12, θ_PWP "
         "0.01-0.03. Funzione primaria: drenaggio e aerazione, "
         "pochissimo contributo idrico."
     ),
@@ -832,7 +824,7 @@ VERMICULITE = BaseMaterial(
     theta_pwp=0.08,
     description=(
         "Mica espansa termicamente, struttura lamellare che trattiene "
-        "acqua tra i fogli. Range pubblicato: θ_FC 0.35-0.50, θ_PWP "
+        "acqua tra i fogli. Range indicativo: θ_FC 0.35-0.50, θ_PWP "
         "0.05-0.12. Buona ritenzione idrica e di nutrienti, alternativa "
         "alla perlite quando serve più capacità d'acqua."
     ),
@@ -844,7 +836,7 @@ COCO_FIBER = BaseMaterial(
     theta_pwp=0.12,
     description=(
         "Fibra dal mesocarpo della noce di cocco, prodotto rinnovabile. "
-        "Range pubblicato: θ_FC 0.48-0.62, θ_PWP 0.08-0.15. Comportamento "
+        "Range indicativo: θ_FC 0.48-0.62, θ_PWP 0.08-0.15. Comportamento "
         "idrico simile alla torba bionda, alternativa sostenibile."
     ),
 )
@@ -854,7 +846,7 @@ POMICE = BaseMaterial(
     theta_fc=0.18,
     theta_pwp=0.05,
     description=(
-        "Roccia vulcanica porosa, granulometria 3-8 mm. Range pubblicato: "
+        "Roccia vulcanica porosa, granulometria 3-8 mm. Range indicativo: "
         "θ_FC 0.12-0.25, θ_PWP 0.03-0.08. Drenaggio eccellente, "
         "stabilità strutturale alta. Base per molti mix bonsai."
     ),
@@ -865,7 +857,7 @@ SAND = BaseMaterial(
     theta_fc=0.12,
     theta_pwp=0.03,
     description=(
-        "Sabbia di fiume lavata, granulometria 0.5-2 mm. Range pubblicato: "
+        "Sabbia di fiume lavata, granulometria 0.5-2 mm. Range indicativo: "
         "θ_FC 0.08-0.18, θ_PWP 0.02-0.05. Drenaggio rapido, peso "
         "specifico alto (utile per stabilizzare vasi in terrazzi ventosi)."
     ),
@@ -877,7 +869,7 @@ AKADAMA = BaseMaterial(
     theta_pwp=0.10,
     description=(
         "Argilla giapponese a grani granulari (kiryu), trattamento "
-        "termico. Range pubblicato: θ_FC 0.40-0.50, θ_PWP 0.08-0.13. "
+        "termico. Range indicativo: θ_FC 0.40-0.50, θ_PWP 0.08-0.13. "
         "Materiale base classico dei mix bonsai, buona ritenzione idrica "
         "e capacità di scambio cationico. Si decompone in 2-3 anni."
     ),
