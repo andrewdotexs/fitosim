@@ -395,20 +395,24 @@ def et0_for_blocks(
     results: list[BlockEt0] = []
     for i, b in enumerate(blocks):
         ra = ra_blocks[i]
-        ea = actual_vapor_pressure(b.t_c, b.humidity_relative)
+        # Umidità, vento e radiazione ci sono in ogni blocco: su questo
+        # cammino si arriva solo con `has_full_weather` dappertutto.
+        humidity, wind, solar = b.humidity_relative, b.wind_speed_m_s, b.solar_radiation_mj_m2
+        assert humidity is not None and wind is not None and solar is not None
+        ea = actual_vapor_pressure(b.t_c, humidity)
         rn = net_radiation_interval(
-            b.solar_radiation_mj_m2, ra, b.t_c, ea, b.hours,
+            solar, ra, b.t_c, ea, b.hours,
             daytime=daytime[i], rs_rso_night=night_ratio, elevation_m=elevation_m,
         )
         g = soil_heat_flux_interval(rn, daytime[i])
-        u2 = max(b.wind_speed_m_s * wind_factor, 0.0)
+        u2 = max(wind * wind_factor, 0.0)
         if u2 <= 0.0:
             # Il Penman-Monteith fisico vuole un vento positivo (r_a
             # finita): calma piatta = vento minimo convettivo.
             u2 = 0.5
-        if physical:
+        if stomatal_resistance_s_m is not None and crop_height_m is not None:
             et_raw = compute_et_penman_monteith_physical(
-                temperature_c=b.t_c, humidity_relative=b.humidity_relative,
+                temperature_c=b.t_c, humidity_relative=humidity,
                 wind_speed_m_s=u2, net_radiation_mj_m2_day=rn,
                 stomatal_resistance_s_m=stomatal_resistance_s_m,
                 crop_height_m=crop_height_m, elevation_m=elevation_m,
@@ -416,7 +420,7 @@ def et0_for_blocks(
             )
         else:
             et_raw = compute_et0_penman_monteith(
-                temperature_c=b.t_c, humidity_relative=b.humidity_relative,
+                temperature_c=b.t_c, humidity_relative=humidity,
                 wind_speed_m_s=u2, net_radiation_mj_m2_day=rn,
                 elevation_m=elevation_m, soil_heat_flux_mj_m2_day=g, hours=b.hours,
             )
@@ -450,12 +454,13 @@ def _distributed_daily_et0(
     j = day_of_year(day.date_)
     rn_day: float | None = None
     wind: float | None = None
-    if day.has_full_weather:
+    humidity, solar = day.humidity_relative, day.solar_radiation_mj_m2_day
+    if day.has_full_weather and humidity is not None and solar is not None:
         _e_s, ea = daily_vapor_pressures(
-            day.t_min, day.t_max, day.humidity_relative, day.humidity_min, day.humidity_max,
+            day.t_min, day.t_max, humidity, day.humidity_min, day.humidity_max,
         )
         rn_day = net_radiation(
-            solar_radiation_mj=day.solar_radiation_mj_m2_day,
+            solar_radiation_mj=solar,
             extraterrestrial_radiation_mj=extraterrestrial_radiation(latitude_deg, j),
             t_max_c=day.t_max, t_min_c=day.t_min,
             actual_vapor_pressure_kpa=ea, elevation_m=elevation_m,
@@ -476,6 +481,6 @@ def _distributed_daily_et0(
             start_hour=b.start_hour, hours=b.hours, et_mm=part, et_raw_mm=part,
             ra_mj=ra, rn_mj=None, g_mj=None, daytime=ra > 0.0, rs_rso=None,
         )
-        for b, ra, part in zip(blocks, ra_blocks, parts)
+        for b, ra, part in zip(blocks, ra_blocks, parts, strict=True)
     ]
     return results, et_result.method, None

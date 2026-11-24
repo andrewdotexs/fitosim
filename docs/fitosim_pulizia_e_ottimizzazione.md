@@ -19,6 +19,45 @@ simulazione di sessanta giorni, a blocchi orari e giornaliera; le durate
 della suite con `--durations`. Lo script dell'analisi sta fuori dal repo: le
 misure sono ripetibili coi comandi citati in ogni paragrafo.
 
+**Aggiornamento al 24 novembre 2026 — P3 è fatto, tranne `py.typed`.**
+fitosim (0.42.0) ha la configurazione di `ruff` con le regole di The Pot, un
+`[tool.mypy]`, `requires-python >= 3.12` e una CI
+(`.github/workflows/ci.yml`: ruff, mypy e pytest su Python 3.12, 3.13 e
+3.14). I rilievi di ruff erano 746 e sono a zero: 674 corretti dallo
+strumento in un commit di sola forma, gli altri a mano, con tre eccezioni
+dichiarate nel `pyproject` (nei test `dict(...)` e i nomi con le unità; i
+nomi delle classi nei test dello strato standalone, che se ne vanno con
+lui). Gli errori di mypy erano 91: i 63 dei moduli vivi sono a zero senza
+cambiare comportamento — si dice al controllo dei tipi quello che il codice
+sa già —, i 28 dello strato congelato e della calibrazione comportamentale
+sono un'eccezione dichiarata fino a P1.
+
+Tre cose trovate per strada, che dicono perché gli strumenti servono:
+
+- **Un'annotazione che rompeva l'import su Python 3.12 e 3.13.**
+  `Optional[callable]` in `io/openmeteo.py` usava la funzione `callable` al
+  posto del tipo `Callable`. Funzionava per caso; riscritta dallo strumento
+  come `callable | None` avrebbe fatto fallire l'import ovunque tranne che
+  su 3.14, dove le annotazioni si valutano tardi — ed è su 3.14 che si
+  sviluppa. L'ha presa la prova su 3.13 prima del push; ora è `Callable`.
+- **Una correzione «sicura a occhio» che non lo era.** `colonna in
+  riga.keys()` su una riga di SQLite non equivale a `colonna in riga`, che
+  cerca fra i valori: due test l'hanno fermata. Le correzioni che lo
+  strumento chiama insicure si rileggono una per una.
+- **Tre nomi usati nelle annotazioni e mai importati** (`SoilReading`,
+  `WeatherSample`, `Species`): innocui a runtime, invisibili senza un
+  controllo.
+
+**`py.typed` aspetta The Pot.** Col marcatore il `mypy` strict di The Pot
+smette di trattare fitosim come `Any` e trova quattro errori suoi
+(`fitosim_adapter.py:463`, `storico_vaso.py:517`,
+`calibrazione_fitosim.py:438` e `443`: valori facoltativi passati dove
+fitosim vuole un numero). La CI di The Pot clona fitosim da `main`: metterlo
+ora la farebbe diventare rossa. Si aggiunge quando di là quei quattro punti
+sono a posto; l'elenco sta nel documento di integrazione di The Pot.
+
+Il resto del documento è l'analisi del 23 ottobre, lasciata com'era.
+
 ---
 
 ## Pulizia

@@ -84,6 +84,11 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Solo per le annotazioni: il modulo del meteo si importa dove serve.
+    from fitosim.domain.weather import WeatherSample
 
 # -----------------------------------------------------------------------
 #  Endpoint e timeouts
@@ -870,8 +875,11 @@ def _parse_time(node: dict | None) -> datetime | None:
     """L'istante di un nodo (`time`, secondi epoch), in UTC."""
     if not node:
         return None
+    seconds = node.get("time")
+    if seconds is None:
+        return None
     try:
-        return datetime.fromtimestamp(int(node.get("time")), tz=UTC)
+        return datetime.fromtimestamp(int(seconds), tz=UTC)
     except (ValueError, TypeError, OverflowError, OSError):
         return None
 

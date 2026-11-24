@@ -4,6 +4,14 @@ __fitosim — Status Report__
 
 *Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 24 novembre, del 6 novembre, del 5 novembre, del 30 ottobre, del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
 
+# Aggiornamento al 24 novembre 2026 — gli strumenti
+
+**Ruff, mypy e una CI** (24 novembre, versione 0.42.0; è il passo P3 di `docs/fitosim_pulizia_e_ottimizzazione.md`, il modello non cambia). fitosim non aveva né regole né controllo dei tipi né una CI: lo controllava di riflesso quella di The Pot. Ora ha le regole di The Pot (riga da 100, Python 3.12, E, W, F, I, N, UP, B, C4, SIM), un `[tool.mypy]` sui sorgenti, `requires-python >= 3.12` e `.github/workflows/ci.yml`, che passa i tre cancelli su Python 3.12, 3.13 e 3.14. I rilievi di ruff da 746 a zero — 674 corretti dallo strumento in un commit di sola forma, gli altri a mano —, gli errori di mypy da 91 a zero nei moduli vivi, con lo strato congelato come eccezione dichiarata fino a P1. I 1 642 test passano uguali, su 3.14 e su 3.13.
+
+**Tre difetti presi dagli strumenti.** Un'annotazione sbagliata in `io/openmeteo.py` (`callable` al posto di `Callable`) che, riscritta nella forma moderna, avrebbe rotto l'import su Python 3.12 e 3.13 — e non su 3.14, dove si sviluppa: l'ha fermata la prova su 3.13. Una correzione automatica su una riga di SQLite che cambiava il significato di `in`, fermata da due test. Tre nomi usati nelle annotazioni e mai importati.
+
+**`py.typed` non c'è ancora.** Col marcatore il mypy strict di The Pot trova quattro errori suoi, e la sua CI clona fitosim da `main`: si aggiunge quando di là sono a posto.
+
 # Aggiornamento al 24 novembre 2026 — la luce utile alla pianta
 
 **La luce, da energia a luce** (24 novembre, versione 0.41.0; proposta e misure in `docs/proposta_luce.md`). Fino a ieri la luce entrava nel modello solo come energia: la radiazione netta dell'ET₀, il fattore di esposizione del vaso, la radiazione delle stanze. Mancava quella che la pianta usa per crescere. Ora c'è `science/light.py`: la conversione dalla radiazione globale al **DLI**, l'integrale giornaliero di luce in mol di fotoni PAR per m² (0,45 × 4,48 µmol/J = 2,02 mol per MJ, i numeri delle mappe di Logan e Faust), il DLI al vaso come frazione di quello a cielo aperto, le quattro classi di coltura di Purdue HO-238-W (luce bassa 3–6, media 6–12, alta 12–18, molto alta oltre 18) e il giudizio della luce al vaso contro il fabbisogno della specie (`LightRequirement`, `light_sufficiency`). La specie dichiara il suo DLI «buono» e, se lo conosce, il «minimo accettabile» (`dli_good_mol_m2_day`, `dli_minimum_mol_m2_day`): sono numeri del catalogo di The Pot, qui non ce n'è nessuno.

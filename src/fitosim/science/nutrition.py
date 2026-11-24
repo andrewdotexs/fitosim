@@ -140,6 +140,12 @@ retrocompatibile per le specie del catalogo legacy della fascia 1.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Solo per le annotazioni: `domain.species` importa da `science`, non il contrario.
+    from fitosim.domain.species import Species
+
 # Valore minimo del fattore EC, raggiunto in stress salino completo
 # (EC molto sopra il range). Corrisponde al valore di letteratura per
 # stress salino acuto: la pianta riduce la traspirazione del 70%
@@ -501,7 +507,8 @@ def nutritional_factor(
         >>> assert kn == 1.0   # disabilitazione silenziosa
     """
     # Disabilitazione silenziosa per specie del catalogo legacy.
-    if not species.supports_chemistry_model:
+    optimal_max = species.ec_optimal_max_mscm
+    if not species.supports_chemistry_model or optimal_max is None:
         return 1.0
 
     # Validazione dell'input numerico (la specie è già validata in
@@ -523,6 +530,6 @@ def nutritional_factor(
     ec_half_width = (1.0 - KN_MIN_DEFAULT) * 100.0 / slope
     return salinity_factor(
         current=ec_substrate_mscm,
-        optimal_max=species.ec_optimal_max_mscm,
+        optimal_max=optimal_max,
         half_width=ec_half_width,
     )

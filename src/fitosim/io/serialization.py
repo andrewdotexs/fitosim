@@ -236,22 +236,22 @@ def _dict_to_species(data: dict[str, Any]) -> Species:
     scritto con il formato v1 o v2 resta leggibile, e i campi assenti
     prendono il default della dataclass.
     """
-    kwargs: dict[str, Any] = dict(
-        common_name=data["common_name"],
-        scientific_name=data["scientific_name"],
-        kc_initial=data["kc_initial"],
-        kc_mid=data["kc_mid"],
-        kc_late=data["kc_late"],
-        kcb_initial=data.get("kcb_initial"),
-        kcb_mid=data.get("kcb_mid"),
-        kcb_late=data.get("kcb_late"),
-        initial_stage_days=data.get("initial_stage_days", 30),
-        mid_stage_days=data.get("mid_stage_days", 60),
-        ec_optimal_min_mscm=data.get("ec_optimal_min_mscm"),
-        ec_optimal_max_mscm=data.get("ec_optimal_max_mscm"),
-        ph_optimal_min=data.get("ph_optimal_min"),
-        ph_optimal_max=data.get("ph_optimal_max"),
-    )
+    kwargs: dict[str, Any] = {
+        "common_name": data["common_name"],
+        "scientific_name": data["scientific_name"],
+        "kc_initial": data["kc_initial"],
+        "kc_mid": data["kc_mid"],
+        "kc_late": data["kc_late"],
+        "kcb_initial": data.get("kcb_initial"),
+        "kcb_mid": data.get("kcb_mid"),
+        "kcb_late": data.get("kcb_late"),
+        "initial_stage_days": data.get("initial_stage_days", 30),
+        "mid_stage_days": data.get("mid_stage_days", 60),
+        "ec_optimal_min_mscm": data.get("ec_optimal_min_mscm"),
+        "ec_optimal_max_mscm": data.get("ec_optimal_max_mscm"),
+        "ph_optimal_min": data.get("ph_optimal_min"),
+        "ph_optimal_max": data.get("ph_optimal_max"),
+    }
 
     for field_name in (
         "depletion_fraction", "notes",
@@ -498,22 +498,22 @@ def _dict_to_pot(
     static = data["static_fields"]
     state = data["state_fields"]
 
-    kwargs: dict[str, Any] = dict(
-        label=data["label"],
-        species=species_by_name[species_name],
-        substrate=substrates_by_name[substrate_name],
-        pot_volume_l=static["pot_volume_l"],
-        pot_diameter_cm=static["pot_diameter_cm"],
-        pot_shape=PotShape(static["pot_shape"]),
-        pot_material=PotMaterial(static["pot_material"]),
-        pot_color=PotColor(static["pot_color"]),
-        location=Location(static["location"]),
-        sun_exposure=SunExposure(static["sun_exposure"]),
-        active_depth_fraction=static["active_depth_fraction"],
-        rainfall_exposure=static["rainfall_exposure"],
-        planting_date=date.fromisoformat(static["planting_date"]),
-        notes=static.get("notes", ""),
-    )
+    kwargs: dict[str, Any] = {
+        "label": data["label"],
+        "species": species_by_name[species_name],
+        "substrate": substrates_by_name[substrate_name],
+        "pot_volume_l": static["pot_volume_l"],
+        "pot_diameter_cm": static["pot_diameter_cm"],
+        "pot_shape": PotShape(static["pot_shape"]),
+        "pot_material": PotMaterial(static["pot_material"]),
+        "pot_color": PotColor(static["pot_color"]),
+        "location": Location(static["location"]),
+        "sun_exposure": SunExposure(static["sun_exposure"]),
+        "active_depth_fraction": static["active_depth_fraction"],
+        "rainfall_exposure": static["rainfall_exposure"],
+        "planting_date": date.fromisoformat(static["planting_date"]),
+        "notes": static.get("notes", ""),
+    }
     if static.get("pot_width_cm") is not None:
         kwargs["pot_width_cm"] = static["pot_width_cm"]
     if static.get("saucer_capacity_mm") is not None:

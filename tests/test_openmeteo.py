@@ -17,6 +17,7 @@ girano in CI offline e in pochi millisecondi.
 import json
 import tempfile
 import unittest
+from dataclasses import FrozenInstanceError
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -80,7 +81,7 @@ class TestDailyWeather(unittest.TestCase):
             day=date(2025, 7, 15),
             t_min=18.0, t_max=30.0, precipitation_mm=0.0,
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(FrozenInstanceError):
             w.t_min = 10.0  # type: ignore[misc]
 
 

@@ -78,6 +78,7 @@ La fase 2 (export/import JSON) vive in un modulo separato
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -501,7 +502,7 @@ class PersistenceError(Exception):
     """Errore generico di persistenza."""
 
 
-class SchemaVersionMismatch(PersistenceError):
+class SchemaVersionMismatch(PersistenceError):  # noqa: N818 (nome pubblico dello strato congelato)
     """
     Il database è stato creato da una versione futura di fitosim, e il
     codice corrente non sa come gestirlo. Il chiamante deve aggiornare
@@ -609,10 +610,8 @@ class GardenPersistence:
         # Cleanup di sicurezza: se il chiamante dimentica di chiudere
         # esplicitamente, lo facciamo noi al GC.
         if getattr(self, "_conn", None) is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._conn.close()
-            except Exception:
-                pass
 
     # ----- Inizializzazione e versioning dello schema -----
 
@@ -835,11 +834,13 @@ class GardenPersistence:
         Idempotente e difensiva come le precedenti: salta la colonna se
         c'è già, e la tabella se manca.
         """
-        if self._table_exists("substrates"):
-            if not self._column_exists("substrates", "bulk_density_kg_l"):
-                self._conn.execute(
-                    "ALTER TABLE substrates ADD COLUMN bulk_density_kg_l REAL"
-                )
+        if (
+            self._table_exists("substrates")
+            and not self._column_exists("substrates", "bulk_density_kg_l")
+        ):
+            self._conn.execute(
+                "ALTER TABLE substrates ADD COLUMN bulk_density_kg_l REAL"
+            )
 
     def _migrate_v7_to_v8(self) -> None:
         """
@@ -851,11 +852,13 @@ class GardenPersistence:
         restano NULL — «la pendenza globale» — e il Kn si comporta come
         prima. Idempotente e difensiva come le precedenti.
         """
-        if self._table_exists("species"):
-            if not self._column_exists("species", "ec_stress_slope_pct_per_mscm"):
-                self._conn.execute(
-                    "ALTER TABLE species ADD COLUMN ec_stress_slope_pct_per_mscm REAL"
-                )
+        if (
+            self._table_exists("species")
+            and not self._column_exists("species", "ec_stress_slope_pct_per_mscm")
+        ):
+            self._conn.execute(
+                "ALTER TABLE species ADD COLUMN ec_stress_slope_pct_per_mscm REAL"
+            )
 
     def _migrate_v4_to_v5(self) -> None:
         """
@@ -1913,22 +1916,22 @@ class GardenPersistence:
 
         # Costruisce il Pot. Se non c'è snapshot, gli state_* restano
         # ai loro default del costruttore.
-        kwargs: dict[str, Any] = dict(
-            label=pot_row["label"],
-            species=species,
-            substrate=substrate,
-            pot_volume_l=pot_row["pot_volume_l"],
-            pot_diameter_cm=pot_row["pot_diameter_cm"],
-            pot_shape=PotShape(pot_row["pot_shape"]),
-            pot_material=PotMaterial(pot_row["pot_material"]),
-            pot_color=PotColor(pot_row["pot_color"]),
-            location=Location(pot_row["location"]),
-            sun_exposure=SunExposure(pot_row["sun_exposure"]),
-            active_depth_fraction=pot_row["active_depth_fraction"],
-            rainfall_exposure=pot_row["rainfall_exposure"],
-            planting_date=date.fromisoformat(pot_row["planting_date"]),
-            notes=pot_row["notes"],
-        )
+        kwargs: dict[str, Any] = {
+            "label": pot_row["label"],
+            "species": species,
+            "substrate": substrate,
+            "pot_volume_l": pot_row["pot_volume_l"],
+            "pot_diameter_cm": pot_row["pot_diameter_cm"],
+            "pot_shape": PotShape(pot_row["pot_shape"]),
+            "pot_material": PotMaterial(pot_row["pot_material"]),
+            "pot_color": PotColor(pot_row["pot_color"]),
+            "location": Location(pot_row["location"]),
+            "sun_exposure": SunExposure(pot_row["sun_exposure"]),
+            "active_depth_fraction": pot_row["active_depth_fraction"],
+            "rainfall_exposure": pot_row["rainfall_exposure"],
+            "planting_date": date.fromisoformat(pot_row["planting_date"]),
+            "notes": pot_row["notes"],
+        }
         if pot_row["pot_width_cm"] is not None:
             kwargs["pot_width_cm"] = pot_row["pot_width_cm"]
         if pot_row["saucer_capacity_mm"] is not None:
@@ -1954,7 +1957,9 @@ class GardenPersistence:
             "plant_height_m", "canopy_width_m", "canopy_height_m",
             "material_factor",
         ):
-            if column in pot_row.keys() and pot_row[column] is not None:
+            # `pot_row` è un `sqlite3.Row`: `in` cerca fra i valori, non fra i
+            # nomi delle colonne. Le chiavi vanno chieste per nome.
+            if column in pot_row.keys() and pot_row[column] is not None:  # noqa: SIM118
                 kwargs[column] = pot_row[column]
         if state_row is not None:
             kwargs["state_mm"] = state_row["state_mm"]

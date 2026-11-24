@@ -425,7 +425,11 @@ class Species:
                 f"kcb_initial={self.kcb_initial}, "
                 f"kcb_mid={self.kcb_mid}, kcb_late={self.kcb_late}."
             )
-        if kcb_present == 3:
+        if (
+            self.kcb_initial is not None
+            and self.kcb_mid is not None
+            and self.kcb_late is not None
+        ):
             for name, kcb_value, kc_value in (
                 ("kcb_initial", self.kcb_initial, self.kc_initial),
                 ("kcb_mid", self.kcb_mid, self.kc_mid),
@@ -466,7 +470,12 @@ class Species:
                 f"{self.ec_optimal_max_mscm}), pH=("
                 f"{self.ph_optimal_min}, {self.ph_optimal_max})."
             )
-        if chemistry_present == 4:
+        if (
+            self.ec_optimal_min_mscm is not None
+            and self.ec_optimal_max_mscm is not None
+            and self.ph_optimal_min is not None
+            and self.ph_optimal_max is not None
+        ):
             # Range EC: deve essere ordinato e dentro i limiti fisici
             # tipici del substrato (EC > 8 mS/cm sono già condizioni
             # di stress salino acuto; il range di OPTIMA non può
@@ -487,14 +496,16 @@ class Species:
         # La pendenza salina: positiva, e sotto i 100 % per mS/cm, che
         # vorrebbe dire ET zero a un solo mS/cm sopra il massimo — la
         # fragola, la più sensibile di FAO-56 tab. 23, sta a 22.
-        if self.ec_stress_slope_pct_per_mscm is not None:
-            if not 0.0 < self.ec_stress_slope_pct_per_mscm <= 100.0:
-                raise ValueError(
-                    f"Specie '{self.common_name}': ec_stress_slope_pct_per_mscm="
-                    f"{self.ec_stress_slope_pct_per_mscm} deve stare in "
-                    f"(0, 100]: è la percentuale di ET persa per mS/cm sopra "
-                    f"il massimo (FAO-56 tab. 23: da 3.6 a 33 per dS/m di ECe)."
-                )
+        if (
+            self.ec_stress_slope_pct_per_mscm is not None
+            and not 0.0 < self.ec_stress_slope_pct_per_mscm <= 100.0
+        ):
+            raise ValueError(
+                f"Specie '{self.common_name}': ec_stress_slope_pct_per_mscm="
+                f"{self.ec_stress_slope_pct_per_mscm} deve stare in "
+                f"(0, 100]: è la percentuale di ET persa per mS/cm sopra "
+                f"il massimo (FAO-56 tab. 23: da 3.6 a 33 per dS/m di ECe)."
+            )
 
         # Il piano nutrizionale: dodici mesi, niente sotto zero, e una
         # frazione di alimentazione fra 0 e 1.
@@ -566,7 +577,11 @@ class Species:
                 f"t_base_c={self.t_base_c}, gdd_to_mid={self.gdd_to_mid}, "
                 f"gdd_to_late={self.gdd_to_late}."
             )
-        if n_gdd == 3:
+        if (
+            self.t_base_c is not None
+            and self.gdd_to_mid is not None
+            and self.gdd_to_late is not None
+        ):
             if not 0.0 < self.gdd_to_mid < self.gdd_to_late:
                 raise ValueError(
                     f"Specie '{self.common_name}': le soglie GDD devono "
@@ -581,13 +596,15 @@ class Species:
                     f"invernale (chill units), non dal calore: usa il "
                     f"phenology_calendar."
                 )
-        if self.t_cap_c is not None and self.t_base_c is not None:
-            if self.t_cap_c <= self.t_base_c:
-                raise ValueError(
-                    f"Specie '{self.common_name}': t_cap_c "
-                    f"({self.t_cap_c}) deve essere maggiore di t_base_c "
-                    f"({self.t_base_c})."
-                )
+        if (
+            self.t_cap_c is not None and self.t_base_c is not None
+            and self.t_cap_c <= self.t_base_c
+        ):
+            raise ValueError(
+                f"Specie '{self.common_name}': t_cap_c "
+                f"({self.t_cap_c}) deve essere maggiore di t_base_c "
+                f"({self.t_base_c})."
+            )
 
     @property
     def supports_dual_kc(self) -> bool:
@@ -645,15 +662,16 @@ class Species:
 
         Solleva ValueError se la specie non ha le soglie GDD.
         """
-        if not self.supports_gdd:
+        gdd_to_mid, gdd_to_late = self.gdd_to_mid, self.gdd_to_late
+        if not self.supports_gdd or gdd_to_mid is None or gdd_to_late is None:
             raise ValueError(
                 f"Specie '{self.common_name}': soglie GDD non definite. "
                 f"Usa stage_at_day, oppure valorizza t_base_c, "
                 f"gdd_to_mid e gdd_to_late."
             )
-        if gdd_accumulated < self.gdd_to_mid:
+        if gdd_accumulated < gdd_to_mid:
             return PhenologicalStage.INITIAL
-        if gdd_accumulated < self.gdd_to_late:
+        if gdd_accumulated < gdd_to_late:
             return PhenologicalStage.MID_SEASON
         return PhenologicalStage.LATE_SEASON
 
@@ -698,6 +716,7 @@ class Species:
         """
         if self.phenology_anchor is PhenologyAnchor.PERENNIAL:
             # Il calendario è garantito presente e completo da __post_init__.
+            assert self.phenology_calendar is not None
             return self.phenology_calendar[current_date.month - 1]
 
         fao_stage = self.stage_at(
@@ -924,7 +943,11 @@ def effective_kcb(
         PhenologicalStage.MID_SEASON: species.kcb_mid,
         PhenologicalStage.LATE_SEASON: species.kcb_late,
     }
-    return base_map[stage]
+    kcb = base_map[stage]
+    # I Kcb ci sono tutti e tre o nessuno (`__post_init__`), e chi chiama
+    # ha già guardato `supports_dual_kc`.
+    assert kcb is not None, "effective_kcb vuole una specie coi Kcb (supports_dual_kc)"
+    return kcb
 
 
 def kc_for_stage(species: Species, stage: PhenologicalStage) -> float:

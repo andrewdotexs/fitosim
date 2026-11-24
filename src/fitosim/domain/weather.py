@@ -268,9 +268,10 @@ def weather_day_from_blocks(blocks: Sequence[WeatherBlock]) -> WeatherDay:
     total_hours = sum(b.hours for b in blocks)
 
     def weighted_mean(values: list[float | None]) -> float | None:
-        if any(v is None for v in values):
+        known = [v for v in values if v is not None]
+        if len(known) != len(values):
             return None
-        return sum(v * b.hours for v, b in zip(values, blocks)) / total_hours  # type: ignore[operator]
+        return sum(v * b.hours for v, b in zip(known, blocks, strict=True)) / total_hours
 
     solar = [b.solar_radiation_mj_m2 for b in blocks]
     humidities = [b.humidity_relative for b in blocks]

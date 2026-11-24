@@ -9,6 +9,7 @@ Organizzati in quattro famiglie:
 """
 
 import unittest
+from dataclasses import FrozenInstanceError
 from datetime import date
 
 from fitosim.domain.species import (
@@ -168,7 +169,7 @@ class TestSpeciesDataclass(unittest.TestCase):
 
     def test_immutability(self):
         s = BASIL
-        with self.assertRaises(Exception):
+        with self.assertRaises(FrozenInstanceError):
             s.kc_mid = 2.0  # type: ignore[misc]
 
 
@@ -893,7 +894,6 @@ class TestGddPhenology(unittest.TestCase):
         )
 
     def test_phenology_method_is_traceable(self):
-        planting = date(2026, 5, 1)
         self.assertEqual(
             BASIL.phenology_method(gdd_accumulated=100.0),
             PhenologyMethod.GROWING_DEGREE_DAYS,

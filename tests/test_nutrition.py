@@ -408,9 +408,9 @@ class TestNutritionalFactor(unittest.TestCase):
     def test_ph_tolerance_is_for_the_alerts(self):
         # La banda resta nel modulo per le allerte: e' l'unico numero del
         # modello chimico che riguarda il pH.
-        from fitosim.domain.alerts import PH_TOLERANCE as banda_delle_allerte
+        from fitosim.domain.alerts import PH_TOLERANCE as BANDA_DELLE_ALLERTE
         self.assertEqual(PH_TOLERANCE, 0.3)
-        self.assertIs(banda_delle_allerte, PH_TOLERANCE)
+        self.assertIs(BANDA_DELLE_ALLERTE, PH_TOLERANCE)
 
     # ----- A4 (2026-09-20): la pendenza della specie -----
 

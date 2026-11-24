@@ -1351,7 +1351,7 @@ class Garden:
                 self._apply_scheduled_event_to_copy(pot_copy, event, day)
 
             # Step giornaliero standard.
-            for label, pot_copy in pot_copies.items():
+            for pot_copy in pot_copies.values():
                 rainfall_volume_l = (
                     day_forecast.rainfall_mm * pot_copy.surface_area_m2
                 )

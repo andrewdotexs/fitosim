@@ -101,12 +101,11 @@ class TestLysimeterIntervalValidation(unittest.TestCase):
 
     def test_masses_must_be_positive(self):
         for start_g, end_g in ((0.0, 4900.0), (5000.0, -1.0)):
-            with self.subTest(start_g=start_g, end_g=end_g):
-                with self.assertRaises(ValueError):
-                    LysimeterInterval(
-                        start_date=START, end_date=START + timedelta(days=1),
-                        mass_start_g=start_g, mass_end_g=end_g, et0_mm=5.0,
-                    )
+            with self.subTest(start_g=start_g, end_g=end_g), self.assertRaises(ValueError):
+                LysimeterInterval(
+                    start_date=START, end_date=START + timedelta(days=1),
+                    mass_start_g=start_g, mass_end_g=end_g, et0_mm=5.0,
+                )
 
     def test_water_and_drainage_cannot_be_negative(self):
         with self.assertRaises(ValueError):

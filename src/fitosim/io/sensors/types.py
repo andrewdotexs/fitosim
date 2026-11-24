@@ -101,12 +101,11 @@ class ReadingQuality:
 
     def __post_init__(self) -> None:
         # Validazione range battery_level se presente.
-        if self.battery_level is not None:
-            if not 0.0 <= self.battery_level <= 1.0:
-                raise SensorDataQualityError(
-                    f"battery_level fuori range [0,1]: "
-                    f"{self.battery_level}"
-                )
+        if self.battery_level is not None and not 0.0 <= self.battery_level <= 1.0:
+            raise SensorDataQualityError(
+                f"battery_level fuori range [0,1]: "
+                f"{self.battery_level}"
+            )
         # staleness non può essere negativo (significherebbe lettura
         # dal futuro). Usiamo questa come sanity check sui dati di
         # configurazione del sensore (orologio del provider sballato).
@@ -181,42 +180,36 @@ class EnvironmentReading:
         # Range fisicamente plausibili. Sono volutamente larghi: vogliamo
         # accomodare condizioni estreme reali (sahara estivo, polo
         # nord), ma intercettare valori chiaramente spurii dei provider.
-        if self.temperature_c is not None:
-            if not -60.0 <= self.temperature_c <= 60.0:
-                raise SensorDataQualityError(
-                    f"temperature_c fuori range plausibile [-60,60]: "
-                    f"{self.temperature_c}"
-                )
-        if self.humidity_relative is not None:
-            if not 0.0 <= self.humidity_relative <= 1.0:
-                raise SensorDataQualityError(
-                    f"humidity_relative fuori range [0,1]: "
-                    f"{self.humidity_relative} (forse è in percentuale?)"
-                )
-        if self.radiation_mj_m2 is not None:
-            if not 0.0 <= self.radiation_mj_m2 <= 50.0:
-                raise SensorDataQualityError(
-                    f"radiation_mj_m2 fuori range plausibile [0,50]: "
-                    f"{self.radiation_mj_m2}"
-                )
-        if self.wind_speed_m_s is not None:
-            if not 0.0 <= self.wind_speed_m_s <= 100.0:
-                raise SensorDataQualityError(
-                    f"wind_speed_m_s fuori range plausibile [0,100]: "
-                    f"{self.wind_speed_m_s}"
-                )
-        if self.rain_mm is not None:
-            if not 0.0 <= self.rain_mm <= 500.0:
-                raise SensorDataQualityError(
-                    f"rain_mm fuori range plausibile [0,500]: "
-                    f"{self.rain_mm}"
-                )
-        if self.et0_mm is not None:
-            if not 0.0 <= self.et0_mm <= 25.0:
-                raise SensorDataQualityError(
-                    f"et0_mm fuori range plausibile [0,25]: "
-                    f"{self.et0_mm}"
-                )
+        if self.temperature_c is not None and not -60.0 <= self.temperature_c <= 60.0:
+            raise SensorDataQualityError(
+                f"temperature_c fuori range plausibile [-60,60]: "
+                f"{self.temperature_c}"
+            )
+        if self.humidity_relative is not None and not 0.0 <= self.humidity_relative <= 1.0:
+            raise SensorDataQualityError(
+                f"humidity_relative fuori range [0,1]: "
+                f"{self.humidity_relative} (forse è in percentuale?)"
+            )
+        if self.radiation_mj_m2 is not None and not 0.0 <= self.radiation_mj_m2 <= 50.0:
+            raise SensorDataQualityError(
+                f"radiation_mj_m2 fuori range plausibile [0,50]: "
+                f"{self.radiation_mj_m2}"
+            )
+        if self.wind_speed_m_s is not None and not 0.0 <= self.wind_speed_m_s <= 100.0:
+            raise SensorDataQualityError(
+                f"wind_speed_m_s fuori range plausibile [0,100]: "
+                f"{self.wind_speed_m_s}"
+            )
+        if self.rain_mm is not None and not 0.0 <= self.rain_mm <= 500.0:
+            raise SensorDataQualityError(
+                f"rain_mm fuori range plausibile [0,500]: "
+                f"{self.rain_mm}"
+            )
+        if self.et0_mm is not None and not 0.0 <= self.et0_mm <= 25.0:
+            raise SensorDataQualityError(
+                f"et0_mm fuori range plausibile [0,25]: "
+                f"{self.et0_mm}"
+            )
 
 
 # --------------------------------------------------------------------------
@@ -305,29 +298,26 @@ class SoilReading:
         # Temperatura del substrato: range più stretto di quello
         # dell'aria perché i vasi sono protetti dalle escursioni
         # estreme. Sotto -20 o sopra 60 è quasi certamente un errore.
-        if self.temperature_c is not None:
-            if not -20.0 <= self.temperature_c <= 60.0:
-                raise SensorDataQualityError(
-                    f"temperature_c del substrato fuori range plausibile "
-                    f"[-20,60]: {self.temperature_c}"
-                )
+        if self.temperature_c is not None and not -20.0 <= self.temperature_c <= 60.0:
+            raise SensorDataQualityError(
+                f"temperature_c del substrato fuori range plausibile "
+                f"[-20,60]: {self.temperature_c}"
+            )
 
         # EC: range largo perché i fertilizzanti concentrati possono
         # legittimamente alzare l'EC oltre 10 mS/cm in casi di flushing.
-        if self.ec_mscm is not None:
-            if not 0.0 <= self.ec_mscm <= 20.0:
-                raise SensorDataQualityError(
-                    f"ec_mscm fuori range plausibile [0,20]: "
-                    f"{self.ec_mscm} (forse in μS/cm? va diviso per 1000)"
-                )
+        if self.ec_mscm is not None and not 0.0 <= self.ec_mscm <= 20.0:
+            raise SensorDataQualityError(
+                f"ec_mscm fuori range plausibile [0,20]: "
+                f"{self.ec_mscm} (forse in μS/cm? va diviso per 1000)"
+            )
 
         # pH: range fisico assoluto. Fuori da [0,14] è errore di
         # calibrazione del sensore.
-        if self.ph is not None:
-            if not 0.0 <= self.ph <= 14.0:
-                raise SensorDataQualityError(
-                    f"ph fuori range fisico [0,14]: {self.ph}"
-                )
+        if self.ph is not None and not 0.0 <= self.ph <= 14.0:
+            raise SensorDataQualityError(
+                f"ph fuori range fisico [0,14]: {self.ph}"
+            )
 
 
 # --------------------------------------------------------------------------

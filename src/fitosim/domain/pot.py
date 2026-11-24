@@ -37,7 +37,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from fitosim.domain.blocks import (
     BalanceBlock,
@@ -133,6 +133,10 @@ from fitosim.science.substrate import (
     rectangular_pot_surface_area_m2,
     truncated_cone_pot_surface_area_m2,
 )
+
+if TYPE_CHECKING:
+    # Solo per le annotazioni: a runtime il vaso non importa i sensori.
+    from fitosim.io.sensors.types import SoilReading
 
 
 class Location(Enum):
@@ -804,13 +808,15 @@ class Pot:
                 f"({self.plant_height_m})."
             )
         # Forme non-rotonde richiedono pot_width_cm.
-        if self.pot_shape in (PotShape.RECTANGULAR, PotShape.OVAL):
-            if self.pot_width_cm is None or self.pot_width_cm <= 0:
-                raise ValueError(
-                    f"Vaso '{self.label}': forma {self.pot_shape.value} "
-                    f"richiede pot_width_cm positivo "
-                    f"(ricevuto {self.pot_width_cm})."
-                )
+        if (
+            self.pot_shape in (PotShape.RECTANGULAR, PotShape.OVAL)
+            and (self.pot_width_cm is None or self.pot_width_cm <= 0)
+        ):
+            raise ValueError(
+                f"Vaso '{self.label}': forma {self.pot_shape.value} "
+                f"richiede pot_width_cm positivo "
+                f"(ricevuto {self.pot_width_cm})."
+            )
         # Validazione del sottovaso: se la capacità è specificata, deve
         # essere positiva, e lo stato iniziale non deve eccederla.
         if self.saucer_capacity_mm is not None:
@@ -1348,10 +1354,13 @@ class Pot:
         )
         # Coefficiente di riduzione superficiale: dipende da De
         # corrente e dai parametri REW/TEW del substrato.
+        # REW e TEW ci sono: è la condizione di `supports_dual_kc`.
+        rew_mm, tew_mm = self.substrate.rew_mm, self.substrate.tew_mm
+        assert rew_mm is not None and tew_mm is not None
         kr = evaporation_reduction_coefficient(
             de_mm=self.de_mm,
-            rew_mm=self.substrate.rew_mm,
-            tew_mm=self.substrate.tew_mm,
+            rew_mm=rew_mm,
+            tew_mm=tew_mm,
         )
         # Coefficiente di evaporazione superficiale. Il limite
         # energetico usa il Kcb della CHIOMA (non ridotto dalla
@@ -1630,23 +1639,28 @@ class Pot:
         # eq. 73 la porta sotto il punto di appassimento), e D_e segue
         # l'evaporazione chiesta: senza, Kr non arriverebbe mai a zero.
         soil_evap_demand_mm = soil_evap_mm
-        if result.et_actual < et_c_mm:
-            shortfall = et_c_mm - result.et_actual
+        # Il passo di bilancio dice sempre quanta ET è uscita davvero; se
+        # un giorno non lo dicesse, niente è stato negato.
+        et_actual = result.et_actual if result.et_actual is not None else et_c_mm
+        if et_actual < et_c_mm:
+            shortfall = et_c_mm - et_actual
             cut_e = min(soil_evap_mm, shortfall)
             soil_evap_mm -= cut_e
             if self.supports_dual_kc:
                 transpiration_mm = max(0.0, transpiration_mm - (shortfall - cut_e))
             else:
-                transpiration_mm = result.et_actual * TRANSPIRATION_SHARE_SINGLE_KC
-            et_c_mm = result.et_actual
+                transpiration_mm = et_actual * TRANSPIRATION_SHARE_SINGLE_KC
+            et_c_mm = et_actual
 
         # === Passi 4-5: il drenaggio finisce nel sottovaso ===
         if has_saucer:
             # Il drenaggio in eccesso entra nel piattino, fino al limite
             # di capacità. L'eccesso oltre capacità trabocca ed è
             # perso definitivamente (non torna nel modello).
+            capacity_mm = self.saucer_capacity_mm
+            assert capacity_mm is not None  # è la definizione di `has_saucer`
             self.saucer_state_mm = min(
-                self.saucer_capacity_mm,  # type: ignore[type-var]
+                capacity_mm,
                 self.saucer_state_mm + result.drainage,
             )
 
@@ -1953,6 +1967,8 @@ class Pot:
             observed_ph = reading.ph
             provider_specific_data = reading.provider_specific
         else:
+            # Uno dei due c'è, l'ha controllato la validazione in testa.
+            assert theta_observed is not None
             theta_effective = theta_observed
 
         # Da qui in poi la logica è identica alla forma legacy: il θ
@@ -1984,10 +2000,7 @@ class Pot:
         # caso il rapporto non è ben definito; ritorniamo 0% come
         # convenzione, il chiamante può usare absolute_error_mm
         # invece se lo trova più informativo.
-        if predicted_mm > 0:
-            relative_error_pct = discrepancy_mm / predicted_mm * 100.0
-        else:
-            relative_error_pct = 0.0
+        relative_error_pct = discrepancy_mm / predicted_mm * 100.0 if predicted_mm > 0 else 0.0
 
         # ----- Aggiornamento dello stato chimico (sotto-tappa E tappa 3) -----
         #
@@ -2199,18 +2212,19 @@ class Pot:
         # Penman-Monteith". Nei casi parziali passiamo None e il
         # selettore ricadrà su Hargreaves.
         rn_mj_m2_day: float | None = None
-        if weather.has_full_weather:
+        humidity, solar = weather.humidity_relative, weather.solar_radiation_mj_m2_day
+        if weather.has_full_weather and humidity is not None and solar is not None:
             j = day_of_year(weather.date_)
             ra = extraterrestrial_radiation(effective_latitude, j)
             # e_a dagli estremi del giorno (A9, 2026-10-21): la stessa che
             # entra nel Penman-Monteith, così R_n e l'ET parlano la stessa
             # lingua (FAO-56 eq. 17 con le umidità estreme, eq. 19 senza).
             _e_s, ea = daily_vapor_pressures(
-                weather.t_min, weather.t_max, weather.humidity_relative,
+                weather.t_min, weather.t_max, humidity,
                 weather.humidity_min, weather.humidity_max,
             )
             rn_mj_m2_day = net_radiation(
-                solar_radiation_mj=weather.solar_radiation_mj_m2_day,
+                solar_radiation_mj=solar,
                 extraterrestrial_radiation_mj=ra,
                 t_max_c=weather.t_max,
                 t_min_c=weather.t_min,
@@ -2312,11 +2326,16 @@ class Pot:
         # Si accumula solo se il tracciamento è attivo (campo non None)
         # e la specie ha le soglie: un vaso che non traccia resta sul
         # conteggio dei giorni, senza sorprese.
-        if self.gdd_accumulated is not None and self.species.supports_gdd:
+        t_base = self.species.t_base_c
+        if (
+            self.gdd_accumulated is not None
+            and self.species.supports_gdd
+            and t_base is not None
+        ):
             self.gdd_accumulated += growing_degree_days(
                 t_min=weather.t_min,
                 t_max=weather.t_max,
-                t_base=self.species.t_base_c,
+                t_base=t_base,
                 t_cap=self.species.t_cap_c,
             )
 
@@ -2482,9 +2501,13 @@ class Pot:
             self.elevation_m if self.elevation_m is not None else 100.0
         )
 
+        # Un microclima DAILY ha minima e massima: lo valida
+        # `IndoorMicroclimate`, e il tipo l'abbiamo controllato in testa.
+        room_t_min, room_t_max = microclimate.t_min, microclimate.t_max
+        assert room_t_min is not None and room_t_max is not None
         et_result = compute_et(
-            t_min=microclimate.t_min,
-            t_max=microclimate.t_max,
+            t_min=room_t_min,
+            t_max=room_t_max,
             latitude_deg=latitude_for_selector,
             j=day_of_year(current_date),
             humidity_relative=microclimate.humidity_relative,
@@ -3176,11 +3199,16 @@ class Pot:
 
         # I gradi-giorno del giorno appena simulato, dopo il bilancio:
         # l'ET del giorno usa lo stadio con cui il giorno comincia.
-        if self.gdd_accumulated is not None and self.species.supports_gdd:
+        t_base = self.species.t_base_c
+        if (
+            self.gdd_accumulated is not None
+            and self.species.supports_gdd
+            and t_base is not None
+        ):
             self.gdd_accumulated += growing_degree_days(
                 t_min=day.t_min,
                 t_max=day.t_max,
-                t_base=self.species.t_base_c,
+                t_base=t_base,
                 t_cap=self.species.t_cap_c,
             )
 

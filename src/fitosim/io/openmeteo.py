@@ -78,6 +78,7 @@ come fallback quando la stazione non risponde.
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -388,7 +389,7 @@ def fetch_daily_forecast(
     cache_dir: Path | None = None,
     cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
     use_cache: bool = True,
-    fetcher: callable | None = None,
+    fetcher: Callable[[str], dict] | None = None,
 ) -> list[DailyWeather]:
     """
     Recupera la previsione meteo giornaliera per una località.
@@ -520,7 +521,7 @@ def fetch_daily_archive(
     start_date: date,
     end_date: date,
     *,
-    fetcher: callable | None = None,
+    fetcher: Callable[[str], dict] | None = None,
 ) -> list[DailyWeather]:
     """
     Recupera dati meteorologici storici tra start_date ed end_date

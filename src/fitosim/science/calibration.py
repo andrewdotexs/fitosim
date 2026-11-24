@@ -235,7 +235,7 @@ def find_peaks(
     # Passo 2: applica il filtro di distanza minima. Se due candidati
     # sono troppo vicini, teniamo solo quello con valore più alto.
     # È un greedy che parte dal picco più alto e scarta i suoi vicini.
-    accepted = set()
+    accepted: set[int] = set()
     sorted_by_height = sorted(
         candidates, key=lambda i: values[i], reverse=True,
     )

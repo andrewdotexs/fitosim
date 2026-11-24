@@ -64,7 +64,10 @@ from datetime import date
 from enum import Enum
 
 from fitosim.domain.pot import Pot
-from fitosim.science.nutrition import PH_TOLERANCE
+
+# Riesportata di proposito (`as`): chi legge le allerte prende da qui la
+# banda del pH, la stessa del Kn.
+from fitosim.science.nutrition import PH_TOLERANCE as PH_TOLERANCE
 
 # =======================================================================
 #  Enum: severità e categorie
@@ -393,12 +396,12 @@ def check_ph_out_of_range(
     """
     if not pot.species.supports_chemistry_model:
         return None
-    if pot.species.ph_optimal_min is None:
+    ph_min = pot.species.ph_optimal_min
+    ph_max = pot.species.ph_optimal_max
+    if ph_min is None or ph_max is None:
         return None
 
     ph = pot.ph_substrate
-    ph_min = pot.species.ph_optimal_min
-    ph_max = pot.species.ph_optimal_max
 
     # Margine di tolleranza, condiviso con il Kn.
     if (ph_min - PH_TOLERANCE) <= ph <= (ph_max + PH_TOLERANCE):

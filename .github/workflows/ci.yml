@@ -1,0 +1,44 @@
+# La CI di fitosim (P3, docs/fitosim_pulizia_e_ottimizzazione.md).
+#
+# Fino al 24 novembre 2026 fitosim non ne aveva una: lo controllava di
+# riflesso la CI di The Pot, che lo clona da `main` a ogni corsa. Qui i tre
+# cancelli del pacchetto — le regole, i tipi, i test — sulle tre versioni di
+# Python che dichiara.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  controlli:
+    name: ruff · mypy · pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Installa uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Sincronizza le dipendenze
+        run: uv sync --extra dev
+
+      - name: ruff
+        run: uv run ruff check src tests
+
+      - name: mypy
+        run: uv run mypy
+
+      - name: pytest
+        run: uv run pytest -q

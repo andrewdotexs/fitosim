@@ -755,6 +755,12 @@ def compute_et_penman_monteith_physical(
     return mj_per_m2_to_mm_water(et_energy)
 
 
+# La coltura di riferimento di FAO-56: un prato d'erba alto 12 cm con una
+# resistenza superficiale di 70 s/m (FAO-56 cap. 2, «reference surface»).
+REFERENCE_STOMATAL_RESISTANCE_S_M = 70.0
+REFERENCE_CROP_HEIGHT_M = 0.12
+
+
 def compute_et0_penman_monteith(
     temperature_c: float,
     humidity_relative: float,
@@ -823,10 +829,6 @@ def compute_et0_penman_monteith(
     ValueError
         Se i parametri di input violano i loro vincoli fisici.
     """
-    # Parametri della coltura di riferimento FAO-56.
-    REFERENCE_STOMATAL_RESISTANCE_S_M = 70.0
-    REFERENCE_CROP_HEIGHT_M = 0.12
-
     return compute_et_penman_monteith_physical(
         temperature_c=temperature_c,
         humidity_relative=humidity_relative,
@@ -1108,45 +1110,39 @@ def compute_et(
     # I gruppi sono "tutto o niente": Penman-Monteith ha bisogno di
     # tutti e tre i dati meteo aggiuntivi per funzionare; la versione
     # fisica ha bisogno di entrambi i parametri della specie.
-    weather_complete = (
+    # Applica la logica di selezione in ordine di priorità decrescente:
+    # prima i dati meteo (tutti e tre, o niente Penman-Monteith), poi i
+    # parametri della specie (tutti e due, o la coltura di riferimento).
+    if (
         humidity_relative is not None
         and wind_speed_m_s is not None
         and net_radiation_mj_m2_day is not None
-    )
-    species_params_complete = (
-        stomatal_resistance_s_m is not None
-        and crop_height_m is not None
-    )
-
-    # Applica la logica di selezione in ordine di priorità decrescente.
-
-    if weather_complete and species_params_complete:
-        # Caso migliore: Penman-Monteith fisico con tutti i parametri.
-        # La temperatura media per Δ e per l'aria; gli estremi per e_s
-        # ed e_a (A9: FAO-56 eq. 12 e 17/19), che con T_media sola
-        # verrebbero sottostimati.
+    ):
         t_mean = (t_min + t_max) / 2.0
-        value = compute_et_penman_monteith_physical(
-            temperature_c=t_mean,
-            humidity_relative=humidity_relative,
-            wind_speed_m_s=wind_speed_m_s,
-            net_radiation_mj_m2_day=net_radiation_mj_m2_day,
-            stomatal_resistance_s_m=stomatal_resistance_s_m,
-            crop_height_m=crop_height_m,
-            elevation_m=elevation_m,
-            t_min=t_min,
-            t_max=t_max,
-            humidity_min=humidity_min,
-            humidity_max=humidity_max,
-        )
-        return EtResult(
-            value_mm=value, method=EtMethod.PENMAN_MONTEITH_PHYSICAL,
-        )
+        if stomatal_resistance_s_m is not None and crop_height_m is not None:
+            # Caso migliore: Penman-Monteith fisico con tutti i parametri.
+            # La temperatura media per Δ e per l'aria; gli estremi per e_s
+            # ed e_a (A9: FAO-56 eq. 12 e 17/19), che con T_media sola
+            # verrebbero sottostimati.
+            value = compute_et_penman_monteith_physical(
+                temperature_c=t_mean,
+                humidity_relative=humidity_relative,
+                wind_speed_m_s=wind_speed_m_s,
+                net_radiation_mj_m2_day=net_radiation_mj_m2_day,
+                stomatal_resistance_s_m=stomatal_resistance_s_m,
+                crop_height_m=crop_height_m,
+                elevation_m=elevation_m,
+                t_min=t_min,
+                t_max=t_max,
+                humidity_min=humidity_min,
+                humidity_max=humidity_max,
+            )
+            return EtResult(
+                value_mm=value, method=EtMethod.PENMAN_MONTEITH_PHYSICAL,
+            )
 
-    if weather_complete:
         # Dati meteo completi ma parametri specie mancanti o incompleti:
         # Penman-Monteith FAO-56 standard.
-        t_mean = (t_min + t_max) / 2.0
         value = compute_et0_penman_monteith(
             temperature_c=t_mean,
             humidity_relative=humidity_relative,

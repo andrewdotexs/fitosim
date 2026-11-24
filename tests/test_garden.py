@@ -281,7 +281,7 @@ class TestGardenApplyStepAll(unittest.TestCase):
             et_0_mm=4.5, current_date=date(2026, 5, 15),
             rainfall_mm=0.0,
         )
-        for label, result in results.items():
+        for result in results.values():
             self.assertIsNone(result.rainfall_result)
 
     def test_with_rainfall_populates_rainfall_result(self):
@@ -856,6 +856,7 @@ class TestGardenForecast(unittest.TestCase):
         for pt_baseline, pt_treat in zip(
             baseline.trajectories["basilico-1"].points,
             with_treatment.trajectories["basilico-1"].points,
+            strict=True,
         ):
             self.assertAlmostEqual(
                 pt_baseline.state_mm, pt_treat.state_mm, places=6,
@@ -936,10 +937,10 @@ class TestGardenCurrentAlerts(unittest.TestCase):
         # I vasi che cominciano con 'a' vengono prima di 'z'.
         labels_in_order = [a.pot_label for a in alerts]
         # Tutti i 'a-vaso' vengono prima di tutti i 'z-vaso'.
-        a_indices = [i for i, l in enumerate(labels_in_order)
-                     if l == "a-vaso"]
-        z_indices = [i for i, l in enumerate(labels_in_order)
-                     if l == "z-vaso"]
+        a_indices = [i for i, label in enumerate(labels_in_order)
+                     if label == "a-vaso"]
+        z_indices = [i for i, label in enumerate(labels_in_order)
+                     if label == "z-vaso"]
         if a_indices and z_indices:
             self.assertLess(max(a_indices), min(z_indices))
 

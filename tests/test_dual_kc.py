@@ -294,7 +294,7 @@ class TestRealisticScenarios(unittest.TestCase):
         rew, tew = 9.0, 22.0
         de = 0.0
         kr_history = []
-        for day in range(7):
+        for _day in range(7):
             kr = evaporation_reduction_coefficient(de, rew, tew)
             kr_history.append(kr)
             ke = soil_evaporation_coefficient(kr=kr, kcb=0.7)

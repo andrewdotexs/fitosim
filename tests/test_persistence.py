@@ -1702,15 +1702,14 @@ class TestSpeciesConfigRoundTrip(unittest.TestCase):
 
     def test_annual_growth_stages_survive(self):
         # La lattuga dichiara che non fiorisce mai in coltivazione.
-        from fitosim.domain.species import LETTUCE
-        from fitosim.domain.species import GrowthStage as GS
+        from fitosim.domain.species import LETTUCE, GrowthStage
         loaded = self._round_trip(LETTUCE)
         self.assertEqual(
             loaded.annual_growth_stages, LETTUCE.annual_growth_stages,
         )
         planting = date(2026, 5, 1)
         stages = loaded.growth_stages_at(date(2026, 6, 10), planting)
-        self.assertNotIn(GS.FLOWERING, stages)
+        self.assertNotIn(GrowthStage.FLOWERING, stages)
 
     def test_full_catalog_round_trips(self):
         # Tutte le specie del catalogo devono tornare identiche.

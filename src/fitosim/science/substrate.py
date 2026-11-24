@@ -192,52 +192,51 @@ class Substrate:
                 f"specificati entrambi o nessuno. Ricevuti: "
                 f"REW={self.rew_mm}, TEW={self.tew_mm}."
             )
-        if self.rew_mm is not None and self.tew_mm is not None:
-            if not 0.0 < self.rew_mm < self.tew_mm:
-                raise ValueError(
-                    f"Substrato '{self.name}': vincolo violato "
-                    f"0 < REW ({self.rew_mm}) < TEW ({self.tew_mm})."
-                )
+        if (
+            self.rew_mm is not None and self.tew_mm is not None
+            and not 0.0 < self.rew_mm < self.tew_mm
+        ):
+            raise ValueError(
+                f"Substrato '{self.name}': vincolo violato "
+                f"0 < REW ({self.rew_mm}) < TEW ({self.tew_mm})."
+            )
         # Validazione della CEC: deve essere positiva quando specificata.
         # Il limite superiore di 300 cattura errori di trascrizione
         # evidenti (es. valori espressi in unità sbagliate) senza
         # escludere torbe acide pure che possono arrivare a 200.
-        if self.cec_meq_per_100g is not None:
-            if not 0.0 < self.cec_meq_per_100g <= 300.0:
-                raise ValueError(
-                    f"Substrato '{self.name}': cec_meq_per_100g="
-                    f"{self.cec_meq_per_100g} è fuori range plausibile "
-                    f"(0, 300]. Verifica le unità: la CEC va in "
-                    f"meq/100g di sostanza secca. Valori tipici: "
-                    f"5-15 sabbia, 30-60 terriccio universale, "
-                    f"100-150 torba acida."
-                )
+        if self.cec_meq_per_100g is not None and not 0.0 < self.cec_meq_per_100g <= 300.0:
+            raise ValueError(
+                f"Substrato '{self.name}': cec_meq_per_100g="
+                f"{self.cec_meq_per_100g} è fuori range plausibile "
+                f"(0, 300]. Verifica le unità: la CEC va in "
+                f"meq/100g di sostanza secca. Valori tipici: "
+                f"5-15 sabbia, 30-60 terriccio universale, "
+                f"100-150 torba acida."
+            )
 
         # Validazione del pH tipico: range fisico [0, 14] della scala.
         # In pratica i substrati reali stanno in [3, 9]; mettendo i
         # limiti chimici puri (0-14) catturiamo errori di trascrizione
         # evidenti senza escludere casi limite legittimi come i terricci
         # per acidofile più estremi (pH 4-4.5).
-        if self.ph_typical is not None:
-            if not 0.0 < self.ph_typical < 14.0:
-                raise ValueError(
-                    f"Substrato '{self.name}': ph_typical="
-                    f"{self.ph_typical} è fuori scala chimica (0, 14). "
-                    f"I substrati reali tipicamente stanno in [3, 9]. "
-                    f"Verifica il valore."
-                )
+        if self.ph_typical is not None and not 0.0 < self.ph_typical < 14.0:
+            raise ValueError(
+                f"Substrato '{self.name}': ph_typical="
+                f"{self.ph_typical} è fuori scala chimica (0, 14). "
+                f"I substrati reali tipicamente stanno in [3, 9]. "
+                f"Verifica il valore."
+            )
 
         # Validazione della densità apparente: positiva, e sotto i 3 kg/L.
         # I substrati stanno fra 0,08 (sfagno) e 1,6 (sabbia, ghiaia);
         # il limite alto cattura le unità sbagliate (g/L, kg/m³).
-        if self.bulk_density_kg_l is not None:
-            if not 0.0 < self.bulk_density_kg_l <= 3.0:
-                raise ValueError(
-                    f"Substrato '{self.name}': bulk_density_kg_l="
-                    f"{self.bulk_density_kg_l} è fuori range plausibile "
-                    f"(0, 3]. La densità apparente va in kg per litro: "
-                    f"0,1 perlite, 0,2 torba, 0,4 terriccio, 1,5 sabbia."
-                )
+        if self.bulk_density_kg_l is not None and not 0.0 < self.bulk_density_kg_l <= 3.0:
+            raise ValueError(
+                f"Substrato '{self.name}': bulk_density_kg_l="
+                f"{self.bulk_density_kg_l} è fuori range plausibile "
+                f"(0, 3]. La densità apparente va in kg per litro: "
+                f"0,1 perlite, 0,2 torba, 0,4 terriccio, 1,5 sabbia."
+            )
 
     @property
     def effective_cec_meq_per_100g(self) -> float:
@@ -1023,30 +1022,39 @@ def compose_substrate(
     theta_pwp = sum(c.fraction * c.material.theta_pwp for c in components)
 
     # Densità e pH: medie sui volumi dei soli materiali che li dichiarano.
-    con_densita = [c for c in components if c.material.bulk_density_kg_l is not None]
-    quota_densita = sum(c.fraction for c in con_densita)
+    con_densita = [
+        (c.fraction, densita)
+        for c in components
+        if (densita := c.material.bulk_density_kg_l) is not None
+    ]
+    quota_densita = sum(frazione for frazione, _ in con_densita)
     bulk_density = (
-        sum(c.fraction * c.material.bulk_density_kg_l for c in con_densita) / quota_densita
+        sum(frazione * densita for frazione, densita in con_densita) / quota_densita
         if quota_densita > 0
         else None
     )
-    con_ph = [c for c in components if c.material.ph_typical is not None]
-    quota_ph = sum(c.fraction for c in con_ph)
+    con_ph = [
+        (c.fraction, ph) for c in components if (ph := c.material.ph_typical) is not None
+    ]
+    quota_ph = sum(frazione for frazione, _ in con_ph)
     ph_typical = (
-        sum(c.fraction * c.material.ph_typical for c in con_ph) / quota_ph
+        sum(frazione * ph for frazione, ph in con_ph) / quota_ph
         if quota_ph > 0
         else None
     )
     # CEC: sulla massa, e solo se ogni materiale dichiara densità e CEC.
     cec: float | None = None
-    if all(
-        c.material.bulk_density_kg_l is not None and c.material.cec_meq_per_100g is not None
+    con_scambio = [
+        (c.fraction, densita, scambio_materiale)
         for c in components
-    ):
-        massa = sum(c.fraction * c.material.bulk_density_kg_l for c in components)
+        if (densita := c.material.bulk_density_kg_l) is not None
+        and (scambio_materiale := c.material.cec_meq_per_100g) is not None
+    ]
+    if len(con_scambio) == len(components):
+        massa = sum(frazione * densita for frazione, densita, _ in con_scambio)
         scambio = sum(
-            c.fraction * c.material.bulk_density_kg_l * c.material.cec_meq_per_100g
-            for c in components
+            frazione * densita * scambio_materiale
+            for frazione, densita, scambio_materiale in con_scambio
         )
         if massa > 0 and scambio > 0:
             cec = scambio / massa

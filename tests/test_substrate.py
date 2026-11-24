@@ -10,6 +10,7 @@ Copertura in tre famiglie di test:
 
 import math
 import unittest
+from dataclasses import FrozenInstanceError
 
 from fitosim.science.substrate import (
     ALL_SUBSTRATES,
@@ -66,7 +67,7 @@ class TestSubstrateDataclass(unittest.TestCase):
     def test_immutability(self):
         # frozen=True: modificare un attributo deve sollevare eccezione.
         s = Substrate(name="test", theta_fc=0.4, theta_pwp=0.15)
-        with self.assertRaises(Exception):
+        with self.assertRaises(FrozenInstanceError):
             s.theta_fc = 0.5  # type: ignore[misc]
 
 
@@ -902,7 +903,7 @@ class TestSubstrateCEC(unittest.TestCase):
         # frozen=True deve continuare a valere anche con il nuovo campo.
         s = Substrate(name="test", theta_fc=0.40, theta_pwp=0.10,
                       cec_meq_per_100g=50.0)
-        with self.assertRaises(Exception):  # FrozenInstanceError
+        with self.assertRaises(FrozenInstanceError):  # FrozenInstanceError
             s.cec_meq_per_100g = 80.0
 
 
@@ -1012,7 +1013,7 @@ class TestSubstrateBulkDensity(unittest.TestCase):
     def test_immutable(self):
         s = Substrate(name="test", theta_fc=0.40, theta_pwp=0.10,
                       bulk_density_kg_l=0.4)
-        with self.assertRaises(Exception):  # FrozenInstanceError
+        with self.assertRaises(FrozenInstanceError):  # FrozenInstanceError
             s.bulk_density_kg_l = 0.5
 
 

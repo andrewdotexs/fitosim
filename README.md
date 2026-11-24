@@ -23,7 +23,7 @@ il giardiniere.
 
 ## Stato del progetto
 
-- **Versione**: 0.41.0 (`pyproject.toml`, dal 2026-11-24: la luce utile alla pianta, `science/light.py`, e il fattore di luce sull'assorbimento dei nutrienti; 0.40.0 il 06-11, il limite inferiore ferma il flusso e non crea acqua, `BalanceStepResult.et_actual`; 0.39.0 lo stesso giorno, un limite solo per il Kc, 2.50; 0.38.0 il 05-11, quanto asciuga il materiale come numero del vaso, `Pot.material_factor`; 0.37.0 il 30-10, la foto della webcam HP10 nel tempo reale di Ecowitt; 0.36.0 il 25-10, le valvole IoT; 0.35.0 il 21-10, le pressioni di vapore dagli estremi del giorno, A9; 0.34.0 il 29-09, il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
+- **Versione**: 0.42.0 (`pyproject.toml`, dal 2026-11-24: gli strumenti — ruff, mypy e una CI —, Python 3.12 come minimo; 0.41.0 lo stesso giorno, la luce utile alla pianta, `science/light.py`, e il fattore di luce sull'assorbimento dei nutrienti; 0.40.0 il 06-11, il limite inferiore ferma il flusso e non crea acqua, `BalanceStepResult.et_actual`; 0.39.0 lo stesso giorno, un limite solo per il Kc, 2.50; 0.38.0 il 05-11, quanto asciuga il materiale come numero del vaso, `Pot.material_factor`; 0.37.0 il 30-10, la foto della webcam HP10 nel tempo reale di Ecowitt; 0.36.0 il 25-10, le valvole IoT; 0.35.0 il 21-10, le pressioni di vapore dagli estremi del giorno, A9; 0.34.0 il 29-09, il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
 - **1618 test verdi** (534 sub-test) nel core; la demo end-to-end usa matplotlib
 - **Le pressioni di vapore dagli estremi del giorno** (A9, 2026-10-21): e_s ed e_a dagli estremi del giorno nel Penman-Monteith giornaliero: la media di e°(T_max) ed e°(T_min) (FAO-56 eq. 12) al posto di e°(T_media), che la sottostima, ed e_a dalle umidità estreme (eq. 17) quando la stazione le dà, dalla media (eq. 19) altrimenti; `WeatherDay` ha `humidity_min` e `humidity_max`; la forma oraria non cambia. Misurato sulle settimane dell'esempio delle stagioni, l'ET₀ giornaliera sale del 2–4 % e coincide con la FAO di riferimento al decimo di percento; in una stanza non cambia.
 - **Il giorno fatto di blocchi** (A7, 2026-09-29): il vaso avanza a blocchi di ore dentro il giorno — `Pot.apply_blocks_from_weather`, `domain/blocks.py` con le nove decisioni e le fonti; il passo giornaliero è il caso di un blocco di 24 ore, con gli stessi numeri
@@ -234,7 +234,7 @@ disposizione tutto il dashboard operativo della tappa 4.
 
 ## Installazione
 
-fitosim richiede **Python ≥ 3.10**. Non ha dipendenze esterne nel core: tutto
+fitosim richiede **Python ≥ 3.12** (dal 24 novembre 2026, come The Pot). Non ha dipendenze esterne nel core: tutto
 il codice agronomico, dalla matematica FAO-56 alla persistenza SQLite, gira
 con la sola standard library di Python. È pensato per girare bene anche su
 ambienti vincolati come Termux su Android o Raspberry Pi 5.
@@ -266,6 +266,16 @@ python tuo_script.py
 L'opzione consigliata per uso prolungato è la seconda perché crea un link
 simbolico nel virtual environment e rende fitosim importabile da qualsiasi
 script.
+
+Chi ci lavora ha tre cancelli, gli stessi che la CI passa a ogni push su
+Python 3.12, 3.13 e 3.14 (`.github/workflows/ci.yml`):
+
+```bash
+uv sync --extra dev
+uv run ruff check src tests   # le regole, le stesse di The Pot
+uv run mypy                   # i tipi dei sorgenti
+uv run pytest -q              # i test
+```
 
 ## Architettura
 

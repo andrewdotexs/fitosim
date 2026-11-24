@@ -13,7 +13,7 @@ import unittest
 from datetime import UTC, date, timedelta
 
 from fitosim.domain.blocks import BalanceBlock
-from fitosim.domain.pot import Location, Pot
+from fitosim.domain.pot import Location, Pot, SensorUpdateResult
 from fitosim.domain.species import (
     BASIL,
     CITRUS,
@@ -1228,7 +1228,6 @@ class TestDualKcSeparation(unittest.TestCase):
 #   4. Validazione degli input.
 #   5. Property derivate del SensorUpdateResult.
 
-from fitosim.domain.pot import SensorUpdateResult
 
 
 def _make_simple_pot(state_mm: float = 30.0) -> Pot:
@@ -1252,7 +1251,7 @@ class TestSensorUpdateBasicBehavior(unittest.TestCase):
         # Dopo un update, state_mm deve essere theta_observed × depth.
         pot = _make_simple_pot(state_mm=30.0)
         depth = pot.substrate_depth_mm
-        result = pot.update_from_sensor(theta_observed=0.25)
+        pot.update_from_sensor(theta_observed=0.25)
         # Lo state_mm è stato aggiornato a 0.25 × depth.
         expected_mm = 0.25 * depth
         self.assertAlmostEqual(pot.state_mm, expected_mm, places=6)
@@ -1284,7 +1283,7 @@ class TestSensorUpdateBasicBehavior(unittest.TestCase):
         pot = _make_simple_pot(state_mm=30.0)
         depth = pot.substrate_depth_mm
         # Prima lettura: 0.30
-        r1 = pot.update_from_sensor(theta_observed=0.30)
+        pot.update_from_sensor(theta_observed=0.30)
         self.assertAlmostEqual(pot.state_mm, 0.30 * depth, places=6)
         # Seconda lettura: 0.20. Il "previsto" del secondo update deve
         # essere 0.30 (lo stato lasciato dal primo), non lo stato
@@ -1380,13 +1379,13 @@ class TestSensorUpdateValidation(unittest.TestCase):
     def test_accepts_zero(self):
         # θ=0 (vaso completamente asciutto) è fisicamente plausibile.
         pot = _make_simple_pot()
-        result = pot.update_from_sensor(theta_observed=0.0)
+        pot.update_from_sensor(theta_observed=0.0)
         self.assertEqual(pot.state_mm, 0.0)
 
     def test_accepts_one(self):
         # θ=1 (vaso completamente saturo, caso limite) è accettato.
         pot = _make_simple_pot()
-        result = pot.update_from_sensor(theta_observed=1.0)
+        pot.update_from_sensor(theta_observed=1.0)
         self.assertAlmostEqual(
             pot.state_mm, pot.substrate_depth_mm, places=6,
         )
@@ -2030,7 +2029,7 @@ class TestPotFertigationMethods(unittest.TestCase):
         test_date = date(2026, 5, 15)
 
         result_a = pot_a.apply_step(et_0_mm=4.0, current_date=test_date)
-        result_b = pot_b.apply_balance_step(
+        pot_b.apply_balance_step(
             et_0_mm=4.0, water_input_mm=0.0, current_date=test_date,
         )
 
@@ -3134,11 +3133,10 @@ class TestPotPhenologyViews(unittest.TestCase):
     def test_perennial_pot_follows_season(self):
         # Un rosmarino piantato anni fa cambia stadio con la stagione,
         # non resta bloccato a fine ciclo.
-        from fitosim.domain.species import ROSEMARY
-        from fitosim.domain.species import PhenologicalStage as PS
+        from fitosim.domain.species import ROSEMARY, PhenologicalStage
         pot = self._pot(ROSEMARY, date(2020, 4, 1))
-        self.assertEqual(pot.current_stage(date(2026, 1, 15)), PS.INITIAL)
-        self.assertEqual(pot.current_stage(date(2026, 7, 15)), PS.MID_SEASON)
+        self.assertEqual(pot.current_stage(date(2026, 1, 15)), PhenologicalStage.INITIAL)
+        self.assertEqual(pot.current_stage(date(2026, 7, 15)), PhenologicalStage.MID_SEASON)
 
     def test_growth_stages_exposes_botanical_view(self):
         from fitosim.domain.species import ROSEMARY, GrowthStage
@@ -3188,8 +3186,7 @@ class TestPotPhenologyViews(unittest.TestCase):
         # entrambi cambiavano stadio lo stesso giorno.
         from datetime import timedelta
 
-        from fitosim.domain.species import BASIL
-        from fitosim.domain.species import PhenologicalStage as PS
+        from fitosim.domain.species import BASIL, PhenologicalStage
         from fitosim.domain.weather import WeatherDay
 
         def days_to_mid(t_min, t_max):
@@ -3204,7 +3201,7 @@ class TestPotPhenologyViews(unittest.TestCase):
                     weather=WeatherDay(date_=d, t_min=t_min, t_max=t_max),
                     water_input_mm=6.0, current_date=d,
                 )
-                if pot.current_stage(d) is PS.MID_SEASON:
+                if pot.current_stage(d) is PhenologicalStage.MID_SEASON:
                     return i
             return None
 
