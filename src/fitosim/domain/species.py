@@ -51,6 +51,7 @@ from datetime import date
 from enum import Enum
 
 from fitosim.science.balance import stress_coefficient_ks
+from fitosim.science.light import LightRequirement
 from fitosim.science.substrate import DEFAULT_DEPLETION_FRACTION, Substrate
 
 # Il limite unico di un Kc, per tutto il pacchetto: `Species` lo valida, le
@@ -376,6 +377,17 @@ class Species:
     # I micronutrienti che contano per questa specie (simboli: «Fe»,
     # «Mg», …), per le bandierine datate del vaso.
     micronutrients: tuple[str, ...] = ()
+    # In coda, per non spostare i campi di prima.
+    # ----- La luce che la specie vuole (2026-11-24) -----
+    # In DLI, mol di fotoni PAR per m² al giorno (`science/light.py`).
+    # `dli_good` è il DLI della «buona qualità»: da lì in su la luce non
+    # limita la crescita, e sotto l'assorbimento dei nutrienti scende in
+    # proporzione (`science/nutrients.light_factor`). `dli_minimum` è la
+    # «qualità minima accettabile», per il giudizio della luce al vaso.
+    # None → la luce non entra: il modello va avanti come prima. I
+    # numeri sono del catalogo di The Pot, non di questa libreria.
+    dli_good_mol_m2_day: float | None = None
+    dli_minimum_mol_m2_day: float | None = None
 
     def __post_init__(self) -> None:
         # Validazione dei Kc: scorriamo la terna con zip per un
@@ -505,6 +517,18 @@ class Species:
                 f"Specie '{self.common_name}': nutrient_feed_fraction="
                 f"{self.nutrient_feed_fraction} deve stare in (0, 1]."
             )
+        # La luce: il minimo non ha senso senza il buono, e i numeri li
+        # controlla `LightRequirement` (positivi, minimo ≤ buono).
+        if self.dli_minimum_mol_m2_day is not None and self.dli_good_mol_m2_day is None:
+            raise ValueError(
+                f"Specie '{self.common_name}': dli_minimum_mol_m2_day vuole anche "
+                f"dli_good_mol_m2_day."
+            )
+        if self.dli_good_mol_m2_day is not None:
+            try:
+                LightRequirement(self.dli_good_mol_m2_day, self.dli_minimum_mol_m2_day)
+            except ValueError as error:
+                raise ValueError(f"Specie '{self.common_name}': {error}") from error
 
         # Coerenza dell'ancoraggio fenologico: una perenne senza
         # calendario non saprebbe in che stadio si trova, perché per
@@ -744,6 +768,13 @@ class Species:
 # =======================================================================
 #  Funzioni di dominio
 # =======================================================================
+
+def light_requirement_of(species: Species) -> LightRequirement | None:
+    """La luce che la specie vuole, o None se il catalogo non lo dice."""
+    if species.dli_good_mol_m2_day is None:
+        return None
+    return LightRequirement(species.dli_good_mol_m2_day, species.dli_minimum_mol_m2_day)
+
 
 def fao56_stage_from_growth_stages(
     stages: tuple[GrowthStage, ...],

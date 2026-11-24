@@ -29,7 +29,10 @@ Tre regole, tutte funzioni pure di numeri:
      settimane e annaffia ogni tre giorni sta a circa 0,2, e il resto lo
      mette il substrato che non modelliamo. Il freddo chiude il cancello:
      sotto i 10 °C le radici assorbono poco anche se la pianta traspira
-     (`temperature_gate`). L'assorbimento toglie anche dalla massa
+     (`temperature_gate`). E la poca luce lo socchiude (`light_factor`,
+     2026-11-24): i nutrienti escono con la crescita, non con l'acqua, e
+     una pianta che riceve meno luce di quella che vuole cresce meno di
+     quanto traspira. L'assorbimento toglie anche dalla massa
      salina i milliequivalenti corrispondenti — il concime è sale, e la
      pianta se lo mangia — che è la «metà mangiata» di The Pot fatta
      giorno per giorno.
@@ -105,6 +108,19 @@ NITRATE_LEACHING_BONUS = 1.2
 UPTAKE_T_GATE_LOW_C = 8.0
 UPTAKE_T_GATE_HIGH_C = 12.0
 UPTAKE_COLD_FLOOR = 0.1
+
+# Il fattore di luce sull'assorbimento (docs/proposta_luce.md, L2). Il
+# piano dà una concentrazione giusta per un certo rapporto fra acqua
+# traspirata e crescita: la soluzione di rabbocco è «concentrazione nei
+# tessuti × efficienza d'uso dell'acqua» (Langenfeld & Bugbee 2026,
+# Front. Plant Sci. 17:1885837, da Bugbee 2004, Acta Hort. 648:99–112),
+# e con azoto disponibile l'accumulo segue la crescita (Gastal & Lemaire
+# 2002, J. Exp. Bot. 53:789–799). Sotto il DLI «buono» della specie la
+# crescita segue la luce: il fattore è il rapporto fra il DLI al vaso e
+# quel DLI. La forma proporzionale e il pavimento sono scelte di modello
+# da tarare, non numeri di una fonte: il pavimento è quello del freddo —
+# non zero, anche al buio qualcosa entra.
+UPTAKE_LIGHT_FLOOR = 0.1
 
 # Nel cammino single-Kc l'ET non è divisa fra pianta e superficie: la
 # traspirazione è una quota dell'ET della coltura. In pieno sviluppo il
@@ -222,6 +238,26 @@ def temperature_gate(t_mean_c: Optional[float]) -> float:
     return UPTAKE_COLD_FLOOR + (1.0 - UPTAKE_COLD_FLOOR) * (t_mean_c - UPTAKE_T_GATE_LOW_C) / span
 
 
+def light_factor(
+    dli_mol_m2_day: Optional[float], dli_good_mol_m2_day: Optional[float],
+) -> float:
+    """
+    Quanto la luce lascia mangiare, fra `UPTAKE_LIGHT_FLOOR` e 1: il DLI
+    che arriva al vaso diviso il DLI «buono» della specie, 1 da lì in
+    su. Senza il DLI del giorno o senza il fabbisogno della specie
+    (None) vale 1: non si inventa il buio.
+    """
+    if dli_mol_m2_day is None or dli_good_mol_m2_day is None:
+        return 1.0
+    if dli_mol_m2_day < 0:
+        raise ValueError(f"dli_mol_m2_day={dli_mol_m2_day} non può essere negativo.")
+    if dli_good_mol_m2_day <= 0:
+        raise ValueError(
+            f"dli_good_mol_m2_day={dli_good_mol_m2_day} deve essere positivo."
+        )
+    return max(UPTAKE_LIGHT_FLOOR, min(1.0, dli_mol_m2_day / dli_good_mol_m2_day))
+
+
 def daily_uptake(
     transpiration_l: float,
     targets_mg_per_l: NutrientAmounts,
@@ -229,11 +265,13 @@ def daily_uptake(
     feed_fraction: float = 1.0,
     t_mean_c: Optional[float] = None,
     available: Optional[NutrientAmounts] = None,
+    light_factor: float = 1.0,
 ) -> NutrientAmounts:
     """
     Quanto la pianta mangia oggi: il flusso di massa della traspirazione
-    alla concentrazione del piano, per la frazione di alimentazione e il
-    cancello della temperatura — e mai più di quello che c'è.
+    alla concentrazione del piano, per la frazione di alimentazione, il
+    cancello della temperatura e il fattore di luce — e mai più di
+    quello che c'è.
 
     Parametri
     ---------
@@ -248,12 +286,17 @@ def daily_uptake(
         La temperatura media del giorno, per il cancello.
     available : NutrientAmounts, opzionale
         Quello che c'è nei serbatoi: l'assorbimento non lo supera.
+    light_factor : float
+        Il fattore di luce del giorno (`light_factor`), 0–1; 1 quando
+        la luce non si conosce.
     """
     if transpiration_l < 0:
         raise ValueError(f"transpiration_l={transpiration_l} non può essere negativa.")
     if not 0.0 <= feed_fraction <= 1.0:
         raise ValueError(f"feed_fraction={feed_fraction} deve stare fra 0 e 1.")
-    factor = transpiration_l * feed_fraction * temperature_gate(t_mean_c)
+    if not 0.0 <= light_factor <= 1.0:
+        raise ValueError(f"light_factor={light_factor} deve stare fra 0 e 1.")
+    factor = transpiration_l * feed_fraction * temperature_gate(t_mean_c) * light_factor
     wanted = targets_mg_per_l.scaled(factor)
     if available is None:
         return wanted

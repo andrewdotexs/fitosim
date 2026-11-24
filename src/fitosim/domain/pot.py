@@ -48,6 +48,7 @@ from fitosim.domain.species import (
     effective_kcb,
     Species,
     kc_for_stage,
+    light_requirement_of,
 )
 from fitosim.science.canopy import (
     cover_fraction,
@@ -90,7 +91,8 @@ from fitosim.science.et0 import (
     compute_et,
     daily_vapor_pressures,
 )
-from fitosim.science.indoor import estimate_indoor_radiation
+from fitosim.science.indoor import estimate_indoor_radiation, light_fraction
+from fitosim.science.light import LightSufficiency, dli_at_pot, light_sufficiency
 from fitosim.science.nutrients import (
     TRANSPIRATION_SHARE_SINGLE_KC,
     ZERO,
@@ -100,6 +102,7 @@ from fitosim.science.nutrients import (
     daily_uptake,
     full_charge_mg,
     leached,
+    light_factor,
     reserve,
     temperature_gate,
 )
@@ -407,7 +410,9 @@ class NutrientStepResult:
     giorno in litri, quanto ha mangiato di N, P₂O₅ e K₂O in
     milligrammi, il cancello della temperatura applicato (0–1), e i
     serbatoi dopo. `uptake` è zero, e i serbatoi restano, quando la
-    specie non ha un piano.
+    specie non ha un piano. Dal 2026-11-24 anche la luce: il DLI al
+    vaso del giorno, quando chi chiama lo conosce, e il fattore di luce
+    applicato (1 senza DLI o senza il fabbisogno della specie).
     """
 
     event_date: date
@@ -415,6 +420,8 @@ class NutrientStepResult:
     uptake: NutrientAmounts
     temperature_gate: float
     pools_after: NutrientAmounts
+    light_factor: float = 1.0
+    dli_mol_m2_day: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -1465,14 +1472,17 @@ class Pot:
         water_input_mm: float,
         current_date: date,
         t_mean_c: Optional[float] = None,
+        dli_mol_m2_day: Optional[float] = None,
     ) -> BalanceStepResult:
         """
         Esegue un passo di bilancio idrico (giornaliero) sul vaso — e,
         se la specie ha un piano nutrizionale, il passo dei serbatoi:
         la pianta mangia alla sua traspirazione (`science/nutrients`),
         e `t_mean_c` — la temperatura media del giorno, facoltativa —
-        chiude il cancello col freddo. Il risultato del passo nutritivo
-        resta in `last_nutrient_step`.
+        chiude il cancello col freddo; `dli_mol_m2_day` — la luce
+        arrivata al vaso nel giorno, facoltativa — lo socchiude quando
+        è meno di quella che la specie vuole. Il risultato del passo
+        nutritivo resta in `last_nutrient_step`.
 
         Aggiorna `state_mm` (e, se il sottovaso è presente,
         `saucer_state_mm`) in-place e restituisce il `BalanceStepResult`
@@ -1529,6 +1539,7 @@ class Pot:
             transpiration_mm=transpiration_mm,
             current_date=current_date,
             t_mean_c=t_mean_c,
+            dli_mol_m2_day=dli_mol_m2_day,
         )
 
         return result
@@ -1663,18 +1674,22 @@ class Pot:
         transpiration_mm: float,
         current_date: date,
         t_mean_c: Optional[float],
+        dli_mol_m2_day: Optional[float] = None,
     ) -> "NutrientStepResult":
         """
         L'assorbimento del giorno: la traspirazione della pianta in
         litri alla concentrazione del piano, per la frazione di
-        alimentazione della specie e il cancello del freddo, mai più di
-        quello che c'è. Toglie dai serbatoi e dalla massa salina i
-        milliequivalenti corrispondenti: il concime è sale, e la pianta
-        se lo mangia. Senza piano non toglie niente.
+        alimentazione della specie, il cancello del freddo e il fattore
+        di luce, mai più di quello che c'è. Toglie dai serbatoi e dalla
+        massa salina i milliequivalenti corrispondenti: il concime è
+        sale, e la pianta se lo mangia — quello che la poca luce non le
+        fa mangiare resta nel vaso come sale. Senza piano non toglie
+        niente.
         """
         transpiration_l = transpiration_mm * self.surface_area_m2
         targets = self.nutrient_targets(current_date)
         gate = temperature_gate(t_mean_c)
+        light = light_factor(dli_mol_m2_day, self.species.dli_good_mol_m2_day)
         if targets is None:
             return NutrientStepResult(
                 event_date=current_date,
@@ -1682,6 +1697,8 @@ class Pot:
                 uptake=ZERO,
                 temperature_gate=gate,
                 pools_after=self.nutrient_pools,
+                light_factor=light,
+                dli_mol_m2_day=dli_mol_m2_day,
             )
         uptake = daily_uptake(
             transpiration_l,
@@ -1689,6 +1706,7 @@ class Pot:
             feed_fraction=self.species.nutrient_feed_fraction,
             t_mean_c=t_mean_c,
             available=self.nutrient_pools,
+            light_factor=light,
         )
         self.salt_mass_meq = max(0.0, self.salt_mass_meq - uptake.total_meq)
         self._set_nutrient_pools(self.nutrient_pools.minus(uptake))
@@ -1698,7 +1716,45 @@ class Pot:
             uptake=uptake,
             temperature_gate=gate,
             pools_after=self.nutrient_pools,
+            light_factor=light,
+            dli_mol_m2_day=dli_mol_m2_day,
         )
+
+    # -------------------------------------------------------------------
+    #  La luce al vaso (2026-11-24)
+    # -------------------------------------------------------------------
+
+    def dli_at_pot(
+        self,
+        open_sky_radiation_mj_m2_day: float,
+        light_fraction_override: Optional[float] = None,
+    ) -> Optional[float]:
+        """
+        Il DLI che arriva a questo vaso (mol/m²/giorno) dalla radiazione
+        globale del giorno a cielo aperto. La frazione di luce è quella
+        passata (una misura al vaso), o per un vaso in casa quella del
+        suo `light_exposure`. Per un vaso all'aperto senza una frazione
+        misurata torna None: una frazione di luce per esposizione non
+        c'è (i fattori di `pot_physics` sono di traspirazione), e non si
+        inventa.
+        """
+        if light_fraction_override is not None:
+            return dli_at_pot(open_sky_radiation_mj_m2_day, light_fraction_override)
+        if self.location == Location.INDOOR and self.light_exposure is not None:
+            return dli_at_pot(
+                open_sky_radiation_mj_m2_day, light_fraction(self.light_exposure),
+            )
+        return None
+
+    def light_sufficiency(self, dli_mol_m2_day: float) -> Optional[LightSufficiency]:
+        """
+        Il giudizio della luce al vaso contro quella che la specie
+        vuole; None se la specie non dichiara il suo fabbisogno.
+        """
+        requirement = light_requirement_of(self.species)
+        if requirement is None:
+            return None
+        return light_sufficiency(dli_mol_m2_day, requirement)
 
     def update_from_ec_sensor(
         self,
@@ -2453,12 +2509,25 @@ class Pot:
         else:
             et_0_for_legacy_method = et_result.value_mm
 
+        # La luce al vaso, per l'assorbimento: solo nel modo continuo,
+        # dove la radiazione della stanza segue quella di fuori. Nel
+        # modo categoriale la radiazione è un numero fisso tutto l'anno
+        # e darebbe a dicembre la luce di giugno: lì il DLI non si dà.
+        dli = (
+            dli_at_pot(
+                outdoor_solar_radiation_mj_m2_day, light_fraction(effective_exposure),
+            )
+            if outdoor_solar_radiation_mj_m2_day is not None
+            else None
+        )
+
         # Delega al vecchio apply_balance_step per il bilancio idrico,
         # esattamente come fa il fratello outdoor.
         legacy_result = self.apply_balance_step(
             et_0_mm=et_0_for_legacy_method,
             water_input_mm=water_input_mm,
             current_date=current_date,
+            dli_mol_m2_day=dli,
         )
 
         # Arricchisco il risultato col campo et_method.
@@ -2727,6 +2796,7 @@ class Pot:
         rainfall_volume_l: float = 0.0,
         fertigation_nutrients_mg_per_l: Optional[NutrientAmounts] = None,
         t_mean_c: Optional[float] = None,
+        dli_mol_m2_day: Optional[float] = None,
     ) -> "FullStepResult":
         """
         Orchestratore completo del passo giornaliero del vaso: combina
@@ -2829,6 +2899,7 @@ class Pot:
             water_input_mm=0.0,
             current_date=current_date,
             t_mean_c=t_mean_c,
+            dli_mol_m2_day=dli_mol_m2_day,
         )
 
         return FullStepResult(
@@ -2941,6 +3012,7 @@ class Pot:
         blocks: Sequence[BalanceBlock],
         current_date: date,
         t_mean_c: float | None = None,
+        dli_mol_m2_day: float | None = None,
     ) -> BlocksStepResult:
         """
         Un giorno di bilancio idrico a blocchi: per ogni blocco il
@@ -2962,7 +3034,7 @@ class Pot:
         """
         validate_block_tiling(blocks)
         result, _rain, _fertigations = self._run_blocks(
-            blocks, current_date, t_mean_c=t_mean_c,
+            blocks, current_date, t_mean_c=t_mean_c, dli_mol_m2_day=dli_mol_m2_day,
         )
         return result
 
@@ -2974,6 +3046,7 @@ class Pot:
         rainfall_l_by_hour: Mapping[int, float] | None = None,
         fertigations: Sequence[BlockFertigation] = (),
         t_mean_c: float | None = None,
+        dli_mol_m2_day: float | None = None,
     ) -> FullBlocksStepResult:
         """
         Il fratello a blocchi di `apply_step`: gli eventi alla loro ora.
@@ -2993,7 +3066,7 @@ class Pot:
             if litres < 0:
                 raise ValueError(f"Pioggia negativa alle {hour}: {litres} L.")
         result, rain_results, fertigation_results = self._run_blocks(
-            blocks, current_date, t_mean_c=t_mean_c,
+            blocks, current_date, t_mean_c=t_mean_c, dli_mol_m2_day=dli_mol_m2_day,
             rainfall_l_by_hour=rain, fertigations=tuple(fertigations),
         )
         return FullBlocksStepResult(
@@ -3129,6 +3202,7 @@ class Pot:
         current_date: date,
         *,
         t_mean_c: float | None,
+        dli_mol_m2_day: float | None = None,
         rainfall_l_by_hour: Mapping[int, float] | None = None,
         fertigations: Sequence[BlockFertigation] = (),
     ) -> tuple[BlocksStepResult, list[FertigationResult], list[FertigationResult]]:
@@ -3188,6 +3262,7 @@ class Pot:
             transpiration_mm=total_transpiration,
             current_date=current_date,
             t_mean_c=t_mean_c,
+            dli_mol_m2_day=dli_mol_m2_day,
         )
 
         under_alert = self.state_mm < self.alert_mm

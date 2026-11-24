@@ -127,6 +127,19 @@ DIRECT_SUN_FRACTION_OF_OUTDOOR = 0.40
 # =====================================================================
 
 
+def light_fraction(exposure: LightExposure) -> float:
+    """
+    Che frazione della luce a cielo aperto arriva a un vaso in casa a
+    quel livello di esposizione: le stesse tre frazioni del modo
+    continuo. Serve al DLI al vaso (`science/light.dli_at_pot`).
+    """
+    return {
+        LightExposure.DARK: DARK_FRACTION_OF_OUTDOOR,
+        LightExposure.INDIRECT_BRIGHT: INDIRECT_BRIGHT_FRACTION_OF_OUTDOOR,
+        LightExposure.DIRECT_SUN: DIRECT_SUN_FRACTION_OF_OUTDOOR,
+    }[exposure]
+
+
 def categorical_indoor_radiation(
     exposure: LightExposure,
 ) -> float:
