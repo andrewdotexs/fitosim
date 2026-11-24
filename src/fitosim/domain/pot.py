@@ -90,7 +90,7 @@ from fitosim.science.et0 import (
     compute_et,
     daily_vapor_pressures,
 )
-from fitosim.science.indoor import estimate_indoor_radiation, light_fraction
+from fitosim.science.indoor import estimate_indoor_net_radiation, light_fraction
 from fitosim.science.light import LightSufficiency, dli_at_pot, light_sufficiency
 from fitosim.science.nutrients import (
     TRANSPIRATION_SHARE_SINGLE_KC,
@@ -111,6 +111,7 @@ from fitosim.science.pot_physics import (
     PotMaterial,
     ShelterLevel,
     SunExposure,
+    exposure_correction_factor,
     pot_correction_factor,
     shelter_wind_factor,
 )
@@ -513,7 +514,13 @@ class Pot:
     sun_exposure : SunExposure, opzionale
         Esposizione solare effettiva del vaso. Default FULL_SUN
         (ipotesi conservativa = massimo consumo). È il fattore
-        correttivo con effetto più grande dei tre.
+        correttivo con effetto più grande dei tre. Riduce l'ET
+        attraverso Kp, e vale per l'ET₀ di fuori. Quando l'ET₀ è già
+        quella al vaso — una stanza, con la radiazione che la luce del
+        vaso fa entrare (`light_exposure`) — la luce è già contata una
+        volta: `apply_balance_step_from_indoor` la toglie da sé, e chi
+        calcola l'ET₀ della stanza per conto suo la divide per
+        `exposure_correction_factor(sun_exposure)` prima di passarla.
     active_depth_fraction : float, opzionale
         Frazione di profondità del substrato che è davvero attiva per
         la pianta, ovvero non occupata da uno strato drenante in
@@ -1227,6 +1234,10 @@ class Pot:
         i default (PLASTIC, MEDIUM, FULL_SUN) Kp = 1.00, e il modello
         si comporta come il FAO-56 base. Il materiale è `material_factor`
         quando c'è, altrimenti la tabella di `pot_material`.
+
+        L'esposizione sta qui per l'ET₀ a cielo aperto. Su un'ET₀ che
+        è già quella al vaso (il passo in casa) la luce si conterebbe
+        due volte: vedi `sun_exposure`.
         """
         return pot_correction_factor(
             material=self.pot_material,
@@ -2468,7 +2479,9 @@ class Pot:
 
         # Step 3: stima della radiazione indoor con la funzione "best
         # available" del modulo science.indoor.
-        radiation_mj_m2_day = estimate_indoor_radiation(
+        # La netta, non la globale (N2, 2026-11-24): la parte riflessa
+        # via, l'onda lunga a zero. Vedi `science/indoor`.
+        radiation_mj_m2_day = estimate_indoor_net_radiation(
             exposure=effective_exposure,
             outdoor_radiation_mj_m2_day=outdoor_solar_radiation_mj_m2_day,
         )
@@ -2529,6 +2542,12 @@ class Pot:
                 et_0_for_legacy_method = et_result.value_mm
         else:
             et_0_for_legacy_method = et_result.value_mm
+
+        # La luce contata una volta (D2, 2026-11-24): la radiazione
+        # della stanza è già quella al vaso, e Kp la ridurrebbe ancora
+        # col fattore di esposizione. Si divide prima, come per il Kc.
+        # Col default (FULL_SUN) il fattore vale 1.
+        et_0_for_legacy_method /= exposure_correction_factor(self.sun_exposure)
 
         # La luce al vaso, per l'assorbimento: solo nel modo continuo,
         # dove la radiazione della stanza segue quella di fuori. Nel

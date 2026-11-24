@@ -4,6 +4,14 @@ __fitosim — Status Report__
 
 *Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 24 novembre, del 6 novembre, del 5 novembre, del 30 ottobre, del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
 
+# Aggiornamento al 24 novembre 2026 — la radiazione netta in casa
+
+**In casa a Penman-Monteith andava la globale** (24 novembre, versione 0.43.0; proposta e misure in `docs/proposta_radiazione_indoor.md`, da due osservazioni della sessione di The Pot). Il passo in casa prendeva la radiazione della stanza — una frazione della globale di fuori — e la passava come netta. Ora passa la netta: `indoor.net_indoor_radiation` toglie la parte riflessa (FAO-56 eq. 38, albedo 0,23), e `indoor.estimate_indoor_net_radiation` è la funzione da chiamare per l'ET di una stanza. L'onda lunga netta resta a zero, dichiarata come stima: l'eq. 39 di FAO-56 è scritta per il cielo, in una stanza la chioma scambia con pareti e vetri, e ogni kelvin di differenza vale 0,48 MJ/m²/giorno, col segno che dipende dalla stanza. Su Milano 2025 l'albedo toglie il 17 % dell'ET₀ dell'anno alla finestra al sole, il 12 % nel luminoso indiretto, il 6 % al buio. La luce utile alla pianta (il DLI) si calcola ancora dalla globale.
+
+**La luce contata una volta.** In casa la luce del vaso decide la radiazione della stanza, e poi Kp la riduceva ancora col fattore di esposizione. `Pot.apply_balance_step_from_indoor` ora divide l'ET₀ per quel fattore prima del bilancio, come fa The Pot nel suo passo; con l'esposizione di default non cambia nulla. Kp resta com'è: serve all'ET₀ di fuori, anche per un vaso in casa senza sensore d'aria. La regola è scritta nella documentazione di `sun_exposure` e di `Kp`.
+
+**I test**: i 1 642 di prima passano uguali, più 8 (`tests/test_indoor.py`). The Pot non chiama quel passo e non cambia: decide di là se usare la funzione nuova.
+
 # Aggiornamento al 24 novembre 2026 — gli strumenti
 
 **Ruff, mypy e una CI** (24 novembre, versione 0.42.0; è il passo P3 di `docs/fitosim_pulizia_e_ottimizzazione.md`, il modello non cambia). fitosim non aveva né regole né controllo dei tipi né una CI: lo controllava di riflesso quella di The Pot. Ora ha le regole di The Pot (riga da 100, Python 3.12, E, W, F, I, N, UP, B, C4, SIM), un `[tool.mypy]` sui sorgenti, `requires-python >= 3.12` e `.github/workflows/ci.yml`, che passa i tre cancelli su Python 3.12, 3.13 e 3.14. I rilievi di ruff da 746 a zero — 674 corretti dallo strumento in un commit di sola forma, gli altri a mano —, gli errori di mypy da 91 a zero nei moduli vivi, con lo strato congelato come eccezione dichiarata fino a P1. I 1 642 test passano uguali, su 3.14 e su 3.13.

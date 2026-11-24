@@ -121,8 +121,45 @@ DIRECT_SUN_FRACTION_OF_OUTDOOR = 0.40
 
 
 # =====================================================================
+#  Dalla globale alla netta (docs/proposta_radiazione_indoor.md, N2)
+# =====================================================================
+#
+# I numeri qui sopra sono radiazione **globale** al vaso; Penman-Monteith
+# vuole la **netta**. La parte riflessa si toglie sempre (FAO-56 eq. 38:
+# R_ns = (1 − α) R_s, con α = 0,23 per la coltura di riferimento).
+#
+# L'onda lunga netta invece resta a zero: l'eq. 39 di FAO-56 è scritta
+# per una superficie sotto il cielo, e in una stanza la chioma scambia
+# con pareti, soffitto e vetri. Zero è l'ipotesi neutra — superfici alla
+# temperatura della chioma — ed è una stima da tarare: ogni kelvin di
+# differenza vale circa 0,48 MJ/m²/giorno (ε·4σT³ a 20 °C), col segno
+# che dipende dalla stanza (un vetro freddo toglie, una chioma che
+# traspira ed è più fresca delle pareti guadagna). Servirebbe la
+# temperatura media radiante, che nessun sensore dà.
+INDOOR_ALBEDO = 0.23
+
+
+# =====================================================================
 #  Funzioni di utility
 # =====================================================================
+
+
+def net_indoor_radiation(
+    global_radiation_mj_m2_day: float, albedo: float = INDOOR_ALBEDO,
+) -> float:
+    """
+    La radiazione netta al vaso in casa, in MJ/m²/giorno, dalla globale:
+    la parte non riflessa (FAO-56 eq. 38), con l'onda lunga netta a
+    zero. È quella che va a Penman-Monteith.
+    """
+    if global_radiation_mj_m2_day < 0:
+        raise ValueError(
+            f"global_radiation_mj_m2_day={global_radiation_mj_m2_day} non può "
+            f"essere negativa."
+        )
+    if not 0.0 <= albedo < 1.0:
+        raise ValueError(f"albedo={albedo} deve stare in [0, 1).")
+    return (1.0 - albedo) * global_radiation_mj_m2_day
 
 
 def light_fraction(exposure: LightExposure) -> float:
@@ -245,3 +282,21 @@ def estimate_indoor_radiation(
             outdoor_radiation_mj_m2_day=outdoor_radiation_mj_m2_day,
         )
     return categorical_indoor_radiation(exposure=exposure)
+
+
+def estimate_indoor_net_radiation(
+    exposure: LightExposure,
+    outdoor_radiation_mj_m2_day: float | None = None,
+) -> float:
+    """
+    La radiazione **netta** al vaso in casa, pronta per Penman-Monteith:
+    `estimate_indoor_radiation` (la globale, dal sole di fuori o dal
+    numero fisso del livello) passata per `net_indoor_radiation`. È la
+    funzione da chiamare per l'ET di una stanza; la globale resta quella
+    da cui si calcola la luce utile alla pianta (`science/light`).
+    """
+    return net_indoor_radiation(
+        estimate_indoor_radiation(
+            exposure=exposure, outdoor_radiation_mj_m2_day=outdoor_radiation_mj_m2_day,
+        )
+    )
