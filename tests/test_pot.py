@@ -10,8 +10,9 @@ Cinque famiglie di test:
 """
 
 import unittest
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 
+from fitosim.domain.blocks import BalanceBlock
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.species import (
     BASIL,
@@ -21,12 +22,11 @@ from fitosim.domain.species import (
     Species,
     actual_et_c,
 )
-from fitosim.domain.blocks import BalanceBlock
 from fitosim.science.balance import water_balance_step_mm
 from fitosim.science.nutrients import TRANSPIRATION_SHARE_SINGLE_KC
 from fitosim.science.substrate import (
-    Substrate,
     UNIVERSAL_POTTING_SOIL,
+    Substrate,
     circular_pot_surface_area_m2,
     pot_substrate_depth_mm,
 )
@@ -295,8 +295,9 @@ class TestPotShape(unittest.TestCase):
 
     def test_truncated_cone_equivalent_to_cylindrical(self):
         # Stessa apertura → stessa superficie evaporante.
-        from fitosim.domain.pot import PotShape
         from dataclasses import replace
+
+        from fitosim.domain.pot import PotShape
         pot_cyl = _make_basil_pot()
         pot_tc = replace(pot_cyl, pot_shape=PotShape.TRUNCATED_CONE)
         self.assertAlmostEqual(
@@ -322,8 +323,9 @@ class TestPotShape(unittest.TestCase):
 
     def test_oval_uses_ellipse_formula(self):
         # Vaso ovale 30 × 20 cm.
-        from fitosim.domain.pot import PotShape
         import math
+
+        from fitosim.domain.pot import PotShape
         pot = Pot(
             label="ovale",
             species=BASIL,
@@ -387,15 +389,17 @@ class TestPotKp(unittest.TestCase):
         self.assertAlmostEqual(pot.kp, 1.00, places=10)
 
     def test_kp_increases_with_terracotta(self):
-        from fitosim.science.pot_physics import PotMaterial
         from dataclasses import replace
+
+        from fitosim.science.pot_physics import PotMaterial
         pot_plastica = _make_basil_pot()
         pot_terracotta = replace(pot_plastica, pot_material=PotMaterial.TERRACOTTA)
         self.assertGreater(pot_terracotta.kp, pot_plastica.kp)
 
     def test_kp_decreases_with_shade(self):
-        from fitosim.science.pot_physics import SunExposure
         from dataclasses import replace
+
+        from fitosim.science.pot_physics import SunExposure
         pot_sole = _make_basil_pot()
         pot_ombra = replace(pot_sole, sun_exposure=SunExposure.SHADE)
         self.assertLess(pot_ombra.kp, pot_sole.kp)
@@ -404,10 +408,14 @@ class TestPotKp(unittest.TestCase):
         # La property kp deve essere esattamente pot_correction_factor
         # dei tre attributi. Verifica della formula completa di
         # composizione su una configurazione non-default.
-        from fitosim.science.pot_physics import (
-            PotColor, PotMaterial, SunExposure, pot_correction_factor,
-        )
         from dataclasses import replace
+
+        from fitosim.science.pot_physics import (
+            PotColor,
+            PotMaterial,
+            SunExposure,
+            pot_correction_factor,
+        )
         pot = replace(
             _make_basil_pot(),
             pot_material=PotMaterial.TERRACOTTA,
@@ -424,8 +432,9 @@ class TestPotKp(unittest.TestCase):
     def test_material_factor_replaces_the_class_table(self):
         # Il numero del materiale prende il posto della classe: la stessa
         # terracotta scura a mezz'ombra, con 1.50 invece dell'1.30 di tabella.
-        from fitosim.science.pot_physics import PotColor, PotMaterial, SunExposure
         from dataclasses import replace
+
+        from fitosim.science.pot_physics import PotColor, PotMaterial, SunExposure
         di_tabella = replace(
             _make_basil_pot(),
             pot_material=PotMaterial.TERRACOTTA,
@@ -439,8 +448,9 @@ class TestPotKp(unittest.TestCase):
     def test_material_factor_of_one_is_not_the_class(self):
         # 1.00 è un numero, non «niente»: un vaso che asciuga come la plastica
         # non deve ricadere sull'1.30 della classe.
-        from fitosim.science.pot_physics import PotMaterial
         from dataclasses import replace
+
+        from fitosim.science.pot_physics import PotMaterial
         pot = replace(
             _make_basil_pot(), pot_material=PotMaterial.TERRACOTTA, material_factor=1.0,
         )
@@ -449,9 +459,8 @@ class TestPotKp(unittest.TestCase):
     def test_material_factor_must_be_positive(self):
         from dataclasses import replace
         for valore in (0.0, -1.0):
-            with self.subTest(valore=valore):
-                with self.assertRaises(ValueError):
-                    replace(_make_basil_pot(), material_factor=valore)
+            with self.subTest(valore=valore), self.assertRaises(ValueError):
+                replace(_make_basil_pot(), material_factor=valore)
 
 
 class TestCurrentEtcWithKp(unittest.TestCase):
@@ -483,8 +492,9 @@ class TestCurrentEtcWithKp(unittest.TestCase):
     def test_terracotta_consumes_more_than_plastic(self):
         # Stesso vaso, due materiali diversi: terracotta deve avere
         # ET_c maggiore di plastica.
-        from fitosim.science.pot_physics import PotMaterial
         from dataclasses import replace
+
+        from fitosim.science.pot_physics import PotMaterial
         pot_plast = _make_basil_pot(state_mm=28.0)  # ben sopra alert
         pot_terra = replace(pot_plast, pot_material=PotMaterial.TERRACOTTA)
         eval_date = pot_plast.planting_date.replace(day=15)
@@ -497,10 +507,13 @@ class TestCurrentEtcWithKp(unittest.TestCase):
     def test_kp_scales_et_c_proportionally(self):
         # ET_c con Kp arbitrario deve essere esattamente Kp ×
         # ET_c con Kp=1. Verifica della linearità del modello.
-        from fitosim.science.pot_physics import (
-            PotColor, PotMaterial, SunExposure,
-        )
         from dataclasses import replace
+
+        from fitosim.science.pot_physics import (
+            PotColor,
+            PotMaterial,
+            SunExposure,
+        )
         pot_default = _make_basil_pot(state_mm=28.0)  # ben sopra alert
         pot_modified = replace(
             pot_default,
@@ -1104,7 +1117,6 @@ class TestDualKcDynamics(unittest.TestCase):
     def test_irrigation_resets_de(self):
         # Vaso con de_mm già accumulato; un'irrigazione abbondante
         # azzera de_mm.
-        from dataclasses import replace
         pot = _make_dual_kc_pot()
         # Forziamo un de_mm intermedio.
         pot.de_mm = 15.0
@@ -1131,7 +1143,6 @@ class TestDualKcDynamics(unittest.TestCase):
         # Test cardine dell'utilità del dual-Kc: nei giorni post-
         # irrigazione, il dual-Kc prevede consumo MAGGIORE rispetto
         # al single Kc (cattura il contributo di Ke aggiuntivo).
-        from dataclasses import replace
         # Due vasi gemelli: uno con dual-Kc, uno senza.
         pot_dual = _make_dual_kc_pot()
         pot_single = Pot(
@@ -1461,10 +1472,11 @@ class TestSensorUpdateWithSoilReading(unittest.TestCase):
 
     def _make_reading(self, **overrides):
         """Helper: costruisce un SoilReading di test con default ATO-like."""
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from fitosim.io.sensors import SoilReading
         defaults = dict(
-            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             theta_volumetric=0.32,
             temperature_c=18.5,
             ec_mscm=1.85,
@@ -1516,11 +1528,12 @@ class TestSensorUpdateWithSoilReading(unittest.TestCase):
         # Sensore tipo WH51 esposto via Protocol: SoilReading con
         # solo θ valorizzato, gli altri campi None. I campi extra
         # nel result restano None coerentemente.
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from fitosim.io.sensors import SoilReading
 
         partial_reading = SoilReading(
-            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             theta_volumetric=0.30,
             # niente temperature_c, ec_mscm, ph, provider_specific
         )
@@ -1571,15 +1584,17 @@ class TestSensorUpdateWithSoilReading(unittest.TestCase):
         # update_from_sensor. Questo è il pattern del sistema di
         # tipi: gli errori sono catturati al confine (al momento
         # della costruzione del Reading), non al livello del modello.
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from fitosim.io.sensors import (
-            SensorDataQualityError, SoilReading,
+            SensorDataQualityError,
+            SoilReading,
         )
 
         with self.assertRaises(SensorDataQualityError):
             SoilReading(
                 timestamp=datetime(2026, 5, 1, 12, 0,
-                                    tzinfo=timezone.utc),
+                                    tzinfo=UTC),
                 theta_volumetric=2.5,  # fuori range fisico
             )
 
@@ -2455,10 +2470,11 @@ class TestSensorUpdateChemistry(unittest.TestCase):
     """
 
     def _make_reading(self, **overrides):
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from fitosim.io.sensors import SoilReading
         defaults = dict(
-            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             theta_volumetric=0.32,
             temperature_c=18.5,
             ec_mscm=2.0,
@@ -2532,10 +2548,11 @@ class TestSensorUpdateChemistry(unittest.TestCase):
     def test_partial_reading_only_theta(self):
         # Reading di sensore WH51 (solo θ): salt_mass e ph_substrate
         # non devono cambiare.
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from fitosim.io.sensors import SoilReading
         partial = SoilReading(
-            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             theta_volumetric=0.30,
             # niente ec_mscm, niente ph
         )
@@ -2547,10 +2564,11 @@ class TestSensorUpdateChemistry(unittest.TestCase):
 
     def test_partial_reading_ec_only(self):
         # Reading con solo θ ed EC, niente pH: ph_substrate invariato.
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from fitosim.io.sensors import SoilReading
         partial = SoilReading(
-            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             theta_volumetric=0.30,
             ec_mscm=1.8,
         )
@@ -3144,6 +3162,7 @@ class TestPotPhenologyViews(unittest.TestCase):
     def test_gdd_accumulates_on_weather_path(self):
         # Il cammino meteo ha le temperature, quindi puo' accumulare.
         from datetime import timedelta
+
         from fitosim.domain.species import BASIL, PhenologyMethod
         from fitosim.domain.weather import WeatherDay
         pot = self._pot(
@@ -3168,7 +3187,9 @@ class TestPotPhenologyViews(unittest.TestCase):
         # semina, climi diversi. Col vecchio metodo a giorni fissi
         # entrambi cambiavano stadio lo stesso giorno.
         from datetime import timedelta
-        from fitosim.domain.species import BASIL, PhenologicalStage as PS
+
+        from fitosim.domain.species import BASIL
+        from fitosim.domain.species import PhenologicalStage as PS
         from fitosim.domain.weather import WeatherDay
 
         def days_to_mid(t_min, t_max):
@@ -3194,7 +3215,6 @@ class TestPotPhenologyViews(unittest.TestCase):
         self.assertLess(warm, cool)
 
     def test_gdd_does_not_accumulate_when_not_tracked(self):
-        from datetime import timedelta
         from fitosim.domain.species import BASIL
         from fitosim.domain.weather import WeatherDay
         pot = self._pot(
@@ -3212,8 +3232,7 @@ class TestPotPhenologyViews(unittest.TestCase):
         # Le perenni non hanno soglie GDD: anche attivando il
         # tracciamento il campo resta com'e' e lo stadio segue la
         # stagione.
-        from datetime import timedelta
-        from fitosim.domain.species import CITRUS, PhenologyMethod
+        from fitosim.domain.species import PhenologyMethod
         from fitosim.domain.weather import WeatherDay
         pot = self._pot(
             CITRUS, date(2020, 4, 1),
@@ -3235,7 +3254,6 @@ class TestPotPhenologyViews(unittest.TestCase):
         # l'ET0 di Milano a gennaio e' un decimo di quella di luglio.
         # Fino al 2026-09-20 (A5) un fattore 0,5 sul riposo lo
         # dimezzava a parita' di ET0.
-        from fitosim.domain.species import CITRUS
         winter_pot = self._pot(CITRUS, date(2020, 4, 1), label="inverno")
         summer_pot = self._pot(CITRUS, date(2020, 4, 1), label="estate")
         et_winter = winter_pot.current_et_c(
@@ -3261,7 +3279,7 @@ class TestPotPhenologyViews(unittest.TestCase):
         # del suolo nudo, e l'ET e' positiva.
         from dataclasses import replace
 
-        from fitosim.domain.species import CITRUS, GrowthStage
+        from fitosim.domain.species import GrowthStage
         calendario = list(CITRUS.phenology_calendar)
         calendario[0] = (GrowthStage.DORMANCY,)
         caduca = replace(CITRUS, common_name="caduca",
@@ -3511,8 +3529,8 @@ class TestPotApplyBalanceStepFromIndoor(unittest.TestCase):
 
     def _make_indoor_basil_pot(self, **overrides):
         """Helper: vaso indoor di basilico con light_exposure di default."""
-        from fitosim.domain.species import BASIL
         from fitosim.domain.room import LightExposure
+        from fitosim.domain.species import BASIL
         from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
         defaults = dict(
             label="Basilico-indoor", species=BASIL,

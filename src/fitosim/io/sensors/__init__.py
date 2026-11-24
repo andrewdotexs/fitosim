@@ -56,9 +56,9 @@ from fitosim.io.sensors.http_json import (
 from fitosim.io.sensors.measurement import (
     CANONICAL_PARAMETERS,
     CUSTOM_NAMESPACE_PREFIX,
+    SCHEMA_VERSION,
     Measurement,
     MeasurementValidationError,
-    SCHEMA_VERSION,
     physical_range,
 )
 from fitosim.io.sensors.openmeteo import OpenMeteoEnvironmentSensor

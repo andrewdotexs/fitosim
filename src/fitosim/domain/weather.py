@@ -33,9 +33,8 @@ e vuole che la libreria scelga la formula migliore usa `WeatherDay`.
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -97,9 +96,9 @@ class WeatherDay:
     date_: date
     t_min: float
     t_max: float
-    humidity_relative: Optional[float] = None
-    wind_speed_m_s: Optional[float] = None
-    solar_radiation_mj_m2_day: Optional[float] = None
+    humidity_relative: float | None = None
+    wind_speed_m_s: float | None = None
+    solar_radiation_mj_m2_day: float | None = None
     humidity_min: float | None = None
     humidity_max: float | None = None
 
@@ -346,7 +345,7 @@ def weather_blocks_from_samples(
         )
     groups: dict[tuple[date, int], list[WeatherSample]] = {}
     for sample in samples:
-        local = sample.timestamp.astimezone(timezone.utc) + timedelta(hours=utc_offset_hours)
+        local = sample.timestamp.astimezone(UTC) + timedelta(hours=utc_offset_hours)
         key = (local.date(), (local.hour // hours) * hours)
         groups.setdefault(key, []).append(sample)
 

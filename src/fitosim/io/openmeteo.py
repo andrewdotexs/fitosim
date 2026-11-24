@@ -81,8 +81,6 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
-
 
 # URL base dell'endpoint forecast di Open-Meteo. Lo scegliamo come
 # costante di modulo per centralizzare l'eventuale modifica futura
@@ -146,7 +144,7 @@ class DailyWeather:
     t_min: float
     t_max: float
     precipitation_mm: float
-    et0_mm: Optional[float] = None
+    et0_mm: float | None = None
 
     def __post_init__(self) -> None:
         if self.t_max < self.t_min:
@@ -177,7 +175,7 @@ def _cache_filename(latitude: float, longitude: float, days: int) -> str:
 def _read_cache(
     cache_path: Path,
     ttl_hours: float,
-) -> Optional[dict]:
+) -> dict | None:
     """
     Tenta di leggere la cache. Restituisce il payload se il file esiste
     ed è ancora valido (entro ttl_hours dalla scrittura), altrimenti None.
@@ -362,7 +360,7 @@ def _parse_openmeteo_response(payload: dict) -> list[DailyWeather]:
         # quando la lista nel suo complesso è valida — preserviamo il
         # None invece di forzare 0.0, perché distingue "non c'è dato"
         # da "ET pari a zero" (concettualmente diversi).
-        et0_value: Optional[float] = None
+        et0_value: float | None = None
         if et0 is not None and et0[i] is not None:
             et0_value = float(et0[i])
 
@@ -387,10 +385,10 @@ def fetch_daily_forecast(
     longitude: float,
     days: int = 7,
     *,
-    cache_dir: Optional[Path] = None,
+    cache_dir: Path | None = None,
     cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
     use_cache: bool = True,
-    fetcher: Optional[callable] = None,
+    fetcher: callable | None = None,
 ) -> list[DailyWeather]:
     """
     Recupera la previsione meteo giornaliera per una località.
@@ -522,7 +520,7 @@ def fetch_daily_archive(
     start_date: date,
     end_date: date,
     *,
-    fetcher: Optional[callable] = None,
+    fetcher: callable | None = None,
 ) -> list[DailyWeather]:
     """
     Recupera dati meteorologici storici tra start_date ed end_date

@@ -23,7 +23,7 @@ Famiglie di test
   - `Test_schema_version`: stabilità della versione dello schema.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from math import inf, nan
 
 import pytest
@@ -31,8 +31,6 @@ import pytest
 from fitosim.io.sensors.measurement import (
     CANONICAL_PARAMETERS,
     CUSTOM_NAMESPACE_PREFIX,
-    Measurement,
-    MeasurementValidationError,
     PARAM_AIR_HUMIDITY,
     PARAM_AIR_TEMPERATURE_C,
     PARAM_BAROMETRIC_PRESSURE_HPA,
@@ -48,13 +46,15 @@ from fitosim.io.sensors.measurement import (
     PARAMETERS_REQUIRING_POT,
     PARAMETERS_REQUIRING_ROOM_OR_GARDEN,
     SCHEMA_VERSION,
+    Measurement,
+    MeasurementValidationError,
     physical_range,
 )
 
 
 # Helper: un timestamp UTC valido riusato in tanti test.
 def _ts() -> datetime:
-    return datetime(2026, 5, 15, 14, 30, 0, tzinfo=timezone.utc)
+    return datetime(2026, 5, 15, 14, 30, 0, tzinfo=UTC)
 
 
 # Valori sicuri (a metà del range plausibile) per ciascun parametro canonico:
@@ -268,7 +268,7 @@ class Test_Measurement_timestamp_validation:
         """timestamp UTC esplicito è il caso felice principale."""
         m = Measurement(
             sensor_id="test:device:1",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             parameter=PARAM_SOIL_THETA,
             value=0.3,
         )
@@ -686,19 +686,19 @@ class Test_canonical_constants:
 
     def test_requiring_pot_contains_only_soil_params(self):
         """PARAMETERS_REQUIRING_POT contiene esattamente i 4 soil_*."""
-        assert PARAMETERS_REQUIRING_POT == frozenset({
+        assert frozenset({
             PARAM_SOIL_THETA, PARAM_SOIL_TEMPERATURE_C,
             PARAM_SOIL_EC_MSCM, PARAM_SOIL_PH,
-        })
+        }) == PARAMETERS_REQUIRING_POT
 
     def test_requiring_room_or_garden_contains_environment_params(self):
         """PARAMETERS_REQUIRING_ROOM_OR_GARDEN contiene esattamente i 6
         parametri ambiente (no soil_*, no battery/signal)."""
-        assert PARAMETERS_REQUIRING_ROOM_OR_GARDEN == frozenset({
+        assert frozenset({
             PARAM_AIR_TEMPERATURE_C, PARAM_AIR_HUMIDITY,
             PARAM_WIND_SPEED_M_S, PARAM_SOLAR_RADIATION_MJ_M2,
             PARAM_RAINFALL_MM, PARAM_BAROMETRIC_PRESSURE_HPA,
-        })
+        }) == PARAMETERS_REQUIRING_ROOM_OR_GARDEN
 
     def test_pot_and_room_garden_sets_are_disjoint(self):
         """Un parametro non può essere sia su Pot che su Room/Garden:

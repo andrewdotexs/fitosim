@@ -19,10 +19,9 @@ Quattro famiglie tematiche di test:
 """
 
 import unittest
-from datetime import date, datetime, timedelta, timezone
-from typing import Dict
+from datetime import UTC, date, datetime, timedelta
 
-from fitosim.domain.alerts import AlertCategory, AlertSeverity
+from fitosim.domain.alerts import AlertCategory
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
@@ -34,7 +33,6 @@ from fitosim.io.sensors import (
     SoilReading,
 )
 from fitosim.science.substrate import Substrate
-
 
 # =======================================================================
 #  Helper di costruzione
@@ -474,8 +472,8 @@ class _FakeSoilSensor:
 
     def __init__(
         self,
-        readings: Dict[str, SoilReading] = None,
-        errors: Dict[str, Exception] = None,
+        readings: dict[str, SoilReading] = None,
+        errors: dict[str, Exception] = None,
     ):
         self._readings = readings or {}
         self._errors = errors or {}
@@ -489,7 +487,7 @@ class _FakeSoilSensor:
             return self._readings[channel_id]
         # Default: lettura "neutra" basata sul nome del canale
         return SoilReading(
-            timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
             theta_volumetric=0.30,
         )
 
@@ -513,11 +511,11 @@ class TestGardenUpdateFromSensors(unittest.TestCase):
         # contiene solo i due vasi mappati.
         sensor = _FakeSoilSensor(readings={
             "ch1": SoilReading(
-                timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
                 theta_volumetric=0.35,
             ),
             "ch2": SoilReading(
-                timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
                 theta_volumetric=0.25,
             ),
         })
@@ -547,7 +545,7 @@ class TestGardenUpdateFromSensors(unittest.TestCase):
             readings={
                 "ch2": SoilReading(
                     timestamp=datetime(2026, 5, 15, 12, 0,
-                                       tzinfo=timezone.utc),
+                                       tzinfo=UTC),
                     theta_volumetric=0.25,
                 ),
             },
@@ -1322,7 +1320,7 @@ class TestGardenApplyStepAllFromIndoor(unittest.TestCase):
         Helper: giardino con due stanze e tre vasi indoor (due nel
         salotto, uno in camera).
         """
-        from fitosim.domain.room import Room, LightExposure
+        from fitosim.domain.room import LightExposure, Room
         from fitosim.domain.species import BASIL, ROSEMARY
         from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
 

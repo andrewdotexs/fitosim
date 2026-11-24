@@ -29,20 +29,15 @@ Quattro famiglie tematiche:
 """
 
 import unittest
-import math
 
 from fitosim.science.fertigation import (
-    EC_TO_MEQ_PER_LITER,
-    PH_INPUT_WEIGHT_CALIBRATION,
     RAINFALL_EC_MSCM,
     RAINFALL_PH,
-    TYPICAL_SUBSTRATE_DENSITY_KG_PER_L,
     FertigationStepResult,
     fertigation_step,
     ph_after_mixing,
     salt_balance_step,
 )
-
 
 # =======================================================================
 #  Famiglia 1: salt_balance_step

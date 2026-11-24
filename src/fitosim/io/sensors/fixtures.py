@@ -52,16 +52,14 @@ rifiutati per coerenza con la regola architetturale.
 from __future__ import annotations
 
 import csv
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from pathlib import Path
-from typing import Optional, Union
 
 from fitosim.io.sensors.errors import (
     SensorPermanentError,
 )
 from fitosim.io.sensors.measurement import (
     CUSTOM_NAMESPACE_PREFIX,
-    Measurement,
     PARAM_AIR_HUMIDITY,
     PARAM_AIR_TEMPERATURE_C,
     PARAM_RAINFALL_MM,
@@ -71,8 +69,8 @@ from fitosim.io.sensors.measurement import (
     PARAM_SOIL_THETA,
     PARAM_SOLAR_RADIATION_MJ_M2,
     PARAM_WIND_SPEED_M_S,
+    Measurement,
 )
-
 
 PROVIDER_NAME = "csv_fixture"
 
@@ -81,7 +79,7 @@ PROVIDER_NAME = "csv_fixture"
 #  Helper di parsing
 # --------------------------------------------------------------------------
 
-def _parse_float_or_none(value: str) -> Optional[float]:
+def _parse_float_or_none(value: str) -> float | None:
     """
     Parsa un campo CSV come float, o ritorna None se vuoto/non
     interpretabile.
@@ -203,8 +201,8 @@ class CsvEnvironmentFixture:
 
     def __init__(
         self,
-        csv_path: Union[str, Path],
-        sensor_id: Optional[str] = None,
+        csv_path: str | Path,
+        sensor_id: str | None = None,
     ) -> None:
         self._csv_path = Path(csv_path)
         if not self._csv_path.exists():
@@ -336,7 +334,7 @@ class CsvEnvironmentFixture:
                     ) from e
 
                 ts = datetime.combine(
-                    day, time(12, 0), tzinfo=timezone.utc,
+                    day, time(12, 0), tzinfo=UTC,
                 )
                 self._measurements_by_date[day] = (
                     self._row_to_measurements(ts, row)
@@ -448,8 +446,8 @@ class CsvSoilFixture:
 
     def __init__(
         self,
-        csv_path: Union[str, Path],
-        sensor_id: Optional[str] = None,
+        csv_path: str | Path,
+        sensor_id: str | None = None,
     ) -> None:
         self._csv_path = Path(csv_path)
         if not self._csv_path.exists():

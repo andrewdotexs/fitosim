@@ -45,7 +45,6 @@ informazioni sullo stato di allerta.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 from fitosim.science.et0 import EtMethod
 from fitosim.science.substrate import (
@@ -99,8 +98,8 @@ class BalanceStepResult:
     drainage: float
     under_alert: bool
     deficit: float
-    et_method: Optional[EtMethod] = None
-    et_actual: Optional[float] = None
+    et_method: EtMethod | None = None
+    et_actual: float | None = None
 
 
 def water_balance_step(

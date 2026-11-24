@@ -17,7 +17,6 @@ Tre famiglie tematiche:
 
 import unittest
 from datetime import date
-from typing import List
 
 from fitosim.domain.alerts import (
     ALL_RULES,
@@ -34,7 +33,6 @@ from fitosim.domain.alerts import (
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.species import Species
 from fitosim.science.substrate import Substrate
-
 
 # =======================================================================
 #  Helper di costruzione
@@ -403,7 +401,7 @@ class TestAllRules(unittest.TestCase):
             salt_mass_meq=31.81,
             ph_substrate=8.5,
         )
-        alerts: List = [
+        alerts: list = [
             r(pot, date(2026, 5, 15)) for r in ALL_RULES
         ]
         non_none = [a for a in alerts if a is not None]

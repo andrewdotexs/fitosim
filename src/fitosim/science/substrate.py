@@ -38,9 +38,8 @@ trascorso dal confezionamento; la calibrazione per vaso sul sensore
 (`science/calibration.py`) ricava i due estremi dai dati.
 """
 
-from dataclasses import dataclass
 import math
-
+from dataclasses import dataclass
 
 # Frazione di deplezione di default. Il valore 0.5 è quello raccomandato
 # da FAO-56 come baseline "safe" per la maggior parte delle colture

@@ -73,8 +73,8 @@ Workflow tipico
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from typing import Iterable, Optional
 
 from fitosim.domain.species import KC_MAX_PLAUSIBLE, KC_MIN_PLAUSIBLE
 from fitosim.science.balance import stress_coefficient_ks
@@ -83,7 +83,6 @@ from fitosim.science.substrate import (
     Substrate,
     readily_available_water,
 )
-
 
 # Parametri di default per il rilevamento di picchi/valli su dati
 # giornalieri. Possono essere sovrascritti dal chiamante in casi
@@ -707,7 +706,7 @@ class KcCalibrationResult:
         aspetta troppo.
     """
 
-    kc_estimate: Optional[float]
+    kc_estimate: float | None
     n_windows: int
     confidence: str
     window_estimates: tuple[float, ...]
@@ -721,7 +720,7 @@ def find_drying_windows(
     min_days: int = DEFAULT_MIN_WINDOW_DAYS,
     min_depletion: float = DEFAULT_MIN_WINDOW_DEPLETION,
     rise_tolerance: float = DEFAULT_RISE_TOLERANCE,
-    known_water_input_days: Optional[Iterable[int]] = None,
+    known_water_input_days: Iterable[int] | None = None,
 ) -> list[DryingWindow]:
     """
     Individua i tratti di serie in cui il vaso si asciuga senza apporti.
@@ -818,7 +817,7 @@ def estimate_kc_from_window(
     *,
     depletion_fraction: float = DEFAULT_DEPLETION_FRACTION,
     kp: float = 1.0,
-) -> Optional[float]:
+) -> float | None:
     """
     Stima il Kc effettivo da una singola finestra di asciugamento.
 
@@ -880,7 +879,7 @@ def _comfort_prefix(
     theta_alert: float,
     min_days: int,
     min_depletion: float,
-) -> tuple[Optional[DryingWindow], int]:
+) -> tuple[DryingWindow | None, int]:
     """
     Il tratto iniziale di una finestra in cui Ks vale 1, e quante
     transizioni restano fuori.
@@ -928,7 +927,7 @@ def calibrate_kc(
     min_days: int = DEFAULT_MIN_WINDOW_DAYS,
     min_depletion: float = DEFAULT_MIN_WINDOW_DEPLETION,
     rise_tolerance: float = DEFAULT_RISE_TOLERANCE,
-    known_water_input_days: Optional[Iterable[int]] = None,
+    known_water_input_days: Iterable[int] | None = None,
     stress_days: str = "exclude",
 ) -> KcCalibrationResult:
     """

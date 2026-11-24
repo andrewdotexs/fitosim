@@ -28,10 +28,9 @@ modulo legacy così come abbiamo fatto per `fetch_daily_forecast` nei
 test Open-Meteo.
 """
 
-import os
 import urllib.error
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -46,16 +45,15 @@ from fitosim.io.sensors import (
     SoilSensor,
 )
 from fitosim.io.sensors.measurement import (
-    PARAM_BATTERY_LEVEL,
     PARAM_AIR_HUMIDITY,
     PARAM_AIR_TEMPERATURE_C,
+    PARAM_BATTERY_LEVEL,
     PARAM_RAINFALL_MM,
     PARAM_SOIL_EC_MSCM,
     PARAM_SOIL_TEMPERATURE_C,
     PARAM_SOIL_THETA,
     PARAM_WIND_SPEED_M_S,
 )
-
 
 # --------------------------------------------------------------------------
 #  Helper: EcowittObservation realistica per i test
@@ -76,7 +74,7 @@ def _make_observation(
     mezzogiorno UTC) per non dipendere da datetime.now() nei test.
     """
     return EcowittObservation(
-        timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
         outdoor_temp_c=temp,
         outdoor_humidity_pct=humidity_pct,
         wind_speed_m_s=wind,
@@ -287,7 +285,7 @@ class Test_EcowittEnvironment_translation:
         """
         # Observation con solo temperatura.
         obs = EcowittObservation(
-            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             outdoor_temp_c=20.0,
             # outdoor_humidity_pct, wind_speed_m_s, rain_24h_mm = None
         )
@@ -586,12 +584,13 @@ class TestWH52SupportInSoilSensor:
         # Per il WH51 (default) le Measurement T ed EC non vengono
         # emesse anche se la observation contiene quei campi
         # (semanticamente: il sensore non li misura).
-        from datetime import datetime, timezone
+        from datetime import datetime
         from unittest.mock import patch
+
         from fitosim.io.ecowitt import EcowittObservation
 
         fake_obs = EcowittObservation(
-            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=UTC),
             soil_moisture_pct={1: 35.0},
             soil_temperature_c={1: 21.5},  # presente ma WH51 lo ignora
             soil_ec_mscm={1: 2.3},  # presente ma WH51 lo ignora
@@ -609,12 +608,13 @@ class TestWH52SupportInSoilSensor:
 
     def test_wh52_emits_theta_temperature_and_ec(self):
         # Per il WH52 vengono emesse 3 Measurement (θ + T + EC).
-        from datetime import datetime, timezone
+        from datetime import datetime
         from unittest.mock import patch
+
         from fitosim.io.ecowitt import EcowittObservation
 
         fake_obs = EcowittObservation(
-            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=UTC),
             soil_moisture_pct={1: 35.0},
             soil_temperature_c={1: 21.5},
             soil_ec_mscm={1: 2.3},
@@ -634,13 +634,14 @@ class TestWH52SupportInSoilSensor:
     def test_wh52_omits_missing_optional_fields(self):
         """Per il WH52, se T o EC mancano nella observation, le
         corrispondenti Measurement non vengono emesse."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         from unittest.mock import patch
+
         from fitosim.io.ecowitt import EcowittObservation
 
         # WH52 con solo θ disponibile (T ed EC mancanti).
         fake_obs = EcowittObservation(
-            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=UTC),
             soil_moisture_pct={1: 35.0},
             # soil_temperature_c e soil_ec_mscm assenti
         )
@@ -657,12 +658,13 @@ class TestWH52SupportInSoilSensor:
     def test_the_battery_becomes_a_battery_level(self):
         """La pila del canale (2026-10-12), per tutti e due i modelli: la
         tensione diventa la frazione di carica di una AA."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         from unittest.mock import patch
+
         from fitosim.io.ecowitt import EcowittObservation
 
         fake_obs = EcowittObservation(
-            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=UTC),
             soil_moisture_pct={1: 35.0},
             soil_battery_v={1: 1.3},
         )
@@ -695,6 +697,7 @@ class TestEcowittAmbientSensor:
 
     def test_construction_requires_credentials(self):
         import pytest
+
         from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
         with pytest.raises(ValueError):
             EcowittAmbientSensor("", "y", "z")
@@ -706,14 +709,15 @@ class TestEcowittAmbientSensor:
     def test_current_state_returns_instant_microclimate(self):
         # current_state chiama fetch_real_time, estrae T e RH del
         # canale, e produce un IndoorMicroclimate INSTANT.
-        from datetime import datetime, timezone
+        from datetime import datetime
         from unittest.mock import patch
+
+        from fitosim.domain.room import MicroclimateKind
         from fitosim.io.ecowitt import EcowittObservation
         from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
-        from fitosim.domain.room import MicroclimateKind
 
         fake_obs = EcowittObservation(
-            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=UTC),
             extra_temp_c={1: 22.5},
             extra_humidity_pct={1: 55.0},
         )
@@ -731,15 +735,17 @@ class TestEcowittAmbientSensor:
 
     def test_current_state_missing_channel_raises(self):
         # Canale mancante nei dati della stazione → SensorPermanentError.
-        from datetime import datetime, timezone
+        from datetime import datetime
         from unittest.mock import patch
+
+        import pytest
+
         from fitosim.io.ecowitt import EcowittObservation
         from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
         from fitosim.io.sensors.errors import SensorPermanentError
-        import pytest
 
         fake_obs = EcowittObservation(
-            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 7, 19, 14, 30, 0, tzinfo=UTC),
             extra_temp_c={2: 22.5},  # solo canale 2 disponibile
             extra_humidity_pct={2: 55.0},
         )
@@ -747,17 +753,17 @@ class TestEcowittAmbientSensor:
         with patch(
             "fitosim.io.sensors.ecowitt.fetch_real_time",
             return_value=fake_obs,
-        ):
-            with pytest.raises(SensorPermanentError):
-                sensor.current_state(channel_id="1")
+        ), pytest.raises(SensorPermanentError):
+            sensor.current_state(channel_id="1")
 
     def test_daily_aggregate_returns_daily_microclimate(self):
         # daily_aggregate chiama fetch_history_aggregation e produce
         # un IndoorMicroclimate DAILY con t_min, t_max, RH media.
         from datetime import date
         from unittest.mock import patch
-        from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
+
         from fitosim.domain.room import MicroclimateKind
+        from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
 
         fake_data = {
             "t_min": 19.5,
@@ -783,16 +789,17 @@ class TestEcowittAmbientSensor:
         # Errore di rete propagato come SensorTemporaryError.
         from datetime import date
         from unittest.mock import patch
+
+        import pytest
+
         from fitosim.io.sensors.ecowitt import EcowittAmbientSensor
         from fitosim.io.sensors.errors import SensorTemporaryError
-        import pytest
 
         sensor = EcowittAmbientSensor("x", "y", "z")
         with patch(
             "fitosim.io.sensors.ecowitt.fetch_history_aggregation",
             side_effect=OSError("network unreachable"),
-        ):
-            with pytest.raises(SensorTemporaryError):
-                sensor.daily_aggregate(
-                    channel_id="1", target_date=date(2026, 7, 19),
-                )
+        ), pytest.raises(SensorTemporaryError):
+            sensor.daily_aggregate(
+                channel_id="1", target_date=date(2026, 7, 19),
+            )

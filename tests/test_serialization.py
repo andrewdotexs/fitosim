@@ -43,7 +43,6 @@ from fitosim.io.serialization import (
 )
 from fitosim.science.substrate import Substrate
 
-
 # =======================================================================
 #  Helper di costruzione
 # =======================================================================
@@ -601,7 +600,9 @@ class TestRoundTripFidelity(unittest.TestCase):
         # Senza questo, una perenne reimportata tornava ANNUAL e dopo
         # qualche anno restava inchiodata a fine ciclo.
         from fitosim.domain.species import (
-            CITRUS, PhenologicalStage, PhenologyAnchor,
+            CITRUS,
+            PhenologicalStage,
+            PhenologyAnchor,
         )
         garden = self._garden_with(CITRUS, planting_date=date(2020, 4, 1))
         pot = self._round_trip(garden).get_pot("vaso-1")

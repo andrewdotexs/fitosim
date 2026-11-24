@@ -29,7 +29,6 @@ Riferimento bibliografico:
 import math
 from datetime import date
 
-
 # Costante solare: flusso di radiazione solare che attraversa una superficie
 # perpendicolare ai raggi solari, alla distanza media Terra-Sole, al di
 # fuori dell'atmosfera. Il valore riportato da FAO-56 è 0.0820 MJ m⁻²

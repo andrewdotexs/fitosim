@@ -54,10 +54,8 @@ osservato di un vaso indoor con la previsione del modello, e
 aggiustando la frazione del LightExposure corrispondente).
 """
 
-from typing import Optional
 
 from fitosim.domain.room import LightExposure
-
 
 # =====================================================================
 #  Modo categoriale: radiazione fissa per LightExposure
@@ -216,7 +214,7 @@ def continuous_indoor_radiation(
 
 def estimate_indoor_radiation(
     exposure: LightExposure,
-    outdoor_radiation_mj_m2_day: Optional[float] = None,
+    outdoor_radiation_mj_m2_day: float | None = None,
 ) -> float:
     """
     Stima la radiazione indoor scegliendo automaticamente tra modo

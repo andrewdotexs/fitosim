@@ -9,11 +9,10 @@ round-trip persistenza funzioni correttamente.
 
 import os
 import subprocess
-import tempfile
 import sys
+import tempfile
 import unittest
 from pathlib import Path
-
 
 # Path alla directory examples del progetto.
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"

@@ -25,7 +25,6 @@ Copertura:
 import unittest
 
 from fitosim.science.calibration_resolution import (
-    DEFAULT_DIVERGENCE_TOLERANCE,
     PARAM_DEPLETION,
     PARAM_KC,
     CalibrationProposal,

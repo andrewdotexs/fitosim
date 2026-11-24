@@ -70,8 +70,8 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import datetime
+from typing import Any
 from urllib.parse import urlparse
 
 from fitosim.io.sensors.errors import (
@@ -80,15 +80,14 @@ from fitosim.io.sensors.errors import (
     SensorTemporaryError,
 )
 from fitosim.io.sensors.measurement import (
-    Measurement,
-    MeasurementValidationError,
     PARAM_BATTERY_LEVEL,
     PARAM_SOIL_EC_MSCM,
     PARAM_SOIL_PH,
     PARAM_SOIL_TEMPERATURE_C,
     PARAM_SOIL_THETA,
+    Measurement,
+    MeasurementValidationError,
 )
-
 
 PROVIDER_NAME = "http_json"
 
@@ -406,7 +405,7 @@ class HttpJsonSoilSensor:
         base_url: str,
         *,
         endpoint_pattern: str = "/api/soil/{channel_id}",
-        bearer_token: Optional[str] = None,
+        bearer_token: str | None = None,
         timeout_seconds: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
     ) -> None:
         if not base_url:
@@ -448,7 +447,7 @@ class HttpJsonSoilSensor:
         *,
         endpoint_pattern: str = "/api/soil/{channel_id}",
         timeout_seconds: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
-    ) -> "HttpJsonSoilSensor":
+    ) -> HttpJsonSoilSensor:
         """
         Costruisce l'adapter leggendo il bearer token dall'ambiente.
 

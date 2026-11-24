@@ -12,7 +12,6 @@ Quattro famiglie di test:
 import unittest
 
 from fitosim.science.dual_kc import (
-    DEFAULT_FEW,
     KCMAX_DEFAULT,
     KCMAX_FLOOR_MARGIN,
     evaporation_reduction_coefficient,
@@ -20,7 +19,6 @@ from fitosim.science.dual_kc import (
     soil_evaporation_coefficient,
     update_de,
 )
-
 
 # =======================================================================
 #  1. evaporation_reduction_coefficient

@@ -58,14 +58,13 @@ deduplicazione del lato suo confrontando gli id.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
-from typing import Callable, Optional, Tuple
 
 from fitosim.domain.pot import Pot
 from fitosim.science.nutrition import PH_TOLERANCE
-
 
 # =======================================================================
 #  Enum: severità e categorie
@@ -177,7 +176,7 @@ def _make_alert_id(
 
 def check_irrigation_needed(
     pot: Pot, current_date: date,
-) -> Optional[Alert]:
+) -> Alert | None:
     """
     Allerta se il vaso è asciutto e prossimo al PWP.
 
@@ -227,7 +226,7 @@ def check_irrigation_needed(
 
 def check_ec_too_high(
     pot: Pot, current_date: date,
-) -> Optional[Alert]:
+) -> Alert | None:
     """
     Allerta se l'EC è significativamente sopra il range ottimale.
 
@@ -284,7 +283,7 @@ def check_ec_too_high(
 
 def check_ec_too_low(
     pot: Pot, current_date: date,
-) -> Optional[Alert]:
+) -> Alert | None:
     """
     Allerta se l'EC è significativamente sotto il range ottimale.
 
@@ -324,7 +323,7 @@ def check_ec_too_low(
 
 def check_fertilization_due(
     pot: Pot, current_date: date,
-) -> Optional[Alert]:
+) -> Alert | None:
     """
     Allerta se l'EC è sotto il minimo del range ottimale (ma non
     critica come check_ec_too_low).
@@ -371,7 +370,7 @@ def check_fertilization_due(
 
 def check_ph_out_of_range(
     pot: Pot, current_date: date,
-) -> Optional[Alert]:
+) -> Alert | None:
     """
     Allerta se il pH è fuori dal range ottimale della specie.
 
@@ -458,7 +457,7 @@ NUTRIENT_NAMES = {"n": "azoto (N)", "p": "fosforo (P₂O₅)", "k": "potassio (K
 
 def check_nutrient_low(
     pot: Pot, current_date: date,
-) -> Optional[Alert]:
+) -> Alert | None:
     """
     Allerta se la riserva nutritiva è bassa rispetto al piano della
     specie: sotto `NUTRIENT_RESERVE_INFO_FRACTION` della carica piena è
@@ -514,7 +513,7 @@ def check_nutrient_low(
 
 # Ogni regola è una funzione pura (Pot, date) → Optional[Alert].
 # Il Garden itera su questa tuple per applicare tutte le regole.
-ALL_RULES: Tuple[Callable[[Pot, date], Optional[Alert]], ...] = (
+ALL_RULES: tuple[Callable[[Pot, date], Alert | None], ...] = (
     check_irrigation_needed,
     check_ec_too_high,
     check_ec_too_low,

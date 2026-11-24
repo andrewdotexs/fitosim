@@ -34,19 +34,16 @@ veloci e isolati, senza scrittura su disco.
 """
 
 import unittest
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime
 
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.scheduling import ScheduledEvent
 from fitosim.domain.species import PhenologyAnchor, Species
 from fitosim.io.persistence import (
+    SCHEMA_VERSION,
     CatalogMissingError,
     GardenPersistence,
-    PersistenceError,
-    PotStateSnapshot,
-    SCHEMA_VERSION,
-    SchemaVersionMismatch,
 )
 from fitosim.science.substrate import (
     BaseMaterial,
@@ -54,7 +51,6 @@ from fitosim.science.substrate import (
     Substrate,
     compose_substrate,
 )
-
 
 # =======================================================================
 #  Helper di costruzione
@@ -551,9 +547,9 @@ class TestMultipleSnapshots(unittest.TestCase):
         pot = _make_basic_pot()
         garden.add_pot(pot)
 
-        t1 = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
-        t2 = datetime(2026, 5, 2, 12, 0, tzinfo=timezone.utc)
-        t3 = datetime(2026, 5, 3, 12, 0, tzinfo=timezone.utc)
+        t1 = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+        t2 = datetime(2026, 5, 2, 12, 0, tzinfo=UTC)
+        t3 = datetime(2026, 5, 3, 12, 0, tzinfo=UTC)
 
         self.persistence.save_garden(garden, snapshot_timestamp=t1)
         pot.state_mm = 22.0
@@ -574,8 +570,8 @@ class TestMultipleSnapshots(unittest.TestCase):
         pot = _make_basic_pot()
         garden.add_pot(pot)
 
-        t1 = datetime(2026, 5, 1, tzinfo=timezone.utc)
-        t2 = datetime(2026, 5, 10, tzinfo=timezone.utc)
+        t1 = datetime(2026, 5, 1, tzinfo=UTC)
+        t2 = datetime(2026, 5, 10, tzinfo=UTC)
         self.persistence.save_garden(garden, snapshot_timestamp=t1)
         pot.state_mm = 18.0
         self.persistence.save_garden(garden, snapshot_timestamp=t2)
@@ -589,9 +585,9 @@ class TestMultipleSnapshots(unittest.TestCase):
         pot = _make_basic_pot()
         garden.add_pot(pot)
 
-        t1 = datetime(2026, 5, 1, tzinfo=timezone.utc)
-        t2 = datetime(2026, 5, 5, tzinfo=timezone.utc)
-        t3 = datetime(2026, 5, 10, tzinfo=timezone.utc)
+        t1 = datetime(2026, 5, 1, tzinfo=UTC)
+        t2 = datetime(2026, 5, 5, tzinfo=UTC)
+        t3 = datetime(2026, 5, 10, tzinfo=UTC)
         self.persistence.save_garden(garden, snapshot_timestamp=t1)
         pot.state_mm = 22.0
         self.persistence.save_garden(garden, snapshot_timestamp=t2)
@@ -599,7 +595,7 @@ class TestMultipleSnapshots(unittest.TestCase):
         self.persistence.save_garden(garden, snapshot_timestamp=t3)
 
         # as_of intermedio: il più recente ≤ t_intermedio
-        as_of_intermedio = datetime(2026, 5, 7, tzinfo=timezone.utc)
+        as_of_intermedio = datetime(2026, 5, 7, tzinfo=UTC)
         loaded = self.persistence.load_garden("balcone", as_of=as_of_intermedio)
         # Il più recente ≤ 5/7 è quello del 5/5 con state_mm=22.0
         self.assertEqual(loaded.get_pot("basilico-1").state_mm, 22.0)
@@ -610,13 +606,13 @@ class TestMultipleSnapshots(unittest.TestCase):
         garden.add_pot(pot)
 
         for day in range(1, 11):
-            t = datetime(2026, 5, day, tzinfo=timezone.utc)
+            t = datetime(2026, 5, day, tzinfo=UTC)
             pot.state_mm = 30.0 - day  # 29, 28, 27, ...
             self.persistence.save_garden(garden, snapshot_timestamp=t)
 
         # Query: dal 4 al 7 maggio (4 snapshot)
-        since = datetime(2026, 5, 4, tzinfo=timezone.utc)
-        until = datetime(2026, 5, 7, tzinfo=timezone.utc)
+        since = datetime(2026, 5, 4, tzinfo=UTC)
+        until = datetime(2026, 5, 7, tzinfo=UTC)
         snapshots = self.persistence.query_states(
             "balcone", "basilico-1", since=since, until=until,
         )
@@ -650,7 +646,7 @@ class TestReferentialIntegrity(unittest.TestCase):
         self.persistence.save_garden(garden)
         self.persistence.record_event(
             "balcone", "vaso-1", "fertigation",
-            datetime.now(timezone.utc), {"volume_l": 0.3},
+            datetime.now(UTC), {"volume_l": 0.3},
         )
 
         # Pre-cancellazione: tutti i record presenti
@@ -707,7 +703,7 @@ class TestEvents(unittest.TestCase):
         self.persistence.close()
 
     def test_record_and_retrieve_event(self):
-        t = datetime(2026, 5, 1, 9, 30, tzinfo=timezone.utc)
+        t = datetime(2026, 5, 1, 9, 30, tzinfo=UTC)
         payload = {"volume_l": 0.3, "ec_mscm": 2.0, "ph": 6.2}
         self.persistence.record_event(
             "balcone", "basilico-1", "fertigation", t, payload,
@@ -720,9 +716,9 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(events[0]["timestamp"], t)
 
     def test_query_events_filter_by_type(self):
-        t1 = datetime(2026, 5, 1, tzinfo=timezone.utc)
-        t2 = datetime(2026, 5, 2, tzinfo=timezone.utc)
-        t3 = datetime(2026, 5, 3, tzinfo=timezone.utc)
+        t1 = datetime(2026, 5, 1, tzinfo=UTC)
+        t2 = datetime(2026, 5, 2, tzinfo=UTC)
+        t3 = datetime(2026, 5, 3, tzinfo=UTC)
         self.persistence.record_event(
             "balcone", "basilico-1", "fertigation", t1, {"volume_l": 0.3},
         )
@@ -743,13 +739,13 @@ class TestEvents(unittest.TestCase):
 
     def test_query_events_filter_by_time_range(self):
         for day in range(1, 11):
-            t = datetime(2026, 5, day, tzinfo=timezone.utc)
+            t = datetime(2026, 5, day, tzinfo=UTC)
             self.persistence.record_event(
                 "balcone", "basilico-1", "rainfall", t, {"volume_mm": 1.0},
             )
         # Range: dal 4 al 7
-        since = datetime(2026, 5, 4, tzinfo=timezone.utc)
-        until = datetime(2026, 5, 7, tzinfo=timezone.utc)
+        since = datetime(2026, 5, 4, tzinfo=UTC)
+        until = datetime(2026, 5, 7, tzinfo=UTC)
         events = self.persistence.query_events(
             "balcone", "basilico-1", since=since, until=until,
         )
@@ -760,7 +756,7 @@ class TestEvents(unittest.TestCase):
             self.persistence.record_event(
                 "balcone", "vaso-fantasma",
                 "fertigation",
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
                 {"volume_l": 0.1},
             )
 
@@ -882,7 +878,8 @@ class TestChannelIdPersistence(unittest.TestCase):
         # connessione esistente.
         # Non possiamo riusare la stessa connessione perché :memory:
         # è isolato per connessione. Usiamo un file temporaneo invece.
-        import tempfile, os
+        import os
+        import tempfile
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -1057,7 +1054,9 @@ class TestScheduledEventsPersistence(unittest.TestCase):
         # light_exposure). La cascata di migrazioni v2→v3 e v3→v4
         # deve applicarsi correttamente e portare il database alla
         # versione corrente del codice.
-        import sqlite3, tempfile, os
+        import os
+        import sqlite3
+        import tempfile
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
             tmp_path = tmp.name
         try:
@@ -1139,12 +1138,14 @@ class TestRoomsAndIndoorPotPersistence(unittest.TestCase):
 
     def _make_garden_with_room(self):
         """Helper: garden con una Room e un vaso indoor."""
-        from fitosim.domain.garden import Garden
-        from fitosim.domain.room import (
-            Room, IndoorMicroclimate, MicroclimateKind, LightExposure,
-        )
-        from fitosim.domain.pot import Pot, Location
         from datetime import date
+
+        from fitosim.domain.garden import Garden
+        from fitosim.domain.pot import Location, Pot
+        from fitosim.domain.room import (
+            LightExposure,
+            Room,
+        )
 
         garden = Garden(name="Casa di Andrea")
         salotto = Room(
@@ -1166,9 +1167,10 @@ class TestRoomsAndIndoorPotPersistence(unittest.TestCase):
     def test_round_trip_material_factor(self):
         # Il numero del materiale torna com'era, e un vaso senza resta senza:
         # None vuol dire la tabella delle classi, non 1.00.
-        from fitosim.domain.garden import Garden
-        from fitosim.domain.pot import Pot, Location
         from datetime import date
+
+        from fitosim.domain.garden import Garden
+        from fitosim.domain.pot import Location, Pot
 
         garden = Garden(name="Balcone")
         for label, fattore in (("col-numero", 1.5), ("senza", None)):
@@ -1203,7 +1205,8 @@ class TestRoomsAndIndoorPotPersistence(unittest.TestCase):
     def test_round_trip_room_with_microclimate(self):
         # Salva e ricarica una Room con current_microclimate popolato.
         from fitosim.domain.room import (
-            IndoorMicroclimate, MicroclimateKind,
+            IndoorMicroclimate,
+            MicroclimateKind,
         )
         garden = self._make_garden_with_room()
         garden.get_room("salotto").update_current_microclimate(
@@ -1238,9 +1241,10 @@ class TestRoomsAndIndoorPotPersistence(unittest.TestCase):
     def test_round_trip_pot_with_geographic_fields(self):
         # Salva e ricarica un Pot outdoor con latitude_deg ed elevation_m
         # (introdotti dalla sotto-tappa C, persistiti dalla fase D3).
-        from fitosim.domain.garden import Garden
-        from fitosim.domain.pot import Pot, Location
         from datetime import date
+
+        from fitosim.domain.garden import Garden
+        from fitosim.domain.pot import Location, Pot
 
         garden = Garden(name="Balcone")
         garden.add_pot(Pot(
@@ -1698,7 +1702,8 @@ class TestSpeciesConfigRoundTrip(unittest.TestCase):
 
     def test_annual_growth_stages_survive(self):
         # La lattuga dichiara che non fiorisce mai in coltivazione.
-        from fitosim.domain.species import LETTUCE, GrowthStage as GS
+        from fitosim.domain.species import LETTUCE
+        from fitosim.domain.species import GrowthStage as GS
         loaded = self._round_trip(LETTUCE)
         self.assertEqual(
             loaded.annual_growth_stages, LETTUCE.annual_growth_stages,

@@ -23,9 +23,7 @@ from fitosim.science.behavioral_calibration import (
     DEPLETION_MAX,
     DEPLETION_MIN,
     AlertJudgment,
-    BehavioralCalibrationResult,
     IrrigationDeviation,
-    MIN_OBS_FOR_LOW_CONFIDENCE,
     apply_depletion_correction,
     apply_kc_correction,
     calibrate_depletion_from_judgments,
@@ -384,9 +382,8 @@ class TestAlertJudgment(unittest.TestCase):
 
     def test_out_of_range_depletion_raises(self):
         for bad in (-0.1, 1.5):
-            with self.subTest(depletion=bad):
-                with self.assertRaises(ValueError):
-                    AlertJudgment(date(2026, 6, 1), bad, False)
+            with self.subTest(depletion=bad), self.assertRaises(ValueError):
+                AlertJudgment(date(2026, 6, 1), bad, False)
 
     def test_boundary_values_are_valid(self):
         AlertJudgment(date(2026, 6, 1), 0.0, False)
@@ -552,9 +549,8 @@ class TestApplyDepletionCorrection(unittest.TestCase):
 
     def test_invalid_threshold_raises(self):
         for bad in (0.0, -0.1, 1.5):
-            with self.subTest(value=bad):
-                with self.assertRaises(ValueError):
-                    apply_depletion_correction(BASIL, bad)
+            with self.subTest(value=bad), self.assertRaises(ValueError):
+                apply_depletion_correction(BASIL, bad)
 
     def test_end_to_end_moves_the_alert_threshold(self):
         # Il ciclo completo: alzare p sposta piu' in basso la soglia di

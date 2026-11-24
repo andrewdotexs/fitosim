@@ -39,28 +39,6 @@ from datetime import date, timedelta
 from enum import Enum
 from typing import Optional
 
-from fitosim.domain.species import (
-    KC_BARE_SOIL_FLOOR,
-    GrowthStage,
-    PhenologicalStage,
-    PhenologyMethod,
-    effective_kc,
-    effective_kcb,
-    Species,
-    kc_for_stage,
-    light_requirement_of,
-)
-from fitosim.science.canopy import (
-    cover_fraction,
-    kc_from_cover,
-    kcb_from_cover,
-)
-from fitosim.domain.room import (
-    IndoorMicroclimate,
-    LightExposure,
-    MicroclimateKind,
-    Room,
-)
 from fitosim.domain.blocks import (
     BalanceBlock,
     BlockFertigation,
@@ -69,6 +47,23 @@ from fitosim.domain.blocks import (
     FullBlocksStepResult,
     et0_for_blocks,
     validate_block_tiling,
+)
+from fitosim.domain.room import (
+    IndoorMicroclimate,
+    LightExposure,
+    MicroclimateKind,
+    Room,
+)
+from fitosim.domain.species import (
+    KC_BARE_SOIL_FLOOR,
+    GrowthStage,
+    PhenologicalStage,
+    PhenologyMethod,
+    Species,
+    effective_kc,
+    effective_kcb,
+    kc_for_stage,
+    light_requirement_of,
 )
 from fitosim.domain.weather import (
     WeatherBlock,
@@ -80,8 +75,12 @@ from fitosim.science.balance import (
     BalanceStepResult,
     water_balance_step_mm,
 )
+from fitosim.science.canopy import (
+    cover_fraction,
+    kc_from_cover,
+    kcb_from_cover,
+)
 from fitosim.science.dual_kc import (
-    DEFAULT_FEW,
     evaporation_reduction_coefficient,
     soil_evaporation_coefficient,
     update_de,
@@ -107,7 +106,6 @@ from fitosim.science.nutrients import (
     temperature_gate,
 )
 from fitosim.science.phenology import growing_degree_days
-from fitosim.science.soil_ec import EcUpdateResult, pore_water_ec
 from fitosim.science.pot_physics import (
     PotColor,
     PotMaterial,
@@ -125,6 +123,7 @@ from fitosim.science.saucer import (
     capillary_transfer,
     saucer_evaporation,
 )
+from fitosim.science.soil_ec import EcUpdateResult, pore_water_ec
 from fitosim.science.substrate import (
     Substrate,
     circular_pot_surface_area_m2,
@@ -132,7 +131,6 @@ from fitosim.science.substrate import (
     oval_pot_surface_area_m2,
     pot_substrate_depth_mm,
     rectangular_pot_surface_area_m2,
-    theta_to_mm,
     truncated_cone_pot_surface_area_m2,
 )
 
@@ -298,19 +296,19 @@ class SensorUpdateResult:
     # come l'ATO 7-in-1. Tutti opzionali con default per retrocompat
     # totale: chi costruisce SensorUpdateResult senza passarli (es. il
     # codice della fascia 1) continua a funzionare senza modifiche.
-    observed_temperature_c: Optional[float] = None
-    observed_ec_mscm: Optional[float] = None
-    observed_ph: Optional[float] = None
+    observed_temperature_c: float | None = None
+    observed_ec_mscm: float | None = None
+    observed_ph: float | None = None
     provider_specific: dict = field(default_factory=dict)
     # Campi aggiunti in sotto-tappa E della tappa 3 fascia 2: stato
     # chimico predetto dal modello prima dell'aggiornamento, e
     # discrepanze rispetto al sensore. Permettono al chiamante di
     # detectare drift chimico nel tempo, esattamente come per il
     # drift idrico.
-    predicted_ec_mscm: Optional[float] = None
-    predicted_ph: Optional[float] = None
-    discrepancy_ec_mscm: Optional[float] = None
-    discrepancy_ph: Optional[float] = None
+    predicted_ec_mscm: float | None = None
+    predicted_ph: float | None = None
+    discrepancy_ec_mscm: float | None = None
+    discrepancy_ph: float | None = None
 
     @property
     def absolute_error_mm(self) -> float:
@@ -398,8 +396,8 @@ class FertigationResult:
     # Campi aggiunti in sotto-tappa F: documentano la frazione di
     # pioggia intercettata da strutture sopra il vaso (tetti, alberi).
     # Solo per eventi di pioggia naturale; None per fertirrigazioni.
-    volume_intercepted_l: Optional[float] = None
-    volume_intercepted_mm: Optional[float] = None
+    volume_intercepted_l: float | None = None
+    volume_intercepted_mm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -421,7 +419,7 @@ class NutrientStepResult:
     temperature_gate: float
     pools_after: NutrientAmounts
     light_factor: float = 1.0
-    dli_mol_m2_day: Optional[float] = None
+    dli_mol_m2_day: float | None = None
 
 
 @dataclass(frozen=True)
@@ -449,11 +447,11 @@ class FullStepResult:
 
     event_date: date
     balance_result: "BalanceStepResult"
-    rainfall_result: Optional[FertigationResult] = None
-    fertigation_result: Optional[FertigationResult] = None
+    rainfall_result: FertigationResult | None = None
+    fertigation_result: FertigationResult | None = None
     # I serbatoi nutritivi (2026-09-22): sempre presente, anche senza
     # piano (allora l'assorbimento è zero).
-    nutrient_result: Optional[NutrientStepResult] = None
+    nutrient_result: NutrientStepResult | None = None
 
 
 @dataclass
@@ -566,7 +564,7 @@ class Pot:
     planting_date: date
     state_mm: float = field(default=-1.0)
     pot_shape: PotShape = PotShape.CYLINDRICAL
-    pot_width_cm: Optional[float] = None
+    pot_width_cm: float | None = None
     pot_material: PotMaterial = PotMaterial.PLASTIC
     pot_color: PotColor = PotColor.MEDIUM
     sun_exposure: SunExposure = SunExposure.FULL_SUN
@@ -603,7 +601,7 @@ class Pot:
     # retroattiva totale). Se ha un valore, il sottovaso è attivo e
     # i metodi del bilancio orchestrano il trasferimento capillare e
     # l'evaporazione del piattino.
-    saucer_capacity_mm: Optional[float] = None
+    saucer_capacity_mm: float | None = None
     saucer_state_mm: float = 0.0
     saucer_capillary_rate: float = 0.4
     saucer_evap_coef: float = 0.4
@@ -633,7 +631,7 @@ class Pot:
     # meteo (`apply_balance_step_from_weather`), che è l'unico ad
     # avere le temperature. Il cammino legacy che riceve solo ET₀ non
     # può accumulare nulla e lascia il campo invariato.
-    gdd_accumulated: Optional[float] = None
+    gdd_accumulated: float | None = None
     # ----- Stato chimico del substrato (tappa 3 fascia 2) -----
     # Massa salina totale presente nel vaso, in milli-equivalenti. È
     # lo stato canonico della "salinità" del substrato: cresce con le
@@ -678,7 +676,7 @@ class Pot:
     # La carica iniziale del substrato: fino a questa data il vaso
     # è partito pieno col rinvaso (`apply_starter_charge`), e chi legge
     # la riserva può dirlo. None = nessuna carica in corso.
-    starter_charge_until: Optional[date] = None
+    starter_charge_until: date | None = None
     # L'ultimo passo nutritivo, per chi vuole i numeri del giorno senza
     # tenersi il risultato: non è stato, non si persiste.
     last_nutrient_step: Optional["NutrientStepResult"] = field(
@@ -726,7 +724,7 @@ class Pot:
     # fase D2 userà un default conservativo (probabilmente
     # INDIRECT_BRIGHT, ma la decisione è rimandata alla fase D2).
     room_id: str | None = None
-    light_exposure: Optional[LightExposure] = None
+    light_exposure: LightExposure | None = None
     # ----- La pianta dentro il vaso (H.1-c di The Pot) -----
     # Le misure della pianta, quando qualcuno le ha prese col metro.
     # Entrano nel modello in due punti: la larghezza della chioma nel
@@ -1082,7 +1080,7 @@ class Pot:
         """L'acqua del vaso a capacità di campo, in litri."""
         return self.fc_mm * self.surface_area_m2
 
-    def nutrient_targets(self, current_date: date) -> Optional[NutrientAmounts]:
+    def nutrient_targets(self, current_date: date) -> NutrientAmounts | None:
         """
         La concentrazione che il piano della specie vuole nel mese di
         `current_date`, in mg/L di N, P₂O₅ e K₂O — o None se la specie
@@ -1093,7 +1091,7 @@ class Pot:
             return None
         return NutrientAmounts.from_tuple(targets[current_date.month - 1])
 
-    def nutrient_reserve(self, current_date: date) -> Optional[NutrientReserve]:
+    def nutrient_reserve(self, current_date: date) -> NutrientReserve | None:
         """
         La riserva nutritiva di oggi: la frazione della carica piena
         occupata dal serbatoio più vuoto fra quelli che il piano oggi
@@ -1105,7 +1103,7 @@ class Pot:
             return None
         return reserve(self.nutrient_pools, targets, self.fc_water_volume_l)
 
-    def nutrient_days_left(self, current_date: date) -> Optional[float]:
+    def nutrient_days_left(self, current_date: date) -> float | None:
         """
         Fra quanti giorni il serbatoio limitante si svuota al ritmo
         dell'ultimo passo: la riserva in giorni, come quella idrica.
@@ -1124,7 +1122,7 @@ class Pot:
         self,
         amounts: NutrientAmounts,
         *,
-        salt_meq: Optional[float] = None,
+        salt_meq: float | None = None,
     ) -> None:
         """
         Versa nel vaso dei nutrienti senza acqua: la quota del giorno
@@ -1471,8 +1469,8 @@ class Pot:
         et_0_mm: float,
         water_input_mm: float,
         current_date: date,
-        t_mean_c: Optional[float] = None,
-        dli_mol_m2_day: Optional[float] = None,
+        t_mean_c: float | None = None,
+        dli_mol_m2_day: float | None = None,
     ) -> BalanceStepResult:
         """
         Esegue un passo di bilancio idrico (giornaliero) sul vaso — e,
@@ -1673,8 +1671,8 @@ class Pot:
         self,
         transpiration_mm: float,
         current_date: date,
-        t_mean_c: Optional[float],
-        dli_mol_m2_day: Optional[float] = None,
+        t_mean_c: float | None,
+        dli_mol_m2_day: float | None = None,
     ) -> "NutrientStepResult":
         """
         L'assorbimento del giorno: la traspirazione della pianta in
@@ -1727,8 +1725,8 @@ class Pot:
     def dli_at_pot(
         self,
         open_sky_radiation_mj_m2_day: float,
-        light_fraction_override: Optional[float] = None,
-    ) -> Optional[float]:
+        light_fraction_override: float | None = None,
+    ) -> float | None:
         """
         Il DLI che arriva a questo vaso (mol/m²/giorno) dalla radiazione
         globale del giorno a cielo aperto. La frazione di luce è quella
@@ -1746,7 +1744,7 @@ class Pot:
             )
         return None
 
-    def light_sufficiency(self, dli_mol_m2_day: float) -> Optional[LightSufficiency]:
+    def light_sufficiency(self, dli_mol_m2_day: float) -> LightSufficiency | None:
         """
         Il giudizio della luce al vaso contro quella che la specie
         vuole; None se la specie non dichiara il suo fabbisogno.
@@ -1760,9 +1758,9 @@ class Pot:
         self,
         bulk_ec_mscm: float,
         *,
-        theta: Optional[float] = None,
+        theta: float | None = None,
         temperature_c: float = 25.0,
-    ) -> Optional[EcUpdateResult]:
+    ) -> EcUpdateResult | None:
         """
         Allinea la massa salina a una lettura EC della sonda (2026-09-22),
         come `update_from_sensor` allinea l'acqua a una lettura di θ.
@@ -1811,7 +1809,7 @@ class Pot:
 
     def update_from_sensor(
         self,
-        theta_observed: Optional[float] = None,
+        theta_observed: float | None = None,
         *,
         reading: Optional["SoilReading"] = None,
     ) -> SensorUpdateResult:
@@ -2099,8 +2097,8 @@ class Pot:
         weather: WeatherDay,
         water_input_mm: float,
         current_date: date,
-        latitude_deg: Optional[float] = None,
-        elevation_m: Optional[float] = None,
+        latitude_deg: float | None = None,
+        elevation_m: float | None = None,
     ) -> BalanceStepResult:
         """
         Esegue un passo di bilancio idrico (giornaliero) sul vaso a
@@ -2200,7 +2198,7 @@ class Pot:
         # ben definita solo quando il dato meteo è "completo per
         # Penman-Monteith". Nei casi parziali passiamo None e il
         # selettore ricadrà su Hargreaves.
-        rn_mj_m2_day: Optional[float] = None
+        rn_mj_m2_day: float | None = None
         if weather.has_full_weather:
             j = day_of_year(weather.date_)
             ra = extraterrestrial_radiation(effective_latitude, j)
@@ -2227,7 +2225,7 @@ class Pot:
         # un'altra cosa, vedi `science.pot_physics`). Se il provider
         # meteo non fornisce il vento, lasciamo None: il selettore
         # ripiegherà su Hargreaves-Samani che non lo usa.
-        effective_wind_m_s: Optional[float] = None
+        effective_wind_m_s: float | None = None
         if weather.wind_speed_m_s is not None:
             effective_wind_m_s = (
                 weather.wind_speed_m_s
@@ -2339,10 +2337,10 @@ class Pot:
         microclimate: IndoorMicroclimate,
         water_input_mm: float,
         current_date: date,
-        room: Optional[Room] = None,
-        outdoor_solar_radiation_mj_m2_day: Optional[float] = None,
-        wind_speed_m_s: Optional[float] = None,
-        light_exposure_override: Optional[LightExposure] = None,
+        room: Room | None = None,
+        outdoor_solar_radiation_mj_m2_day: float | None = None,
+        wind_speed_m_s: float | None = None,
+        light_exposure_override: LightExposure | None = None,
     ) -> BalanceStepResult:
         """
         Esegue un passo di bilancio idrico (giornaliero) sul vaso a
@@ -2550,7 +2548,7 @@ class Pot:
         ec_mscm: float,
         ph: float,
         current_date: date,
-        nutrients_mg_per_l: Optional[NutrientAmounts] = None,
+        nutrients_mg_per_l: NutrientAmounts | None = None,
     ) -> "FertigationResult":
         """
         Applica un evento di fertirrigazione al vaso, aggiornando in-place
@@ -2751,6 +2749,7 @@ class Pot:
             l'eventuale frazione di pioggia intercettata.
         """
         from dataclasses import replace
+
         from fitosim.science.fertigation import RAINFALL_EC_MSCM, RAINFALL_PH
 
         # Calcolo del volume effettivamente entrato nel vaso e di
@@ -2794,9 +2793,9 @@ class Pot:
         fertigation_ec_mscm: float = 0.0,
         fertigation_ph: float = 7.0,
         rainfall_volume_l: float = 0.0,
-        fertigation_nutrients_mg_per_l: Optional[NutrientAmounts] = None,
-        t_mean_c: Optional[float] = None,
-        dli_mol_m2_day: Optional[float] = None,
+        fertigation_nutrients_mg_per_l: NutrientAmounts | None = None,
+        t_mean_c: float | None = None,
+        dli_mol_m2_day: float | None = None,
     ) -> "FullStepResult":
         """
         Orchestratore completo del passo giornaliero del vaso: combina
@@ -2918,9 +2917,9 @@ class Pot:
         fertigation_ec_mscm: float = 0.0,
         fertigation_ph: float = 7.0,
         rainfall_volume_l: float = 0.0,
-        latitude_deg: Optional[float] = None,
-        elevation_m: Optional[float] = None,
-        fertigation_nutrients_mg_per_l: Optional[NutrientAmounts] = None,
+        latitude_deg: float | None = None,
+        elevation_m: float | None = None,
+        fertigation_nutrients_mg_per_l: NutrientAmounts | None = None,
     ) -> "FullStepResult":
         """
         Orchestratore completo del passo giornaliero a partire dai dati

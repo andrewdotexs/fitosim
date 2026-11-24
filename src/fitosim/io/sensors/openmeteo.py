@@ -57,8 +57,7 @@ chiamante non debba conoscere i dettagli di urllib:
 from __future__ import annotations
 
 import urllib.error
-from datetime import datetime, time, timezone
-from typing import Optional
+from datetime import UTC, datetime, time
 
 from fitosim.io.openmeteo import (
     DailyWeather,
@@ -70,11 +69,10 @@ from fitosim.io.sensors.errors import (
 )
 from fitosim.io.sensors.measurement import (
     CUSTOM_NAMESPACE_PREFIX,
-    Measurement,
     PARAM_AIR_TEMPERATURE_C,
     PARAM_RAINFALL_MM,
+    Measurement,
 )
-
 
 # Provider tag per i log strutturati e per il campo `provider` delle
 # eccezioni. Costante di modulo per evitare typo sparsi nel codice.
@@ -120,7 +118,7 @@ def _daily_weather_to_measurements(
     """
     # Convertiamo il `day: date` legacy in `timestamp: datetime` UTC
     # alle 12:00, secondo la convenzione documentata sopra.
-    ts = datetime.combine(dw.day, time(12, 0), tzinfo=timezone.utc)
+    ts = datetime.combine(dw.day, time(12, 0), tzinfo=UTC)
     t_mean = (dw.t_min + dw.t_max) / 2.0
 
     out: list[Measurement] = [

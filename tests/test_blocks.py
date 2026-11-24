@@ -8,7 +8,7 @@ blocco di 24 ore è il passo giornaliero di sempre, numero per numero.
 import math
 import unittest
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from fitosim.domain.blocks import (
     BalanceBlock,
@@ -146,8 +146,8 @@ class TestWeatherSamples(unittest.TestCase):
     def test_groups_by_standard_time(self):
         # 22:30 e 23:30 UTC del 13 sono 23:30 del 13 e 00:30 del 14 in CET.
         samples = [
-            WeatherSample(datetime(2026, 9, 13, 22, 30, tzinfo=timezone.utc), t_c=20.0),
-            WeatherSample(datetime(2026, 9, 13, 23, 30, tzinfo=timezone.utc), t_c=19.0),
+            WeatherSample(datetime(2026, 9, 13, 22, 30, tzinfo=UTC), t_c=20.0),
+            WeatherSample(datetime(2026, 9, 13, 23, 30, tzinfo=UTC), t_c=19.0),
         ]
         blocks = weather_blocks_from_samples(samples, hours=1, utc_offset_hours=TZ)
         self.assertEqual([(b.date_, b.start_hour) for b in blocks],
@@ -156,8 +156,8 @@ class TestWeatherSamples(unittest.TestCase):
 
     def test_solar_is_the_mean_flux_over_the_block(self):
         samples = [
-            WeatherSample(datetime(2026, 9, 14, 11, 5, tzinfo=timezone.utc), t_c=24.0, solar_w_m2=400.0),
-            WeatherSample(datetime(2026, 9, 14, 11, 35, tzinfo=timezone.utc), t_c=25.0, solar_w_m2=600.0),
+            WeatherSample(datetime(2026, 9, 14, 11, 5, tzinfo=UTC), t_c=24.0, solar_w_m2=400.0),
+            WeatherSample(datetime(2026, 9, 14, 11, 35, tzinfo=UTC), t_c=25.0, solar_w_m2=600.0),
         ]
         (block,) = weather_blocks_from_samples(samples, hours=1, utc_offset_hours=TZ)
         self.assertEqual(block.start_hour, 12)              # 11 UTC → 12 CET
@@ -166,7 +166,7 @@ class TestWeatherSamples(unittest.TestCase):
         self.assertIsNone(block.humidity_relative)
 
     def test_block_without_temperature_is_skipped(self):
-        samples = [WeatherSample(datetime(2026, 9, 14, 11, 5, tzinfo=timezone.utc), solar_w_m2=400.0)]
+        samples = [WeatherSample(datetime(2026, 9, 14, 11, 5, tzinfo=UTC), solar_w_m2=400.0)]
         self.assertEqual(weather_blocks_from_samples(samples, 1, TZ), [])
 
     def test_invalid_inputs(self):

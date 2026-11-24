@@ -81,11 +81,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, date, datetime
+from typing import Any
 
 from fitosim.domain.garden import Garden
-from fitosim.domain.pot import Location, Pot, PotMaterial, PotColor, PotShape, SunExposure
+from fitosim.domain.pot import Location, Pot, PotColor, PotMaterial, PotShape, SunExposure
 from fitosim.domain.room import (
     IndoorMicroclimate,
     LightExposure,
@@ -104,7 +104,6 @@ from fitosim.science.substrate import (
     Substrate,
     compose_substrate,
 )
-
 
 # Versione corrente dello schema. Quando in futuro lo schema evolverà
 # (per esempio quando aggiungeremo gli eventi pianificati nella sotto-
@@ -147,7 +146,7 @@ SCHEMA_VERSION = 9
 # Lo schema è organizzato come una lista di statement DDL. Vengono
 # eseguiti in sequenza nell'ordine giusto perché alcune tabelle
 # referenziano altre via foreign key.
-SCHEMA_STATEMENTS: List[str] = [
+SCHEMA_STATEMENTS: list[str] = [
     # ----- Metadata dello schema -----
     """
     CREATE TABLE IF NOT EXISTS schema_metadata (
@@ -456,7 +455,7 @@ def _species_extra_kwargs(row: sqlite3.Row) -> dict:
     return kwargs
 
 
-def _parse_growth_stage_groups(raw_json) -> Optional[tuple]:
+def _parse_growth_stage_groups(raw_json) -> tuple | None:
     """
     Deserializza un JSON di gruppi di stadi botanici in tuple di enum.
 
@@ -491,7 +490,7 @@ class PotStateSnapshot:
     # Gradi-giorno accumulati. `None` significa "il vaso non traccia i
     # GDD": è lo stato di tutti gli snapshot scritti prima dello schema
     # v5, e di ogni vaso che usa la fenologia a calendario.
-    gdd_accumulated: Optional[float] = None
+    gdd_accumulated: float | None = None
 
 
 # =======================================================================
@@ -600,7 +599,7 @@ class GardenPersistence:
             self._conn.close()
             self._conn = None
 
-    def __enter__(self) -> "GardenPersistence":
+    def __enter__(self) -> GardenPersistence:
         return self
 
     def __exit__(self, *args) -> None:
@@ -1060,7 +1059,7 @@ class GardenPersistence:
         )
         return cursor.fetchone() is not None
 
-    def list_species(self) -> List[Species]:
+    def list_species(self) -> list[Species]:
         """Ritorna tutte le specie registrate, ordinate per nome."""
         cursor = self._conn.execute(
             "SELECT * FROM species ORDER BY name"
@@ -1144,7 +1143,7 @@ class GardenPersistence:
     def register_substrate(
         self,
         substrate: Substrate,
-        components: Optional[List[MixComponent]] = None,
+        components: list[MixComponent] | None = None,
     ) -> int:
         """
         Registra un substrato nel catalogo, o aggiorna se già esiste.
@@ -1316,7 +1315,7 @@ class GardenPersistence:
 
     def _load_substrate_components(
         self, substrate_id: int,
-    ) -> List[MixComponent]:
+    ) -> list[MixComponent]:
         """Carica i componenti di una mistura come lista di MixComponent."""
         cursor = self._conn.execute(
             """
@@ -1356,7 +1355,7 @@ class GardenPersistence:
     def save_garden(
         self,
         garden: Garden,
-        snapshot_timestamp: Optional[datetime] = None,
+        snapshot_timestamp: datetime | None = None,
     ) -> int:
         """
         Salva l'intero giardino con tutti i suoi vasi e uno snapshot
@@ -1393,10 +1392,10 @@ class GardenPersistence:
             Se una specie o un substrato referenziato non è nel catalogo.
         """
         if snapshot_timestamp is None:
-            snapshot_timestamp = datetime.now(timezone.utc)
+            snapshot_timestamp = datetime.now(UTC)
         elif snapshot_timestamp.tzinfo is None:
             snapshot_timestamp = snapshot_timestamp.replace(
-                tzinfo=timezone.utc,
+                tzinfo=UTC,
             )
 
         # Pre-validazione: tutte le specie e i substrati referenziati
@@ -1486,7 +1485,7 @@ class GardenPersistence:
         dimensioni tipiche del balcone (decine di eventi).
         """
         # Mappa label → pot_id per i vasi del giardino.
-        pot_id_by_label: Dict[str, int] = {}
+        pot_id_by_label: dict[str, int] = {}
         cursor = self._conn.execute(
             "SELECT id, label FROM pots WHERE garden_id = ?",
             (garden_id,),
@@ -1559,7 +1558,7 @@ class GardenPersistence:
         # Insert o update di ogni Room corrente.
         for room in garden.iter_rooms():
             # Serializza il current_microclimate (best effort).
-            mclima_json: Optional[str] = None
+            mclima_json: str | None = None
             if room.current_microclimate is not None:
                 try:
                     m = room.current_microclimate
@@ -1616,7 +1615,7 @@ class GardenPersistence:
 
     def _save_pot(
         self, garden_id: int, pot: Pot,
-        channel_id: Optional[str] = None,
+        channel_id: str | None = None,
     ) -> int:
         """
         Insert o update di un singolo vaso. Ritorna l'id del vaso.
@@ -1745,7 +1744,7 @@ class GardenPersistence:
     def load_garden(
         self,
         name: str,
-        as_of: Optional[datetime] = None,
+        as_of: datetime | None = None,
     ) -> Garden:
         """
         Ricarica un giardino dal database, ricostruendo i vasi col loro
@@ -1778,7 +1777,7 @@ class GardenPersistence:
             Se non esiste un giardino col nome specificato.
         """
         if as_of is not None and as_of.tzinfo is None:
-            as_of = as_of.replace(tzinfo=timezone.utc)
+            as_of = as_of.replace(tzinfo=UTC)
 
         cursor = self._conn.execute(
             "SELECT * FROM gardens WHERE name = ?", (name,),
@@ -1850,7 +1849,7 @@ class GardenPersistence:
         )
         for room_row in cursor.fetchall():
             # Ricostruisce il current_microclimate se è stato salvato.
-            current_mc: Optional[IndoorMicroclimate] = None
+            current_mc: IndoorMicroclimate | None = None
             if room_row["current_microclimate_json"] is not None:
                 try:
                     data = json.loads(room_row["current_microclimate_json"])
@@ -1884,7 +1883,7 @@ class GardenPersistence:
 
         return garden
 
-    def _load_pot(self, pot_row: sqlite3.Row, as_of: Optional[datetime]) -> Pot:
+    def _load_pot(self, pot_row: sqlite3.Row, as_of: datetime | None) -> Pot:
         """Ricostruisce un Pot da una riga della tabella pots e dal
         suo snapshot di stato più recente."""
         species = self.get_species(pot_row["species_name"])
@@ -1914,7 +1913,7 @@ class GardenPersistence:
 
         # Costruisce il Pot. Se non c'è snapshot, gli state_* restano
         # ai loro default del costruttore.
-        kwargs: Dict[str, Any] = dict(
+        kwargs: dict[str, Any] = dict(
             label=pot_row["label"],
             species=species,
             substrate=substrate,
@@ -1975,7 +1974,7 @@ class GardenPersistence:
     #  Garden: utility di query
     # ====================================================================
 
-    def list_gardens(self) -> List[str]:
+    def list_gardens(self) -> list[str]:
         """Ritorna i nomi di tutti i giardini salvati, ordinati."""
         cursor = self._conn.execute(
             "SELECT name FROM gardens ORDER BY name"
@@ -2003,9 +2002,9 @@ class GardenPersistence:
         self,
         garden_name: str,
         pot_label: str,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-    ) -> List[PotStateSnapshot]:
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[PotStateSnapshot]:
         """
         Ritorna la storia degli stati di un vaso in un range temporale.
 
@@ -2043,12 +2042,12 @@ class GardenPersistence:
         params: list = [pot_row["id"]]
         if since is not None:
             if since.tzinfo is None:
-                since = since.replace(tzinfo=timezone.utc)
+                since = since.replace(tzinfo=UTC)
             sql += " AND timestamp >= ?"
             params.append(since.isoformat())
         if until is not None:
             if until.tzinfo is None:
-                until = until.replace(tzinfo=timezone.utc)
+                until = until.replace(tzinfo=UTC)
             sql += " AND timestamp <= ?"
             params.append(until.isoformat())
         sql += " ORDER BY timestamp ASC"
@@ -2076,7 +2075,7 @@ class GardenPersistence:
         pot_label: str,
         event_type: str,
         timestamp: datetime,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
     ) -> int:
         """
         Registra un evento storico per un vaso.
@@ -2101,7 +2100,7 @@ class GardenPersistence:
             L'id dell'evento nel database.
         """
         if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
+            timestamp = timestamp.replace(tzinfo=UTC)
 
         with self._conn:
             cursor = self._conn.execute(
@@ -2133,10 +2132,10 @@ class GardenPersistence:
         self,
         garden_name: str,
         pot_label: str,
-        event_type: Optional[str] = None,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-    ) -> List[Dict[str, Any]]:
+        event_type: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Ritorna gli eventi storici di un vaso.
 
@@ -2166,12 +2165,12 @@ class GardenPersistence:
             params.append(event_type)
         if since is not None:
             if since.tzinfo is None:
-                since = since.replace(tzinfo=timezone.utc)
+                since = since.replace(tzinfo=UTC)
             sql += " AND timestamp >= ?"
             params.append(since.isoformat())
         if until is not None:
             if until.tzinfo is None:
-                until = until.replace(tzinfo=timezone.utc)
+                until = until.replace(tzinfo=UTC)
             sql += " AND timestamp <= ?"
             params.append(until.isoformat())
         sql += " ORDER BY timestamp ASC"
@@ -2192,10 +2191,10 @@ class GardenPersistence:
     def query_scheduled_events(
         self,
         garden_name: str,
-        pot_label: Optional[str] = None,
-        since: Optional[date] = None,
-        until: Optional[date] = None,
-    ) -> List[ScheduledEvent]:
+        pot_label: str | None = None,
+        since: date | None = None,
+        until: date | None = None,
+    ) -> list[ScheduledEvent]:
         """
         Ritorna gli eventi pianificati di un giardino, con filtri.
 

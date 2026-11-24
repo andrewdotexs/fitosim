@@ -13,7 +13,6 @@ quindi i test mescolano:
      casi degeneri (escursione zero, temperature invertite).
 """
 
-import math
 import unittest
 from datetime import date
 
@@ -369,7 +368,8 @@ class TestPenmanMonteithStandard(unittest.TestCase):
         """
         # Calcoliamo una R_n realistica dalla radiazione globale.
         from fitosim.science.radiation import (
-            extraterrestrial_radiation, net_radiation,
+            extraterrestrial_radiation,
+            net_radiation,
         )
         ra = extraterrestrial_radiation(45.47, 200)
         ea = actual_vapor_pressure(26.0, 0.60)
@@ -611,7 +611,8 @@ class TestComputeEtSelector(unittest.TestCase):
         # modulo radiation, che fanno parte del layer scientifico già
         # testato dalla sotto-tappa A.
         from fitosim.science.radiation import (
-            extraterrestrial_radiation, net_radiation,
+            extraterrestrial_radiation,
+            net_radiation,
         )
         ra = extraterrestrial_radiation(45.47, 200)
         ea = actual_vapor_pressure(26.0, 0.60)

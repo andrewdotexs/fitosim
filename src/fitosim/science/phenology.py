@@ -68,14 +68,14 @@ equation, two interpretations", Agricultural and Forest Meteorology
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 
 def growing_degree_days(
     t_min: float,
     t_max: float,
     t_base: float,
-    t_cap: Optional[float] = None,
+    t_cap: float | None = None,
 ) -> float:
     """
     Gradi-giorno accumulati in una singola giornata.
@@ -135,7 +135,7 @@ def growing_degree_days(
 def accumulate_gdd(
     daily_temperatures: Iterable[tuple[float, float]],
     t_base: float,
-    t_cap: Optional[float] = None,
+    t_cap: float | None = None,
 ) -> float:
     """
     Gradi-giorno accumulati su una serie di giornate.

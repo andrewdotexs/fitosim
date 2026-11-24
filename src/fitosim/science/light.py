@@ -39,10 +39,9 @@ Decisa il 24 novembre 2026 (`docs/proposta_luce.md`, passi L1 e L2).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Mapping, Optional
-
 
 # =======================================================================
 #  La conversione
@@ -105,7 +104,7 @@ class LightClass(Enum):
 # considered low-light crops, 6 to 12 medium-light, 12 to 18 high-light,
 # and those requiring more than 18 very high-light». L'estremo alto
 # dell'ultima classe non c'è.
-LIGHT_CLASS_DLI_RANGE: Mapping[LightClass, tuple[float, Optional[float]]] = {
+LIGHT_CLASS_DLI_RANGE: Mapping[LightClass, tuple[float, float | None]] = {
     LightClass.LOW: (3.0, 6.0),
     LightClass.MEDIUM: (6.0, 12.0),
     LightClass.HIGH: (12.0, 18.0),
@@ -113,7 +112,7 @@ LIGHT_CLASS_DLI_RANGE: Mapping[LightClass, tuple[float, Optional[float]]] = {
 }
 
 
-def light_class_of(dli_mol_m2_day: float) -> Optional[LightClass]:
+def light_class_of(dli_mol_m2_day: float) -> LightClass | None:
     """
     In che classe di coltura cade questo DLI: «la luce di questo posto è
     da coltura di luce media». None sotto i 3 mol/m²/giorno, dove
@@ -121,7 +120,7 @@ def light_class_of(dli_mol_m2_day: float) -> Optional[LightClass]:
     """
     if dli_mol_m2_day < 0:
         raise ValueError(f"dli_mol_m2_day={dli_mol_m2_day} non può essere negativo.")
-    found: Optional[LightClass] = None
+    found: LightClass | None = None
     for light_class, (low, _high) in LIGHT_CLASS_DLI_RANGE.items():
         if dli_mol_m2_day >= low:
             found = light_class
@@ -145,8 +144,8 @@ class LightRequirement:
     """
 
     dli_good: float
-    dli_minimum: Optional[float] = None
-    dli_high: Optional[float] = None
+    dli_minimum: float | None = None
+    dli_high: float | None = None
 
     def __post_init__(self) -> None:
         if self.dli_good <= 0:

@@ -140,7 +140,6 @@ retrocompatibile per le specie del catalogo legacy della fascia 1.
 
 from __future__ import annotations
 
-
 # Valore minimo del fattore EC, raggiunto in stress salino completo
 # (EC molto sopra il range). Corrisponde al valore di letteratura per
 # stress salino acuto: la pianta riduce la traspirazione del 70%
@@ -417,7 +416,7 @@ def salinity_factor(
 
 def nutritional_factor(
     *,
-    species: "Species",
+    species: Species,
     ec_substrate_mscm: float,
 ) -> float:
     """

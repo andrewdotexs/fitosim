@@ -74,9 +74,9 @@ errori occasionali, ma non un vizio sistematico del protocollo.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional, Sequence
 
 from fitosim.domain.species import KC_MAX_PLAUSIBLE, KC_MIN_PLAUSIBLE
 
@@ -214,7 +214,7 @@ class LysimeterCalibrationResult:
         Spiegazione in italiano.
     """
 
-    kc_estimate: Optional[float]
+    kc_estimate: float | None
     n_intervals: int
     n_discarded: int
     confidence: str
@@ -271,7 +271,7 @@ def estimate_kc_from_interval(
     *,
     kp: float = 1.0,
     kn: float = 1.0,
-) -> Optional[float]:
+) -> float | None:
     """
     Kc misurato su un singolo intervallo.
 

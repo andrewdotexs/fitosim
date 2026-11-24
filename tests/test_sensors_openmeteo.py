@@ -22,7 +22,7 @@ una funzione che prende l'URL e restituisce un dict simulato.
 """
 
 import urllib.error
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -38,7 +38,6 @@ from fitosim.io.sensors.measurement import (
     PARAM_AIR_TEMPERATURE_C,
     PARAM_RAINFALL_MM,
 )
-
 
 # --------------------------------------------------------------------------
 #  Helper: payload Open-Meteo realistico per testing
@@ -118,8 +117,9 @@ class Test_OpenMeteo_translation:
         Test centrale di traduzione: monkey-patch di fetch_daily_forecast
         per controllare cosa l'adapter riceve dal legacy.
         """
-        from fitosim.io.openmeteo import DailyWeather
         from datetime import date
+
+        from fitosim.io.openmeteo import DailyWeather
 
         # Mock che restituisce 3 DailyWeather predefiniti.
         def mock_fetch(latitude, longitude, days, **kwargs):
@@ -156,7 +156,7 @@ class Test_OpenMeteo_translation:
         )
         assert temp_d1.value == (11.0 + 21.0) / 2
         assert temp_d1.timestamp == datetime(
-            2026, 5, 1, 12, 0, tzinfo=timezone.utc,
+            2026, 5, 1, 12, 0, tzinfo=UTC,
         )
 
         # Filtro: temperatura del secondo giorno.
@@ -186,8 +186,9 @@ class Test_OpenMeteo_translation:
     def test_current_conditions_returns_first_day(self, monkeypatch):
         """current_conditions() ritorna le Measurement del primo
         giorno (forecast a 1 giorno)."""
-        from fitosim.io.openmeteo import DailyWeather
         from datetime import date
+
+        from fitosim.io.openmeteo import DailyWeather
 
         def mock_fetch(latitude, longitude, days, **kwargs):
             assert days == 1, "current_conditions deve chiedere 1 giorno"
@@ -221,8 +222,9 @@ class Test_OpenMeteo_translation:
         non coperte), la Measurement custom:et0_mm NON viene prodotta
         (la spec sensori v1 richiede value obbligatorio float, non
         None)."""
-        from fitosim.io.openmeteo import DailyWeather
         from datetime import date
+
+        from fitosim.io.openmeteo import DailyWeather
 
         def mock_fetch(latitude, longitude, days, **kwargs):
             return [DailyWeather(
@@ -251,8 +253,9 @@ class Test_OpenMeteo_translation:
     def test_all_measurements_share_sensor_id(self, monkeypatch):
         """Tutte le Measurement di una stessa coordinata condividono
         lo stesso sensor_id."""
-        from fitosim.io.openmeteo import DailyWeather
         from datetime import date
+
+        from fitosim.io.openmeteo import DailyWeather
 
         def mock_fetch(latitude, longitude, days, **kwargs):
             return [

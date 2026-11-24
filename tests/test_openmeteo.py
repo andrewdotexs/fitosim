@@ -18,7 +18,6 @@ import json
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta
-from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -342,12 +341,11 @@ class TestFetchEndToEnd(unittest.TestCase):
         with patch(
             "fitosim.io.openmeteo.urllib.request.urlopen",
             side_effect=failing_urlopen,
-        ):
-            with self.assertRaises(OSError):
-                fetch_daily_forecast(
-                    latitude=45.47, longitude=9.19, days=3,
-                    cache_dir=self.cache_dir,
-                )
+        ), self.assertRaises(OSError):
+            fetch_daily_forecast(
+                latitude=45.47, longitude=9.19, days=3,
+                cache_dir=self.cache_dir,
+            )
 
 
 class TestEt0Parsing(unittest.TestCase):

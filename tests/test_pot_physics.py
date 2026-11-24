@@ -25,7 +25,6 @@ from fitosim.science.pot_physics import (
     shelter_wind_factor,
 )
 
-
 # =======================================================================
 #  1. Validazione delle tabelle
 # =======================================================================

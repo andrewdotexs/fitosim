@@ -15,11 +15,8 @@ from random import Random
 
 from fitosim.science.balance import stress_coefficient_ks
 from fitosim.science.calibration import (
-    CalibrationResult,
-    DEFAULT_FC_PERCENTILE,
-    DEFAULT_PWP_PERCENTILE,
     DEFAULT_RISE_TOLERANCE,
-    KcCalibrationResult,
+    CalibrationResult,
     _percentile,
     calibrate_kc,
     calibrate_substrate,
@@ -31,7 +28,6 @@ from fitosim.science.calibration import (
     find_valleys,
 )
 from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
-
 
 # =======================================================================
 #  1. find_peaks

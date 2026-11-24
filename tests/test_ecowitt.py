@@ -14,7 +14,7 @@ Cinque famiglie:
 import json
 import os
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,7 +36,6 @@ from fitosim.io.ecowitt import (
     fetch_real_time,
     parse_ecowitt_response,
 )
-
 
 # Path della fixture: il payload reale catturato dalla stazione
 # dell'utente. Lo carichiamo una volta all'avvio dei test.
@@ -145,7 +144,7 @@ class TestRealPayloadParsing(unittest.TestCase):
     def test_timestamp_decoded_correctly(self):
         # Il payload ha "time": "1777147849". Decodifica → 26 aprile 2026.
         self.assertEqual(self.obs.timestamp.year, 2026)
-        self.assertEqual(self.obs.timestamp.tzinfo, timezone.utc)
+        self.assertEqual(self.obs.timestamp.tzinfo, UTC)
 
     def test_outdoor_temperature_converted_to_celsius(self):
         # 64.6 °F → 18.111 °C circa.
@@ -403,7 +402,7 @@ class TestValveParsing(unittest.TestCase):
         self.assertAlmostEqual(valvola.monthly_l, 40.0)
         self.assertEqual(valvola.monthly_in, "2026-10")
         self.assertEqual(
-            valvola.observed_at, datetime.fromtimestamp(1792963215, tz=timezone.utc)
+            valvola.observed_at, datetime.fromtimestamp(1792963215, tz=UTC)
         )
         # Le sonde accanto restano quelle di sempre.
         self.assertEqual(obs.soil_moisture_pct, {1: 42.0})
@@ -482,10 +481,10 @@ class TestCameraParsing(unittest.TestCase):
             "https://osswww.ecowitt.net/images/webcam/v0/2026_10_30/364483/f088b7f46fc17471117e6130d711d4f3.jpg",
         )
         self.assertEqual(
-            obs.camera.taken_at, datetime.fromtimestamp(1793360098, tz=timezone.utc)
+            obs.camera.taken_at, datetime.fromtimestamp(1793360098, tz=UTC)
         )
         # L'istante della risposta resta quello di root.
-        self.assertEqual(obs.timestamp, datetime.fromtimestamp(1793360138, tz=timezone.utc))
+        self.assertEqual(obs.timestamp, datetime.fromtimestamp(1793360138, tz=UTC))
 
     def test_a_webcam_has_no_sensors(self):
         obs = parse_ecowitt_response(self.payload)
@@ -1014,8 +1013,9 @@ class TestHistoryUrlBuilder(unittest.TestCase):
     """Verifica della costruzione URL per l'endpoint history."""
 
     def test_url_includes_dates_in_required_format(self):
-        from fitosim.io.ecowitt import _build_history_url
         from datetime import datetime
+
+        from fitosim.io.ecowitt import _build_history_url
         url = _build_history_url(
             application_key="APP123",
             api_key="API456",
@@ -1047,8 +1047,9 @@ class TestFetchHistory(unittest.TestCase):
     """Test end-to-end del fetch history con fetcher iniettato."""
 
     def test_fetch_with_mock_returns_time_series(self):
-        from fitosim.io.ecowitt import EcowittTimeSeries, fetch_history
         from datetime import datetime
+
+        from fitosim.io.ecowitt import EcowittTimeSeries, fetch_history
 
         captured_urls = []
 
@@ -1070,8 +1071,9 @@ class TestFetchHistory(unittest.TestCase):
         self.assertGreater(series.n_points, 0)
 
     def test_fetch_rejects_inverted_date_range(self):
-        from fitosim.io.ecowitt import fetch_history
         from datetime import datetime
+
+        from fitosim.io.ecowitt import fetch_history
         with self.assertRaises(ValueError):
             fetch_history(
                 application_key="A", api_key="B", mac="C",
@@ -1089,11 +1091,14 @@ class TestDailyAggregation(unittest.TestCase):
     def test_aggregates_temperatures_to_min_max(self):
         # Costruiamo una serie sintetica con 10 punti in un giorno,
         # temperature outdoor da 5 °C a 22 °C: min=5, max=22 attesi.
+        from datetime import datetime
+
         from fitosim.io.ecowitt import (
-            EcowittSeriesPoint, EcowittTimeSeries, aggregate_to_daily_weather,
+            EcowittSeriesPoint,
+            EcowittTimeSeries,
+            aggregate_to_daily_weather,
         )
-        from datetime import datetime, timezone
-        base = datetime(2026, 4, 1, 6, 0, 0, tzinfo=timezone.utc)
+        base = datetime(2026, 4, 1, 6, 0, 0, tzinfo=UTC)
         from datetime import timedelta as td
         temps = [5.0, 7.5, 11.0, 16.0, 19.0, 22.0, 21.0, 17.0, 12.0, 8.5]
         points = tuple(
@@ -1116,11 +1121,14 @@ class TestDailyAggregation(unittest.TestCase):
     def test_uses_daily_rain_max_as_total(self):
         # rainfall_mm in Ecowitt è cumulato giornaliero: max nel giorno
         # = totale del giorno.
+        from datetime import datetime, timedelta
+
         from fitosim.io.ecowitt import (
-            EcowittSeriesPoint, EcowittTimeSeries, aggregate_to_daily_weather,
+            EcowittSeriesPoint,
+            EcowittTimeSeries,
+            aggregate_to_daily_weather,
         )
-        from datetime import datetime, timezone, timedelta
-        base = datetime(2026, 4, 1, 6, 0, 0, tzinfo=timezone.utc)
+        base = datetime(2026, 4, 1, 6, 0, 0, tzinfo=UTC)
         # Pioggia che cresce nel corso della giornata: 0 → 0 → 2.0 → 5.5 →
         # poi resta stabile (la pioggia si è fermata).
         rains = [0.0, 0.0, 2.0, 5.5, 5.5, 5.5]
@@ -1145,12 +1153,15 @@ class TestDailyAggregation(unittest.TestCase):
     def test_skips_days_with_too_few_points(self):
         # Un giorno con un solo campione viene scartato (sotto la soglia
         # min_points_per_day=4).
+        from datetime import datetime
+
         from fitosim.io.ecowitt import (
-            EcowittSeriesPoint, EcowittTimeSeries, aggregate_to_daily_weather,
+            EcowittSeriesPoint,
+            EcowittTimeSeries,
+            aggregate_to_daily_weather,
         )
-        from datetime import datetime, timezone
         single = EcowittSeriesPoint(
-            timestamp=datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC),
             outdoor_temp_c=15.0,
         )
         series = EcowittTimeSeries(
@@ -1163,7 +1174,8 @@ class TestDailyAggregation(unittest.TestCase):
         # La fixture reale copre due giorni diversi (1 e 2 aprile in
         # locale), aggreghiamo e verifichiamo plausibilità.
         from fitosim.io.ecowitt import (
-            aggregate_to_daily_weather, parse_ecowitt_history_response,
+            aggregate_to_daily_weather,
+            parse_ecowitt_history_response,
         )
         series = parse_ecowitt_history_response(_load_history_payload())
         daily = aggregate_to_daily_weather(series, min_points_per_day=2)
@@ -1184,7 +1196,8 @@ class TestDailyAggregation(unittest.TestCase):
         # ciò che permette al motore di consumare le due fonti in
         # modo intercambiabile.
         from fitosim.io.ecowitt import (
-            aggregate_to_daily_weather, parse_ecowitt_history_response,
+            aggregate_to_daily_weather,
+            parse_ecowitt_history_response,
         )
         from fitosim.io.openmeteo import DailyWeather
         series = parse_ecowitt_history_response(_load_history_payload())

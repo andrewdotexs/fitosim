@@ -16,7 +16,7 @@ Famiglie di test
   - `Test_timestamp_awareness`: regola UTC aware obbligatoria.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
@@ -27,7 +27,6 @@ from fitosim.io.sensors import (
     SoilReading,
     utc_now,
 )
-
 
 # --------------------------------------------------------------------------
 #  ReadingQuality
@@ -106,7 +105,7 @@ class Test_EnvironmentReading_construction:
         """Tutti i campi valorizzati vengono preservati senza
         conversione di unità (la conversione è responsabilità
         dell'adapter, non del Reading)."""
-        ts = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+        ts = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
         r = EnvironmentReading(
             timestamp=ts,
             temperature_c=22.5,
@@ -386,4 +385,4 @@ class Test_timestamp_awareness:
         il provider non espone un timestamp proprio."""
         ts = utc_now()
         assert ts.tzinfo is not None
-        assert ts.tzinfo == timezone.utc
+        assert ts.tzinfo == UTC

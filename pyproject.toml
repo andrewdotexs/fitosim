@@ -10,7 +10,7 @@ name = "fitosim"
 version = "0.41.0"
 description = "Motore scientifico per la simulazione agronomica di piante in vaso: bilancio idrico, evapotraspirazione, calendario di cura."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
     { name = "Andrea" }
@@ -25,9 +25,10 @@ classifiers = [
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
     "Topic :: Scientific/Engineering :: Hydrology",
     "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
@@ -46,9 +47,17 @@ dependencies = []
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
     "numpy>=1.24",
     "matplotlib>=3.7",
 ]
+
+# Il marcatore `py.typed` (PEP 561): dice a chi importa fitosim che le sue
+# annotazioni si possono usare. Va dichiarato fra i dati del pacchetto,
+# altrimenti un'installazione non editabile non lo porta con sé.
+[tool.setuptools.package-data]
+fitosim = ["py.typed"]
 
 [tool.setuptools.packages.find]
 # Layout src/: evita che Python importi accidentalmente il pacchetto dalla
@@ -62,3 +71,18 @@ where = ["src"]
 # iterazioni rapide.
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+# ----- Gli strumenti (P3, docs/fitosim_pulizia_e_ottimizzazione.md) -----
+# Le stesse regole di The Pot, che monta fitosim come dipendenza: una
+# riga da 100, Python 3.12, e le famiglie E, W, F, I, N, UP, B, C4, SIM.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]  # la lunghezza della riga non si impone al codice che c'era
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/fitosim"]

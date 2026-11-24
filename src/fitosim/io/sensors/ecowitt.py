@@ -53,8 +53,8 @@ from __future__ import annotations
 import os
 import urllib.error
 import warnings
-from typing import Optional
 
+from fitosim.domain.room import IndoorMicroclimate, MicroclimateKind
 from fitosim.io.ecowitt import (
     EcowittObservation,
     aa_battery_fraction,
@@ -66,22 +66,16 @@ from fitosim.io.sensors.errors import (
     SensorTemporaryError,
 )
 from fitosim.io.sensors.measurement import (
-    PARAM_BATTERY_LEVEL,
-    Measurement,
     PARAM_AIR_HUMIDITY,
     PARAM_AIR_TEMPERATURE_C,
+    PARAM_BATTERY_LEVEL,
     PARAM_RAINFALL_MM,
     PARAM_SOIL_EC_MSCM,
     PARAM_SOIL_TEMPERATURE_C,
     PARAM_SOIL_THETA,
     PARAM_WIND_SPEED_M_S,
+    Measurement,
 )
-from fitosim.io.sensors.types import (
-    ReadingQuality,
-    SoilReading,
-)
-from fitosim.domain.room import IndoorMicroclimate, MicroclimateKind
-
 
 PROVIDER_NAME = "ecowitt"
 
@@ -100,7 +94,7 @@ ENV_LEGACY_MAC = "ECOWITT_MAC"
 
 def _read_credential(
     new_name: str, legacy_name: str,
-) -> Optional[str]:
+) -> str | None:
     """
     Legge una credenziale dalle variabili d'ambiente con doppia
     convenzione.
@@ -262,7 +256,7 @@ class EcowittEnvironmentSensor:
         self._mac = mac
 
     @classmethod
-    def from_env(cls) -> "EcowittEnvironmentSensor":
+    def from_env(cls) -> EcowittEnvironmentSensor:
         """
         Costruisce l'adapter leggendo le credenziali dalle variabili
         d'ambiente.
@@ -519,7 +513,7 @@ class EcowittWH51SoilSensor:
         self._model = model
 
     @classmethod
-    def from_env(cls, model: str = "WH51") -> "EcowittWH51SoilSensor":
+    def from_env(cls, model: str = "WH51") -> EcowittWH51SoilSensor:
         """
         Costruisce l'adapter leggendo le credenziali dalle variabili
         d'ambiente, con la stessa logica di EcowittEnvironmentSensor
@@ -765,7 +759,7 @@ class EcowittAmbientSensor:
         self._mac = mac
 
     @classmethod
-    def from_env(cls) -> "EcowittAmbientSensor":
+    def from_env(cls) -> EcowittAmbientSensor:
         """
         Costruisce l'adapter leggendo le credenziali dalle variabili
         d'ambiente, con la stessa logica di EcowittEnvironmentSensor.

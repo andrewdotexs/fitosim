@@ -40,7 +40,6 @@ che è: una stima dichiarata.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 # La permittività dell'acqua a 20 °C e la sua pendenza con la temperatura
 # (Hilhorst 2000, eq. 3: ε_p = 80,3 − 0,37 (T − 20)).
@@ -97,7 +96,7 @@ def pore_water_ec(
     temperature_c: float = 25.0,
     factor: float = 1.0,
     epsilon_offset: float = EPSILON_OFFSET,
-) -> Optional[float]:
+) -> float | None:
     """
     L'EC della soluzione interstiziale (mS/cm) dall'EC apparente letta
     dalla sonda e dal contenuto idrico, con Hilhorst su Topp, per il
@@ -122,7 +121,7 @@ def factor_at_field_capacity(
     solution_ec_mscm: float,
     temperature_c: float = 25.0,
     epsilon_offset: float = EPSILON_OFFSET,
-) -> Optional[float]:
+) -> float | None:
     """
     Il fattore che fa combaciare Hilhorst con quello che si sa: a
     capacità di campo, subito dopo un'annaffiata a fondo, la soluzione

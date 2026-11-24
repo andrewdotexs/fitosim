@@ -65,10 +65,9 @@ una stima da tarare, lo dice.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Mapping, Optional
-
 
 # =======================================================================
 #  Costanti
@@ -194,15 +193,15 @@ class NutrientAmounts:
         """La somma dei tre serbatoi nella scala della massa salina."""
         return sum(self.get(x) / MG_PER_MEQ[x] for x in NUTRIENTS)
 
-    def scaled(self, factor: float) -> "NutrientAmounts":
+    def scaled(self, factor: float) -> NutrientAmounts:
         return NutrientAmounts(self.n_mg * factor, self.p_mg * factor, self.k_mg * factor)
 
-    def plus(self, other: "NutrientAmounts") -> "NutrientAmounts":
+    def plus(self, other: NutrientAmounts) -> NutrientAmounts:
         return NutrientAmounts(
             self.n_mg + other.n_mg, self.p_mg + other.p_mg, self.k_mg + other.k_mg,
         )
 
-    def minus(self, other: "NutrientAmounts") -> "NutrientAmounts":
+    def minus(self, other: NutrientAmounts) -> NutrientAmounts:
         """La differenza, mai sotto zero: un serbatoio non va in debito."""
         return NutrientAmounts(
             max(0.0, self.n_mg - other.n_mg),
@@ -211,7 +210,7 @@ class NutrientAmounts:
         )
 
     @classmethod
-    def from_tuple(cls, values: tuple[float, float, float]) -> "NutrientAmounts":
+    def from_tuple(cls, values: tuple[float, float, float]) -> NutrientAmounts:
         return cls(float(values[0]), float(values[1]), float(values[2]))
 
 
@@ -222,7 +221,7 @@ ZERO = NutrientAmounts()
 #  L'assorbimento
 # =======================================================================
 
-def temperature_gate(t_mean_c: Optional[float]) -> float:
+def temperature_gate(t_mean_c: float | None) -> float:
     """
     Quanto le radici assorbono a questa temperatura, 0–1: 1 sopra i
     12 °C, il pavimento sotto gli 8, la rampa in mezzo. Senza una
@@ -239,7 +238,7 @@ def temperature_gate(t_mean_c: Optional[float]) -> float:
 
 
 def light_factor(
-    dli_mol_m2_day: Optional[float], dli_good_mol_m2_day: Optional[float],
+    dli_mol_m2_day: float | None, dli_good_mol_m2_day: float | None,
 ) -> float:
     """
     Quanto la luce lascia mangiare, fra `UPTAKE_LIGHT_FLOOR` e 1: il DLI
@@ -263,8 +262,8 @@ def daily_uptake(
     targets_mg_per_l: NutrientAmounts,
     *,
     feed_fraction: float = 1.0,
-    t_mean_c: Optional[float] = None,
-    available: Optional[NutrientAmounts] = None,
+    t_mean_c: float | None = None,
+    available: NutrientAmounts | None = None,
     light_factor: float = 1.0,
 ) -> NutrientAmounts:
     """
@@ -371,7 +370,7 @@ def reserve(
     pools: NutrientAmounts,
     targets_mg_per_l: NutrientAmounts,
     fc_water_l: float,
-) -> Optional[NutrientReserve]:
+) -> NutrientReserve | None:
     """
     La riserva rispetto al piano di oggi, o None se il piano oggi non
     chiede niente (riposo): senza un bersaglio non c'è una mancanza.
@@ -396,8 +395,8 @@ def daily_release_fraction(
     release_class: ReleaseClass,
     nominal_days: int,
     *,
-    t_mean_c: Optional[float] = None,
-    theta_relative: Optional[float] = None,
+    t_mean_c: float | None = None,
+    theta_relative: float | None = None,
 ) -> float:
     """
     Che frazione del totale un concime secco cede oggi.

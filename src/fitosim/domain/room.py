@@ -42,10 +42,9 @@ e una validazione nel __post_init__ che assicura la coerenza tra
 flag e campi popolati.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 
 class MicroclimateKind(Enum):
@@ -141,9 +140,9 @@ class IndoorMicroclimate:
     kind: MicroclimateKind
     temperature_c: float
     humidity_relative: float
-    t_min: Optional[float] = None
-    t_max: Optional[float] = None
-    timestamp: Optional[datetime] = None
+    t_min: float | None = None
+    t_max: float | None = None
+    timestamp: datetime | None = None
 
     def __post_init__(self) -> None:
         # Validazione dell'umidità (vincolo fisico universale,
@@ -284,14 +283,14 @@ class Room:
 
     room_id: str
     name: str
-    wn31_channel_id: Optional[str] = None
-    current_microclimate: Optional[IndoorMicroclimate] = None
+    wn31_channel_id: str | None = None
+    current_microclimate: IndoorMicroclimate | None = None
     default_wind_m_s: float = DEFAULT_INDOOR_WIND_M_S
 
     def __post_init__(self) -> None:
         if not self.room_id:
             raise ValueError(
-                f"Room: room_id non può essere vuoto."
+                "Room: room_id non può essere vuoto."
             )
         if self.default_wind_m_s < 0:
             raise ValueError(

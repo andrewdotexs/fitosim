@@ -22,7 +22,7 @@ crea una directory temporanea pulita per ogni test ed elimina
 automaticamente il contenuto al termine.
 """
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -47,7 +47,6 @@ from fitosim.io.sensors.measurement import (
     PARAM_SOLAR_RADIATION_MJ_M2,
     PARAM_WIND_SPEED_M_S,
 )
-
 
 # --------------------------------------------------------------------------
 #  Helper: scrittura di CSV minimi nei tmp_path dei test
@@ -105,7 +104,7 @@ class Test_CsvEnvironment_basic:
         assert temp_first[0].value == 17.0
         # Il timestamp è alle 12:00 UTC del giorno solare.
         assert temp_first[0].timestamp == datetime(
-            2026, 5, 1, 12, 0, tzinfo=timezone.utc
+            2026, 5, 1, 12, 0, tzinfo=UTC
         )
 
     def test_all_measurements_share_sensor_id(self, tmp_path):
@@ -158,7 +157,7 @@ class Test_CsvEnvironment_basic:
             latitude=45.46, longitude=9.19,
         )
         # Tutte le Measurement hanno timestamp 2026-05-01 12:00 UTC.
-        expected_ts = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+        expected_ts = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
         assert all(m.timestamp == expected_ts for m in measurements)
         # Per t_min=12, t_max=22, rain=0, et0=4.2: 3 Measurement.
         assert len(measurements) == 3
@@ -326,7 +325,7 @@ class Test_CsvSoil_basic:
         assert len(fixture.measurements) == 12
 
         # Filtro: tutte le Measurement del primo timestamp.
-        ts0 = datetime(2026, 5, 1, 8, 0, tzinfo=timezone.utc)
+        ts0 = datetime(2026, 5, 1, 8, 0, tzinfo=UTC)
         first = [m for m in fixture.measurements if m.timestamp == ts0]
         assert len(first) == 4
         # Indicizziamo per parametro per asserire i valori.
@@ -353,7 +352,7 @@ class Test_CsvSoil_basic:
         assert measurements[0].parameter == PARAM_SOIL_THETA
         assert measurements[0].value == pytest.approx(0.40)
         assert measurements[0].timestamp == datetime(
-            2026, 5, 1, 10, 0, tzinfo=timezone.utc,
+            2026, 5, 1, 10, 0, tzinfo=UTC,
         )
 
     def test_wh51_only_theta_produces_one_measurement_per_row(
@@ -423,7 +422,7 @@ class Test_CsvSoil_timestamp_parsing:
         m = fixture.measurements[0]
         assert m.timestamp.tzinfo is not None
         assert m.timestamp == datetime(
-            2026, 5, 1, 8, 0, tzinfo=timezone.utc,
+            2026, 5, 1, 8, 0, tzinfo=UTC,
         )
 
     def test_explicit_offset_parsed_correctly(self, tmp_path):
@@ -434,8 +433,8 @@ class Test_CsvSoil_timestamp_parsing:
         m = fixture.measurements[0]
         assert m.timestamp.tzinfo is not None
         # Convertito in UTC, +02:00 alle 10 corrisponde alle 8 UTC.
-        assert m.timestamp.astimezone(timezone.utc) == datetime(
-            2026, 5, 1, 8, 0, tzinfo=timezone.utc,
+        assert m.timestamp.astimezone(UTC) == datetime(
+            2026, 5, 1, 8, 0, tzinfo=UTC,
         )
 
     def test_naive_timestamp_rejected(self, tmp_path):

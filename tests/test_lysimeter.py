@@ -22,19 +22,19 @@ from datetime import date, timedelta
 
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.species import BASIL
-from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
 from fitosim.science.lysimeter import (
     KC_MAX_PLAUSIBLE,
-    LysimeterInterval,
     MIN_INTERVALS_FOR_HIGH_CONFIDENCE,
     MIN_INTERVALS_FOR_LOW_CONFIDENCE,
     MIN_INTERVALS_FOR_MEDIUM_CONFIDENCE,
+    LysimeterInterval,
     calibrate_kc_from_lysimeter,
     estimate_kc_from_interval,
     mass_to_mm,
     measured_et_mm,
     measured_et_mm_per_day,
 )
+from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
 
 # Superficie di comodo: 100 cm² rende la conversione leggibile a
 # occhio (1 g → 0.1 mm), così i test dicono cosa verificano senza
@@ -92,13 +92,12 @@ class TestLysimeterIntervalValidation(unittest.TestCase):
 
     def test_end_date_must_follow_start(self):
         for end in (START, START - timedelta(days=1)):
-            with self.subTest(end=end):
-                with self.assertRaises(ValueError):
-                    LysimeterInterval(
-                        start_date=START, end_date=end,
-                        mass_start_g=5000.0, mass_end_g=4900.0,
-                        et0_mm=5.0,
-                    )
+            with self.subTest(end=end), self.assertRaises(ValueError):
+                LysimeterInterval(
+                    start_date=START, end_date=end,
+                    mass_start_g=5000.0, mass_end_g=4900.0,
+                    et0_mm=5.0,
+                )
 
     def test_masses_must_be_positive(self):
         for start_g, end_g in ((0.0, 4900.0), (5000.0, -1.0)):
@@ -117,9 +116,8 @@ class TestLysimeterIntervalValidation(unittest.TestCase):
 
     def test_ks_must_be_a_coefficient(self):
         for ks in (-0.1, 1.1):
-            with self.subTest(ks=ks):
-                with self.assertRaises(ValueError):
-                    _interval(lost_g=50.0, et0_mm=5.0, mean_ks=ks)
+            with self.subTest(ks=ks), self.assertRaises(ValueError):
+                _interval(lost_g=50.0, et0_mm=5.0, mean_ks=ks)
 
     def test_et0_cannot_be_negative(self):
         with self.assertRaises(ValueError):
@@ -200,9 +198,8 @@ class TestMassToMm(unittest.TestCase):
 
     def test_area_must_be_positive(self):
         for area in (0.0, -10.0):
-            with self.subTest(area=area):
-                with self.assertRaises(ValueError):
-                    mass_to_mm(100.0, area)
+            with self.subTest(area=area), self.assertRaises(ValueError):
+                mass_to_mm(100.0, area)
 
     def test_measured_et_and_per_day(self):
         interval = _interval(lost_g=350.0, et0_mm=25.0, days=7)

@@ -80,7 +80,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 # Costante di conversione tra concentrazione molare equivalente e
 # conducibilità elettrica. Documentata anche in pot.py dove viene
 # usata nel calcolo della property ec_substrate_mscm.

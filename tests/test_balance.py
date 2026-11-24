@@ -17,7 +17,6 @@ ben progettata.
 import unittest
 
 from fitosim.science.balance import (
-    BalanceStepResult,
     water_balance_step,
     water_balance_step_mm,
     water_balance_step_theta,

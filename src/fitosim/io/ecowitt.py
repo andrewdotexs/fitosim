@@ -83,9 +83,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from typing import Optional
-
+from datetime import UTC, date, datetime
 
 # -----------------------------------------------------------------------
 #  Endpoint e timeouts
@@ -238,9 +236,9 @@ def _to_ms_per_cm(value: float, unit: str) -> float:
 # -----------------------------------------------------------------------
 
 def _parse_node_to(
-    node: Optional[dict],
+    node: dict | None,
     converter,
-) -> Optional[float]:
+) -> float | None:
     """
     Parsing generico di un nodo Ecowitt. Restituisce None se il nodo è
     assente, altrimenti applica il converter alla coppia (value, unit).
@@ -261,7 +259,7 @@ def _parse_node_to(
     return converter(value, raw_unit)
 
 
-def _parse_pure_float(node: Optional[dict]) -> Optional[float]:
+def _parse_pure_float(node: dict | None) -> float | None:
     """
     Parsing di un nodo che contiene un valore senza unità (es. UV index)
     o con unità adimensionale (es. "%"). Restituisce solo il float.
@@ -313,14 +311,14 @@ class EcowittValve:
 
     device_id: int
     model: str
-    is_open: Optional[bool] = None
-    flow_l_min: Optional[float] = None
-    water_temp_c: Optional[float] = None
-    daily_l: Optional[float] = None
-    daily_on: Optional[date] = None
-    monthly_l: Optional[float] = None
-    monthly_in: Optional[str] = None
-    observed_at: Optional[datetime] = None
+    is_open: bool | None = None
+    flow_l_min: float | None = None
+    water_temp_c: float | None = None
+    daily_l: float | None = None
+    daily_on: date | None = None
+    monthly_l: float | None = None
+    monthly_in: str | None = None
+    observed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -339,7 +337,7 @@ class EcowittCamera:
     """
 
     url: str
-    taken_at: Optional[datetime] = None
+    taken_at: datetime | None = None
 
 
 # -----------------------------------------------------------------------
@@ -439,29 +437,29 @@ class EcowittObservation:
 
     timestamp: datetime
 
-    outdoor_temp_c: Optional[float] = None
-    outdoor_humidity_pct: Optional[float] = None
-    outdoor_dew_point_c: Optional[float] = None
+    outdoor_temp_c: float | None = None
+    outdoor_humidity_pct: float | None = None
+    outdoor_dew_point_c: float | None = None
 
-    solar_w_m2: Optional[float] = None
-    uv_index: Optional[float] = None
+    solar_w_m2: float | None = None
+    uv_index: float | None = None
 
-    wind_speed_m_s: Optional[float] = None
-    wind_gust_m_s: Optional[float] = None
-    wind_direction_deg: Optional[float] = None
+    wind_speed_m_s: float | None = None
+    wind_gust_m_s: float | None = None
+    wind_direction_deg: float | None = None
 
-    pressure_relative_hpa: Optional[float] = None
-    pressure_absolute_hpa: Optional[float] = None
+    pressure_relative_hpa: float | None = None
+    pressure_absolute_hpa: float | None = None
 
-    rain_rate_mm_hr: Optional[float] = None
-    rain_event_mm: Optional[float] = None
-    rain_today_mm: Optional[float] = None
-    rain_24h_mm: Optional[float] = None
-    rain_today_piezo_mm: Optional[float] = None
-    rain_today_gauge_mm: Optional[float] = None
+    rain_rate_mm_hr: float | None = None
+    rain_event_mm: float | None = None
+    rain_today_mm: float | None = None
+    rain_24h_mm: float | None = None
+    rain_today_piezo_mm: float | None = None
+    rain_today_gauge_mm: float | None = None
 
-    indoor_temp_c: Optional[float] = None
-    indoor_humidity_pct: Optional[float] = None
+    indoor_temp_c: float | None = None
+    indoor_humidity_pct: float | None = None
 
     extra_temp_c: dict = field(default_factory=dict)
     extra_humidity_pct: dict = field(default_factory=dict)
@@ -481,13 +479,13 @@ class EcowittObservation:
     # `battery` non dice i volt ma un flag — qui vero quando la pila è
     # scarica. Per l'`indoor` None vuol dire che la voce non c'è: l'aria
     # di dentro viene dalla console del gateway, non da un WN32P a pile.
-    indoor_battery_low: Optional[bool] = None
+    indoor_battery_low: bool | None = None
     # I WN31, per canale: solo i canali che hanno la voce.
     extra_battery_low: dict = field(default_factory=dict)
     # Le valvole IoT (2026-10-25), per id decimale: `EcowittValve`.
     valves: dict = field(default_factory=dict)
     # La foto della webcam (2026-10-30): `EcowittCamera`.
-    camera: Optional[EcowittCamera] = None
+    camera: EcowittCamera | None = None
 
 
 # -----------------------------------------------------------------------
@@ -566,7 +564,7 @@ def aa_battery_fraction(volts: float) -> float:
     return min(1.0, max(0.0, frazione))
 
 
-def _parse_volts(node: Optional[dict]) -> Optional[float]:
+def _parse_volts(node: dict | None) -> float | None:
     """Una voce del blocco `battery` in volt, o None se non è una
     tensione (un flag senza unità) o non si legge."""
     if node is None or _normalize_unit(str(node.get("unit", ""))).upper() != "V":
@@ -574,7 +572,7 @@ def _parse_volts(node: Optional[dict]) -> Optional[float]:
     return _parse_pure_float(node)
 
 
-def _parse_flag(node: Optional[dict]) -> Optional[bool]:
+def _parse_flag(node: dict | None) -> bool | None:
     """Una voce del blocco `battery` che è un flag 0/1 senza unità: True
     se la pila è scarica («1»), False se a posto («0»); None se la voce
     manca, ha un'unità (allora è una tensione, non un flag) o non si
@@ -625,10 +623,10 @@ def parse_ecowitt_response(payload: dict) -> EcowittObservation:
     timestamp_unix = payload.get("time", "0")
     try:
         timestamp = datetime.fromtimestamp(
-            int(timestamp_unix), tz=timezone.utc
+            int(timestamp_unix), tz=UTC
         )
     except (ValueError, TypeError):
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
 
     # ---------- Outdoor ----------
     outdoor = data.get("outdoor", {})
@@ -843,7 +841,7 @@ def _parse_valves(data: dict) -> dict:
     return valves
 
 
-def _parse_camera(data: dict) -> Optional[EcowittCamera]:
+def _parse_camera(data: dict) -> EcowittCamera | None:
     """
     La foto della webcam: `camera.photo`, con `url` e `time`. Senza un
     indirizzo http o https non c'è una foto da mostrare, e la webcam
@@ -859,7 +857,7 @@ def _parse_camera(data: dict) -> Optional[EcowittCamera]:
     return EcowittCamera(url=url.strip(), taken_at=_parse_time(photo))
 
 
-def _parse_or_none(node: Optional[dict], converter) -> Optional[float]:
+def _parse_or_none(node: dict | None, converter) -> float | None:
     """`_parse_node_to`, con l'unità sconosciuta che dà None invece di
     sollevare: il campo se ne va, l'osservazione resta."""
     try:
@@ -868,17 +866,17 @@ def _parse_or_none(node: Optional[dict], converter) -> Optional[float]:
         return None
 
 
-def _parse_time(node: Optional[dict]) -> Optional[datetime]:
+def _parse_time(node: dict | None) -> datetime | None:
     """L'istante di un nodo (`time`, secondi epoch), in UTC."""
     if not node:
         return None
     try:
-        return datetime.fromtimestamp(int(node.get("time")), tz=timezone.utc)
+        return datetime.fromtimestamp(int(node.get("time")), tz=UTC)
     except (ValueError, TypeError, OverflowError, OSError):
         return None
 
 
-def _parse_day(node: Optional[dict]) -> Optional[date]:
+def _parse_day(node: dict | None) -> date | None:
     """Il giorno del contalitri giornaliero (`day`, «20261025»): quello
     del gateway, nel suo fuso."""
     if not node:
@@ -889,7 +887,7 @@ def _parse_day(node: Optional[dict]) -> Optional[date]:
         return None
 
 
-def _parse_month(node: Optional[dict]) -> Optional[str]:
+def _parse_month(node: dict | None) -> str | None:
     """Il mese del contalitri mensile (`month`, «202610»), come «2026-10»."""
     if not node:
         return None
@@ -1199,10 +1197,10 @@ class EcowittSeriesPoint:
 
     timestamp: datetime
 
-    outdoor_temp_c: Optional[float] = None
-    outdoor_humidity_pct: Optional[float] = None
+    outdoor_temp_c: float | None = None
+    outdoor_humidity_pct: float | None = None
 
-    rainfall_mm: Optional[float] = None
+    rainfall_mm: float | None = None
     """
     Cumulato giornaliero di pioggia in mm: è il dato del campo
     `rainfall_piezo.daily` (o `rainfall.daily` come fallback). Si
@@ -1211,8 +1209,8 @@ class EcowittSeriesPoint:
     massimo della giornata.
     """
 
-    rainfall_piezo_mm: Optional[float] = None
-    rainfall_gauge_mm: Optional[float] = None
+    rainfall_piezo_mm: float | None = None
+    rainfall_gauge_mm: float | None = None
     """
     Lo stesso cumulato, ma di **ciascun** pluviometro quando il gateway
     ne ha due: il piezo del WS90 (`rainfall_piezo.daily`) e il WH40 a
@@ -1220,9 +1218,9 @@ class EcowittSeriesPoint:
     chi vuole scegliere legge questi.
     """
 
-    solar_w_m2: Optional[float] = None
+    solar_w_m2: float | None = None
 
-    wind_speed_m_s: Optional[float] = None
+    wind_speed_m_s: float | None = None
     """
     Velocità del vento in m/s (sezione `wind.wind_speed`). L'endpoint
     history la restituisce già, perché il call_back la chiede; serve
@@ -1232,8 +1230,8 @@ class EcowittSeriesPoint:
     chiamante.
     """
 
-    indoor_temp_c: Optional[float] = None
-    indoor_humidity_pct: Optional[float] = None
+    indoor_temp_c: float | None = None
+    indoor_humidity_pct: float | None = None
 
     extra_temp_c: dict = field(default_factory=dict)
     extra_humidity_pct: dict = field(default_factory=dict)
@@ -1290,7 +1288,7 @@ class EcowittTimeSeries:
 #  Helpers di parsing per nodi {unit, list}
 # -----------------------------------------------------------------------
 
-def _iter_sensor_list(node: Optional[dict]):
+def _iter_sensor_list(node: dict | None):
     """
     Itera su un nodo del tipo `{"unit": "...", "list": {ts: val, ...}}`
     restituendo coppie (timestamp_unix_int, raw_value_str). Salta i
@@ -1319,7 +1317,7 @@ def _iter_sensor_list(node: Optional[dict]):
 
 
 def _build_series_dict(
-    node: Optional[dict],
+    node: dict | None,
     converter,
 ) -> dict[int, float]:
     """
@@ -1345,7 +1343,7 @@ def _build_series_dict(
     return out
 
 
-def _build_series_pure(node: Optional[dict]) -> dict[int, float]:
+def _build_series_pure(node: dict | None) -> dict[int, float]:
     """Variante senza conversione di unità (es. umidità in %)."""
     if node is None:
         return {}
@@ -1509,7 +1507,7 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
         # Nessun dato: serie vuota, ma rispettiamo il contratto
         # producendo comunque un EcowittTimeSeries con start/end
         # ricavati dal momento di chiamata.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return EcowittTimeSeries(points=(), start=now, end=now)
 
     sorted_ts = sorted(all_timestamps)
@@ -1548,7 +1546,7 @@ def parse_ecowitt_history_response(payload: dict) -> EcowittTimeSeries:
             if ts in series
         }
         points.append(EcowittSeriesPoint(
-            timestamp=datetime.fromtimestamp(ts, tz=timezone.utc),
+            timestamp=datetime.fromtimestamp(ts, tz=UTC),
             outdoor_temp_c=outdoor_temp.get(ts),
             outdoor_humidity_pct=outdoor_hum.get(ts),
             rainfall_mm=rain_daily.get(ts),

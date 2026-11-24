@@ -20,7 +20,6 @@ from fitosim.domain.room import (
     Room,
 )
 
-
 # =====================================================================
 #  Test della dataclass IndoorMicroclimate.
 #

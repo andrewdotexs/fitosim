@@ -58,10 +58,8 @@ Riferimenti:
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 from fitosim.science.radiation import extraterrestrial_radiation
-
 
 # Calore latente di vaporizzazione dell'acqua, riferito a circa 20 °C,
 # in MJ/kg. Poiché 1 kg di acqua distribuita come film uniforme su 1 m²
@@ -954,11 +952,11 @@ def compute_et(
     t_max: float,
     latitude_deg: float,
     j: int,
-    humidity_relative: Optional[float] = None,
-    wind_speed_m_s: Optional[float] = None,
-    net_radiation_mj_m2_day: Optional[float] = None,
-    stomatal_resistance_s_m: Optional[float] = None,
-    crop_height_m: Optional[float] = None,
+    humidity_relative: float | None = None,
+    wind_speed_m_s: float | None = None,
+    net_radiation_mj_m2_day: float | None = None,
+    stomatal_resistance_s_m: float | None = None,
+    crop_height_m: float | None = None,
     elevation_m: float = 0.0,
     humidity_min: float | None = None,
     humidity_max: float | None = None,

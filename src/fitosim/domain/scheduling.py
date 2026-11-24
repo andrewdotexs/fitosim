@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Dict
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -108,7 +108,7 @@ class ScheduledEvent:
     pot_label: str
     event_type: str
     scheduled_date: date
-    payload: Dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.event_id or not self.event_id.strip():

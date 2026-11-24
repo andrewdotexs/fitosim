@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Final
 
-
 # Versione dello schema della Measurement. Va incrementata quando la
 # struttura della dataclass o le invarianti di validazione cambiano in modo
 # breaking. I client che inviano misure devono dichiarare lo schema_version

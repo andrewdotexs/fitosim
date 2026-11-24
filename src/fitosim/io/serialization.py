@@ -109,7 +109,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from fitosim.domain.garden import Garden
 from fitosim.domain.pot import (
@@ -134,7 +134,6 @@ from fitosim.science.substrate import (
     Substrate,
     compose_substrate,
 )
-
 
 # Versione corrente del formato JSON. Quando il formato evolverà in
 # futuro (per esempio se aggiungeremo la storia o nuovi campi del
@@ -168,7 +167,7 @@ class SerializationError(Exception):
 #  Helper di conversione: Pot, Species, Substrate, BaseMaterial → dict
 # =======================================================================
 
-def _growth_stage_groups_to_lists(groups) -> Optional[list]:
+def _growth_stage_groups_to_lists(groups) -> list | None:
     """Serializza gruppi di stadi botanici come liste di stringhe.
 
     I valori degli enum coincidono con il vocabolario controllato di
@@ -179,7 +178,7 @@ def _growth_stage_groups_to_lists(groups) -> Optional[list]:
     return [[stage.value for stage in group] for group in groups]
 
 
-def _lists_to_growth_stage_groups(raw) -> Optional[tuple]:
+def _lists_to_growth_stage_groups(raw) -> tuple | None:
     """Ricostruisce gruppi di stadi botanici da liste di stringhe."""
     if raw is None:
         return None
@@ -188,7 +187,7 @@ def _lists_to_growth_stage_groups(raw) -> Optional[tuple]:
     )
 
 
-def _species_to_dict(species: Species) -> Dict[str, Any]:
+def _species_to_dict(species: Species) -> dict[str, Any]:
     """Converte una Species in dict serializzabile."""
     return {
         "common_name": species.common_name,
@@ -229,7 +228,7 @@ def _species_to_dict(species: Species) -> Dict[str, Any]:
     }
 
 
-def _dict_to_species(data: Dict[str, Any]) -> Species:
+def _dict_to_species(data: dict[str, Any]) -> Species:
     """
     Ricostruisce una Species dal suo dict serializzato.
 
@@ -237,7 +236,7 @@ def _dict_to_species(data: Dict[str, Any]) -> Species:
     scritto con il formato v1 o v2 resta leggibile, e i campi assenti
     prendono il default della dataclass.
     """
-    kwargs: Dict[str, Any] = dict(
+    kwargs: dict[str, Any] = dict(
         common_name=data["common_name"],
         scientific_name=data["scientific_name"],
         kc_initial=data["kc_initial"],
@@ -277,7 +276,7 @@ def _dict_to_species(data: Dict[str, Any]) -> Species:
     return Species(**kwargs)
 
 
-def _base_material_to_dict(material: BaseMaterial) -> Dict[str, Any]:
+def _base_material_to_dict(material: BaseMaterial) -> dict[str, Any]:
     """Converte un BaseMaterial in dict."""
     return {
         "name": material.name,
@@ -287,7 +286,7 @@ def _base_material_to_dict(material: BaseMaterial) -> Dict[str, Any]:
     }
 
 
-def _dict_to_base_material(data: Dict[str, Any]) -> BaseMaterial:
+def _dict_to_base_material(data: dict[str, Any]) -> BaseMaterial:
     return BaseMaterial(
         name=data["name"],
         theta_fc=data["theta_fc"],
@@ -298,8 +297,8 @@ def _dict_to_base_material(data: Dict[str, Any]) -> BaseMaterial:
 
 def _substrate_to_dict(
     substrate: Substrate,
-    components: Optional[List[MixComponent]] = None,
-) -> Dict[str, Any]:
+    components: list[MixComponent] | None = None,
+) -> dict[str, Any]:
     """
     Converte un Substrate in dict.
 
@@ -309,7 +308,7 @@ def _substrate_to_dict(
     "puro" e i suoi parametri theta_fc/theta_pwp vengono salvati
     direttamente.
     """
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "name": substrate.name,
         "theta_fc": substrate.theta_fc,
         "theta_pwp": substrate.theta_pwp,
@@ -333,8 +332,8 @@ def _substrate_to_dict(
 
 
 def _dict_to_substrate(
-    data: Dict[str, Any],
-    base_materials_by_name: Dict[str, BaseMaterial],
+    data: dict[str, Any],
+    base_materials_by_name: dict[str, BaseMaterial],
 ) -> Substrate:
     """
     Ricostruisce un Substrate dal suo dict.
@@ -382,7 +381,7 @@ def _dict_to_substrate(
             f"ma non ha componenti."
         )
 
-    components: List[MixComponent] = []
+    components: list[MixComponent] = []
     for cd in components_data:
         bm_name = cd["base_material_name"]
         if bm_name not in base_materials_by_name:
@@ -414,8 +413,8 @@ def _dict_to_substrate(
 
 def _pot_to_dict(
     pot: Pot,
-    channel_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    channel_id: str | None = None,
+) -> dict[str, Any]:
     """Converte un Pot in dict, separando campi statici da mutabili."""
     static_fields = {
         "pot_volume_l": pot.pot_volume_l,
@@ -478,9 +477,9 @@ def _pot_to_dict(
 
 
 def _dict_to_pot(
-    data: Dict[str, Any],
-    species_by_name: Dict[str, Species],
-    substrates_by_name: Dict[str, Substrate],
+    data: dict[str, Any],
+    species_by_name: dict[str, Species],
+    substrates_by_name: dict[str, Substrate],
 ) -> Pot:
     """Ricostruisce un Pot dal suo dict, risolvendo i riferimenti."""
     species_name = data["species_name"]
@@ -499,7 +498,7 @@ def _dict_to_pot(
     static = data["static_fields"]
     state = data["state_fields"]
 
-    kwargs: Dict[str, Any] = dict(
+    kwargs: dict[str, Any] = dict(
         label=data["label"],
         species=species_by_name[species_name],
         substrate=substrates_by_name[substrate_name],
@@ -552,7 +551,7 @@ def _dict_to_pot(
     return Pot(**kwargs)
 
 
-def _scheduled_event_to_dict(event: ScheduledEvent) -> Dict[str, Any]:
+def _scheduled_event_to_dict(event: ScheduledEvent) -> dict[str, Any]:
     """Converte un ScheduledEvent in dict serializzabile."""
     return {
         "event_id": event.event_id,
@@ -563,7 +562,7 @@ def _scheduled_event_to_dict(event: ScheduledEvent) -> Dict[str, Any]:
     }
 
 
-def _dict_to_scheduled_event(data: Dict[str, Any]) -> ScheduledEvent:
+def _dict_to_scheduled_event(data: dict[str, Any]) -> ScheduledEvent:
     """Ricostruisce uno ScheduledEvent dal suo dict."""
     return ScheduledEvent(
         event_id=data["event_id"],
@@ -578,10 +577,10 @@ def _dict_to_scheduled_event(data: Dict[str, Any]) -> ScheduledEvent:
 #  Catalog inference: cosa serve effettivamente al giardino
 # =======================================================================
 
-def _build_minimal_catalog(garden: Garden) -> Tuple[
-    Dict[str, Species],
-    Dict[str, Substrate],
-    Dict[str, BaseMaterial],
+def _build_minimal_catalog(garden: Garden) -> tuple[
+    dict[str, Species],
+    dict[str, Substrate],
+    dict[str, BaseMaterial],
 ]:
     """
     Estrae dal giardino il catalogo minimale necessario per ricostruirlo.
@@ -611,9 +610,9 @@ def _build_minimal_catalog(garden: Garden) -> Tuple[
     tuple di tre dict:
       species_by_name, substrates_by_name, base_materials_by_name
     """
-    species_by_name: Dict[str, Species] = {}
-    substrates_by_name: Dict[str, Substrate] = {}
-    base_materials_by_name: Dict[str, BaseMaterial] = {}
+    species_by_name: dict[str, Species] = {}
+    substrates_by_name: dict[str, Substrate] = {}
+    base_materials_by_name: dict[str, BaseMaterial] = {}
 
     for pot in garden:
         species_by_name[pot.species.common_name] = pot.species
@@ -628,7 +627,7 @@ def _build_minimal_catalog(garden: Garden) -> Tuple[
 
 def export_garden_json(
     garden: Garden,
-    indent: Optional[int] = 2,
+    indent: int | None = 2,
 ) -> str:
     """
     Serializza un Garden in formato JSON.
@@ -769,17 +768,17 @@ def import_garden_json(json_str: str) -> Garden:
         raise SerializationError("Manca la chiave 'catalog' nel JSON.")
     catalog = data["catalog"]
 
-    base_materials_by_name: Dict[str, BaseMaterial] = {}
+    base_materials_by_name: dict[str, BaseMaterial] = {}
     for bm_data in catalog.get("base_materials", []):
         bm = _dict_to_base_material(bm_data)
         base_materials_by_name[bm.name] = bm
 
-    substrates_by_name: Dict[str, Substrate] = {}
+    substrates_by_name: dict[str, Substrate] = {}
     for sub_data in catalog.get("substrates", []):
         sub = _dict_to_substrate(sub_data, base_materials_by_name)
         substrates_by_name[sub.name] = sub
 
-    species_by_name: Dict[str, Species] = {}
+    species_by_name: dict[str, Species] = {}
     for sp_data in catalog.get("species", []):
         sp = _dict_to_species(sp_data)
         species_by_name[sp.common_name] = sp

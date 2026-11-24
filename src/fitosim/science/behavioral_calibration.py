@@ -105,12 +105,11 @@ fissati nella visione di The Pot.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional, Sequence
 
 from fitosim.domain.species import KC_MAX_PLAUSIBLE, KC_MIN_PLAUSIBLE, Species
-
 
 # Soglie di numerosità. Sono più alte di quelle della calibrazione da
 # sensore (3/5/10) perché il comportamento è più rumoroso di una
@@ -240,7 +239,7 @@ class BehavioralCalibrationResult:
         Spiegazione in italiano, pensata per essere mostrata così com'è.
     """
 
-    kc_correction_factor: Optional[float]
+    kc_correction_factor: float | None
     n_observations: int
     n_discarded: int
     confidence: str
@@ -449,7 +448,7 @@ def apply_kc_correction(
             f"ricevuto {factor}."
         )
 
-    def _scale(value: Optional[float]) -> Optional[float]:
+    def _scale(value: float | None) -> float | None:
         if value is None:
             return None
         return max(KC_MIN_PLAUSIBLE, min(KC_MAX_PLAUSIBLE, value * factor))
@@ -619,12 +618,12 @@ class DepletionCalibrationResult:
         Spiegazione in italiano, pensata per essere mostrata così com'è.
     """
 
-    depletion_fraction: Optional[float]
+    depletion_fraction: float | None
     n_healthy: int
     n_stressed: int
     confidence: str
-    healthy_up_to: Optional[float]
-    stressed_from: Optional[float]
+    healthy_up_to: float | None
+    stressed_from: float | None
     contradictory: bool
     notes: str
 

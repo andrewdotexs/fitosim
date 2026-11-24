@@ -9,7 +9,6 @@ Organizzati in quattro famiglie:
 """
 
 import unittest
-
 from datetime import date
 
 from fitosim.domain.species import (
@@ -29,10 +28,10 @@ from fitosim.domain.species import (
     PhenologyMethod,
     Species,
     actual_et_c,
-    is_dormant,
     effective_kc,
     effective_kcb,
     fao56_stage_from_growth_stages,
+    is_dormant,
     kc_for_stage,
     potential_et_c,
 )
@@ -464,9 +463,8 @@ class TestSpeciesChemistryModel(unittest.TestCase):
         s = self._make_basic_species(ec_stress_slope_pct_per_mscm=9.0)
         self.assertEqual(s.ec_stress_slope_pct_per_mscm, 9.0)
         for storta in (0.0, -5.0, 150.0):
-            with self.subTest(pendenza=storta):
-                with self.assertRaises(ValueError):
-                    self._make_basic_species(ec_stress_slope_pct_per_mscm=storta)
+            with self.subTest(pendenza=storta), self.assertRaises(ValueError):
+                self._make_basic_species(ec_stress_slope_pct_per_mscm=storta)
 
     def test_acidophilic_species_accepted(self):
         # Mirtillo: pH acido 4.5-5.5 è accettato (sotto neutro ma sopra 0).

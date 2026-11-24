@@ -98,9 +98,9 @@ esistono; fitosim decide *come si compongono*.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Sequence
 
 # Nomi di parametro. Stringhe e non enum per lasciare aperta l'aggiunta
 # di parametri futuri senza toccare questo modulo.
@@ -271,7 +271,7 @@ class Resolution:
     baseline: float
     catalog_value: float
     values_by_scope: tuple[tuple[CalibrationScope, float], ...]
-    decisive: Optional[CalibrationProposal]
+    decisive: CalibrationProposal | None
     applied: tuple[CalibrationProposal, ...]
     ignored: tuple[tuple[CalibrationProposal, str], ...]
     catalog_divergence: bool
@@ -309,7 +309,7 @@ def proposal_from_lysimeter(
     result,
     *,
     scope: CalibrationScope = CalibrationScope.CATALOG,
-) -> Optional[CalibrationProposal]:
+) -> CalibrationProposal | None:
     """
     Proposta di Kc dal lisimetro (assoluta, scope di catalogo).
 
@@ -335,7 +335,7 @@ def proposal_from_sensor_slope(
     result,
     *,
     scope: CalibrationScope = CalibrationScope.POT,
-) -> Optional[CalibrationProposal]:
+) -> CalibrationProposal | None:
     """Proposta di Kc dalla pendenza del sensore (assoluta, scope vaso)."""
     if result.kc_estimate is None:
         return None
@@ -355,7 +355,7 @@ def proposal_from_behavioral_kc(
     result,
     *,
     scope: CalibrationScope = CalibrationScope.POT,
-) -> Optional[CalibrationProposal]:
+) -> CalibrationProposal | None:
     """
     Proposta di Kc dal segnale comportamentale (fattore, scope vaso).
 
@@ -380,7 +380,7 @@ def proposal_from_dismissal(
     result,
     *,
     scope: CalibrationScope = CalibrationScope.POT,
-) -> Optional[CalibrationProposal]:
+) -> CalibrationProposal | None:
     """Proposta di soglia p dal giudizio sulle allerte (assoluta, scope vaso)."""
     if result.depletion_fraction is None:
         return None

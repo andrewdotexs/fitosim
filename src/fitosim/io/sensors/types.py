@@ -55,11 +55,9 @@ provider esterno e fitosim, prima che si propaghino al modello.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from typing import Optional
+from datetime import UTC, date, datetime
 
 from fitosim.io.sensors.errors import SensorDataQualityError
-
 
 # --------------------------------------------------------------------------
 #  ReadingQuality: metadati ortogonali alle misure fisiche
@@ -97,8 +95,8 @@ class ReadingQuality:
         per letture istantanee.
     """
 
-    battery_level: Optional[float] = None
-    last_calibration: Optional[date] = None
+    battery_level: float | None = None
+    last_calibration: date | None = None
     staleness_seconds: int = 0
 
     def __post_init__(self) -> None:
@@ -162,12 +160,12 @@ class EnvironmentReading:
     """
 
     timestamp: datetime
-    temperature_c: Optional[float] = None
-    humidity_relative: Optional[float] = None
-    radiation_mj_m2: Optional[float] = None
-    wind_speed_m_s: Optional[float] = None
-    rain_mm: Optional[float] = None
-    et0_mm: Optional[float] = None
+    temperature_c: float | None = None
+    humidity_relative: float | None = None
+    radiation_mj_m2: float | None = None
+    wind_speed_m_s: float | None = None
+    rain_mm: float | None = None
+    et0_mm: float | None = None
     quality: ReadingQuality = field(default_factory=ReadingQuality)
 
     def __post_init__(self) -> None:
@@ -278,9 +276,9 @@ class SoilReading:
 
     timestamp: datetime
     theta_volumetric: float
-    temperature_c: Optional[float] = None
-    ec_mscm: Optional[float] = None
-    ph: Optional[float] = None
+    temperature_c: float | None = None
+    ec_mscm: float | None = None
+    ph: float | None = None
     quality: ReadingQuality = field(default_factory=ReadingQuality)
     provider_specific: dict = field(default_factory=dict)
 
@@ -345,4 +343,4 @@ def utc_now() -> datetime:
     a `datetime.now()` (che produce naive) e a `datetime.utcnow()`
     (deprecata in Python 3.12+).
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

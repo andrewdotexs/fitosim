@@ -39,7 +39,6 @@ from fitosim.science.nutrition import (
     triangular_factor,
 )
 
-
 # =======================================================================
 #  Helper: specie configurabili per i test
 # =======================================================================
@@ -505,20 +504,18 @@ class TestInputValidation(unittest.TestCase):
 
     def test_salinity_non_positive_half_width_rejected(self):
         for half_width in [0.0, -0.5]:
-            with self.subTest(half_width=half_width):
-                with self.assertRaises(ValueError):
-                    salinity_factor(
-                        current=1.0, optimal_max=1.5, half_width=half_width,
-                    )
+            with self.subTest(half_width=half_width), self.assertRaises(ValueError):
+                salinity_factor(
+                    current=1.0, optimal_max=1.5, half_width=half_width,
+                )
 
     def test_salinity_kn_min_out_of_range_rejected(self):
         for kn_min in [1.5, 0.0]:
-            with self.subTest(kn_min=kn_min):
-                with self.assertRaises(ValueError):
-                    salinity_factor(
-                        current=1.0, optimal_max=1.5, half_width=0.5,
-                        kn_min=kn_min,
-                    )
+            with self.subTest(kn_min=kn_min), self.assertRaises(ValueError):
+                salinity_factor(
+                    current=1.0, optimal_max=1.5, half_width=0.5,
+                    kn_min=kn_min,
+                )
 
     def test_triangular_inverted_range_rejected(self):
         with self.assertRaises(ValueError):

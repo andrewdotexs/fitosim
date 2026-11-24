@@ -33,10 +33,9 @@ dell'URL al parsing del JSON al sollevamento delle eccezioni — senza
 dipendere da un vero gateway hardware.
 """
 
-import io
 import json
 import urllib.error
-from datetime import date, datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -51,8 +50,6 @@ from fitosim.io.sensors import (
 )
 from fitosim.io.sensors.http_json import (
     ENV_FITOSIM_GATEWAY_TOKEN,
-    _parse_iso_timestamp,
-    _parse_json_to_measurements,
 )
 from fitosim.io.sensors.measurement import (
     PARAM_BATTERY_LEVEL,
@@ -61,7 +58,6 @@ from fitosim.io.sensors.measurement import (
     PARAM_SOIL_TEMPERATURE_C,
     PARAM_SOIL_THETA,
 )
-
 
 # --------------------------------------------------------------------------
 #  Helper: payload JSON V1 realistico per i test
@@ -157,7 +153,7 @@ class Test_HttpJson_translation:
         assert by_param[PARAM_SOIL_PH] == 6.4
         assert by_param[PARAM_BATTERY_LEVEL] == 0.78
         # Tutte le Measurement condividono il timestamp.
-        expected_ts = datetime(2026, 4, 27, 19, 55, 0, tzinfo=timezone.utc)
+        expected_ts = datetime(2026, 4, 27, 19, 55, 0, tzinfo=UTC)
         assert all(m.timestamp == expected_ts for m in measurements)
 
     def test_provider_specific_is_ignored_in_v1(self):

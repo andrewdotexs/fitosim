@@ -60,9 +60,9 @@ in-memory che costruiamo qui.
 from __future__ import annotations
 
 import copy
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import date, timedelta
-from typing import Dict, Iterator, List, Optional, Tuple, Union
+from datetime import date
 
 from fitosim.domain.alerts import ALL_RULES, Alert
 from fitosim.domain.pot import FullStepResult, Location, Pot, SensorUpdateResult
@@ -137,19 +137,19 @@ class Garden:
     # Dict interno dei vasi indicizzato per label. Dichiarato con
     # default_factory=dict per evitare il classico bug del default
     # mutabile condiviso tra istanze.
-    _pots: Dict[str, Pot] = field(default_factory=dict, repr=False)
+    _pots: dict[str, Pot] = field(default_factory=dict, repr=False)
     # Dict interno delle Room indicizzato per room_id (sotto-tappa D
     # fase 1 tappa 5). Le Room rappresentano gli spazi indoor del
     # giardino e sono parallele ai Pot: un giardino può avere zero
     # Room (caso tipico per il balcone outdoor di Andrea) oppure
     # diverse Room (caso del giardino indoor multi-stanza). I Pot
     # indoor si associano alla loro Room tramite il campo room_id.
-    _rooms: Dict[str, "Room"] = field(default_factory=dict, repr=False)
+    _rooms: dict[str, Room] = field(default_factory=dict, repr=False)
     # Mappa label → channel_id del gateway hardware. È una proprietà
     # configurativa del giardino: collega ogni vaso al canale del
     # sensore reale che lo monitora. Vasi senza mapping continuano
     # solo in previsione (giardini misti permessi).
-    _channel_mapping: Dict[str, str] = field(
+    _channel_mapping: dict[str, str] = field(
         default_factory=dict, repr=False,
     )
     # Eventi pianificati indicizzati per (pot_label, event_id) per
@@ -157,7 +157,7 @@ class Garden:
     # nei prossimi giorni/settimane. Da non confondere con la storia
     # degli eventi (avvenuti) che vive nella tabella `events` della
     # persistenza SQLite.
-    _scheduled_events: Dict[Tuple[str, str], ScheduledEvent] = field(
+    _scheduled_events: dict[tuple[str, str], ScheduledEvent] = field(
         default_factory=dict, repr=False,
     )
 
@@ -336,7 +336,7 @@ class Garden:
             )
         self._channel_mapping[label] = channel_id
 
-    def get_channel_id(self, label: str) -> Optional[str]:
+    def get_channel_id(self, label: str) -> str | None:
         """
         Ritorna il channel_id mappato per il vaso, o None se non c'è.
 
@@ -362,7 +362,7 @@ class Garden:
         self._channel_mapping.pop(label, None)
 
     @property
-    def channel_mapping(self) -> Dict[str, str]:
+    def channel_mapping(self) -> dict[str, str]:
         """
         Vista pubblica della mappa label → channel_id.
 
@@ -382,7 +382,7 @@ class Garden:
     # Room e serve a recuperare tutti i vasi associati a una Room
     # tramite il campo room_id del Pot.
 
-    def add_room(self, room: "Room") -> None:
+    def add_room(self, room: Room) -> None:
         """
         Aggiunge una Room al giardino.
 
@@ -410,7 +410,7 @@ class Garden:
             )
         self._rooms[room.room_id] = room
 
-    def get_room(self, room_id: str) -> "Room":
+    def get_room(self, room_id: str) -> Room:
         """
         Recupera la Room con il room_id specificato.
 
@@ -441,7 +441,7 @@ class Garden:
         """True se esiste una Room con il room_id specificato."""
         return room_id in self._rooms
 
-    def remove_room(self, room_id: str) -> "Room":
+    def remove_room(self, room_id: str) -> Room:
         """
         Rimuove la Room dal giardino e la restituisce.
 
@@ -499,7 +499,7 @@ class Garden:
         """
         return list(self._rooms.keys())
 
-    def iter_rooms(self) -> Iterator["Room"]:
+    def iter_rooms(self) -> Iterator[Room]:
         """
         Itera sulle Room del giardino, in ordine di inserimento.
 
@@ -558,7 +558,7 @@ class Garden:
     def update_all_from_sensors(
         self,
         sensor: SoilSensor,
-    ) -> Dict[str, Union[SensorUpdateResult, SensorTemporaryError]]:
+    ) -> dict[str, SensorUpdateResult | SensorTemporaryError]:
         """
         Allinea tutti i vasi mappati alle letture dei sensori reali.
 
@@ -618,7 +618,7 @@ class Garden:
             preservata come oggetto (non sollevata) per gli errori
             transitori.
         """
-        results: Dict[str, Union[SensorUpdateResult, SensorTemporaryError]] = {}
+        results: dict[str, SensorUpdateResult | SensorTemporaryError] = {}
         for label, channel_id in self._channel_mapping.items():
             # Vasi mappati ma poi rimossi dal giardino: tolleriamo
             # silenziosamente. Le mappature orfane si possono creare
@@ -649,7 +649,7 @@ class Garden:
         et_0_mm: float,
         current_date: date,
         rainfall_mm: float = 0.0,
-    ) -> Dict[str, FullStepResult]:
+    ) -> dict[str, FullStepResult]:
         """
         Applica un passo giornaliero a tutti i vasi del giardino.
 
@@ -713,7 +713,7 @@ class Garden:
                 f"(ricevuto {rainfall_mm})."
             )
 
-        results: Dict[str, FullStepResult] = {}
+        results: dict[str, FullStepResult] = {}
         for label, pot in self._pots.items():
             # Conversione mm → litri usando l'area del singolo vaso.
             # Formula: V[L] = pioggia[mm] × area[m²].
@@ -735,9 +735,9 @@ class Garden:
         self,
         weather: WeatherDay,
         rainfall_mm: float = 0.0,
-        latitude_deg: Optional[float] = None,
-        elevation_m: Optional[float] = None,
-    ) -> Dict[str, FullStepResult]:
+        latitude_deg: float | None = None,
+        elevation_m: float | None = None,
+    ) -> dict[str, FullStepResult]:
         """
         Applica un passo giornaliero a tutti i vasi del giardino a
         partire dai dati meteo grezzi.
@@ -804,7 +804,7 @@ class Garden:
                 f"(ricevuto {rainfall_mm})."
             )
 
-        results: Dict[str, FullStepResult] = {}
+        results: dict[str, FullStepResult] = {}
         for label, pot in self._pots.items():
             # Saltiamo silenziosamente i vasi indoor: non vedono il
             # meteo esterno e devono essere processati con il metodo
@@ -830,10 +830,10 @@ class Garden:
 
     def apply_step_all_from_indoor(
         self,
-        microclimates_by_room: Dict[str, IndoorMicroclimate],
+        microclimates_by_room: dict[str, IndoorMicroclimate],
         current_date: date,
-        outdoor_solar_radiation_mj_m2_day: Optional[float] = None,
-    ) -> Dict[str, FullStepResult]:
+        outdoor_solar_radiation_mj_m2_day: float | None = None,
+    ) -> dict[str, FullStepResult]:
         """
         Applica un passo giornaliero a tutti i vasi indoor del giardino
         a partire dai microclimi delle rispettive stanze.
@@ -896,7 +896,7 @@ class Garden:
             dizionario di ritorno. L'ordine delle chiavi corrisponde
             all'ordine di iterazione delle stanze nel dict di input.
         """
-        results: Dict[str, FullStepResult] = {}
+        results: dict[str, FullStepResult] = {}
         for room_id, microclimate in microclimates_by_room.items():
             if room_id not in self._rooms:
                 # Stanza nel dict ma non nel giardino: la saltiamo
@@ -1020,7 +1020,7 @@ class Garden:
         return (pot_label, event_id) in self._scheduled_events
 
     @property
-    def scheduled_events(self) -> List[ScheduledEvent]:
+    def scheduled_events(self) -> list[ScheduledEvent]:
         """
         Lista di tutti gli eventi pianificati del giardino.
 
@@ -1036,8 +1036,8 @@ class Garden:
     def events_due_today(
         self,
         current_date: date,
-        pot_label: Optional[str] = None,
-    ) -> List[ScheduledEvent]:
+        pot_label: str | None = None,
+    ) -> list[ScheduledEvent]:
         """
         Ritorna gli eventi pianificati per il giorno corrente.
 
@@ -1070,8 +1070,8 @@ class Garden:
         self,
         start_date: date,
         end_date: date,
-        pot_label: Optional[str] = None,
-    ) -> List[ScheduledEvent]:
+        pot_label: str | None = None,
+    ) -> list[ScheduledEvent]:
         """
         Ritorna gli eventi pianificati in un intervallo di date.
 
@@ -1110,8 +1110,8 @@ class Garden:
 
     def forecast(
         self,
-        weather_forecast: List[WeatherDayForecast],
-    ) -> "ForecastResult":
+        weather_forecast: list[WeatherDayForecast],
+    ) -> ForecastResult:
         """
         Proietta lo stato del giardino nei giorni futuri.
 
@@ -1158,13 +1158,13 @@ class Garden:
 
         # Costruisce mappe label→Pot copia per evolvere la simulazione
         # senza toccare i vasi originali.
-        pot_copies: Dict[str, Pot] = {
+        pot_copies: dict[str, Pot] = {
             label: copy.deepcopy(pot)
             for label, pot in self._pots.items()
         }
 
         # Inizializza le traiettorie con un'entrata per ogni vaso.
-        trajectories: Dict[str, "PotForecastTrajectory"] = {
+        trajectories: dict[str, PotForecastTrajectory] = {
             label: PotForecastTrajectory(pot_label=label, points=[])
             for label in pot_copies
         }
@@ -1246,8 +1246,8 @@ class Garden:
     # ----- Sistema di allerte -----
 
     def current_alerts(
-        self, current_date: Optional[date] = None,
-    ) -> List[Alert]:
+        self, current_date: date | None = None,
+    ) -> list[Alert]:
         """
         Calcola le allerte sullo stato corrente di tutti i vasi.
 
@@ -1278,7 +1278,7 @@ class Garden:
         if current_date is None:
             current_date = date.today()
 
-        alerts: List[Alert] = []
+        alerts: list[Alert] = []
         for pot in self._pots.values():
             for rule in ALL_RULES:
                 alert = rule(pot, current_date)
@@ -1292,8 +1292,8 @@ class Garden:
 
     def forecast_alerts(
         self,
-        weather_forecast: List[WeatherDayForecast],
-    ) -> List[Alert]:
+        weather_forecast: list[WeatherDayForecast],
+    ) -> list[Alert]:
         """
         Calcola le allerte previste nei prossimi giorni dato un forecast
         meteorologico.
@@ -1333,12 +1333,12 @@ class Garden:
         # iterazione giornaliera applicando eventi pianificati e
         # apply_step. Niente refactor del metodo forecast esistente
         # per non rischiare regressioni.
-        pot_copies: Dict[str, Pot] = {
+        pot_copies: dict[str, Pot] = {
             label: copy.deepcopy(pot)
             for label, pot in self._pots.items()
         }
 
-        all_alerts: List[Alert] = []
+        all_alerts: list[Alert] = []
 
         for day_forecast in weather_forecast:
             day = day_forecast.date_
@@ -1394,7 +1394,7 @@ class PotForecastPoint:
 class PotForecastTrajectory:
     """Traiettoria proiettata di un singolo vaso nei giorni futuri."""
     pot_label: str
-    points: List[PotForecastPoint]
+    points: list[PotForecastPoint]
 
 
 @dataclass(frozen=True)
@@ -1407,5 +1407,5 @@ class ForecastResult:
     ``PotForecastPoint``, una per ogni giorno della previsione
     meteorologica fornita.
     """
-    trajectories: Dict[str, PotForecastTrajectory]
+    trajectories: dict[str, PotForecastTrajectory]
 
