@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fitosim"
-version = "0.44.0"
+version = "0.45.0"
 description = "Motore scientifico per la simulazione agronomica di piante in vaso: bilancio idrico, evapotraspirazione, calendario di cura."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -38,18 +38,17 @@ classifiers = [
 # secondi, comprese piattaforme minimali come Termux su Android.
 dependencies = []
 
-# Dipendenze opzionali, installabili con `pip install -e '.[dev]'`.
-# Qui siamo liberi di usare lo stack scientifico: ci serve per scrivere
-# test più ricchi, per produrre grafici di validazione, e per confrontare
-# le nostre implementazioni con quelle di riferimento.
+# Dipendenze opzionali, installabili con `pip install -e '.[dev]'`: gli
+# strumenti di chi ci lavora — i test, le regole, i tipi. Lo stack
+# scientifico (numpy, matplotlib) serviva solo agli esempi, tolti con P1-a
+# il 2026-11-24: la libreria e i suoi test girano con la sola standard
+# library.
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.8",
     "mypy>=1.13",
-    "numpy>=1.24",
-    "matplotlib>=3.7",
 ]
 
 [tool.setuptools.packages.find]

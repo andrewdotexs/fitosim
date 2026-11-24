@@ -404,7 +404,6 @@
         <li><a href="#io">6. Layer <code>io</code></a>
           <ul>
             <li><a href="#io-persistence"><code>persistence</code></a></li>
-            <li><a href="#io-serialization"><code>serialization</code></a></li>
             <li><a href="#io-sensors">sensori (Protocol)</a></li>
             <li><a href="#io-adapter">adapter concreti</a></li>
           </ul>
@@ -551,7 +550,6 @@ domain/
 
 io/
 ├── persistence   ← domain.*, science.substrate
-├── serialization ← domain.*, science.substrate
 ├── ecowitt       (client grezzo) ← domain.weather (WeatherSample, A7)
 └── sensors/
     ├── types     (stdlib)
@@ -1551,28 +1549,15 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
       <code>SchemaVersionMismatch</code>, <code>CatalogMissingError</code>.
     </p>
 
-    <!-- SERIALIZATION -->
-    <h3 id="io-serialization"><code>io/serialization.py</code> — JSON</h3>
+    <!-- SERIALIZATION: tolta il 2026-11-24 -->
+    <h3 id="io-serialization"><code>io/serialization.py</code> — JSON (tolto)</h3>
 
     <p>
-      Formato di trasporto autocontenuto per backup, migrazione, condivisione
-      (<code>FORMAT_VERSION = 3</code>). <strong>Non</strong> è persistenza:
-      funzioni pure, niente file I/O, niente DB. Il chiamante gestisce file e
-      storage. La v3 ha aggiunto i 16 campi della fase A (fenologia, GDD, e
-      quattro che erano persi anche prima); la lettura è
-      <strong>retrocompatibile</strong>: i campi assenti in un JSON vecchio
-      ricadono sui default della dataclass.
+      Il formato di trasporto in JSON (<code>export_garden_json</code>,
+      <code>import_garden_json</code>) è stato tolto il 24 novembre 2026, con
+      la versione 0.45.0, insieme agli esempi che lo usavano. La persistenza
+      resta quella SQLite qui sopra.
     </p>
-
-    <pre><code><span class="kw">from</span> fitosim.io.serialization <span class="kw">import</span> export_garden_json, import_garden_json
-
-<span class="com"># Export</span>
-json_str = export_garden_json(garden)
-
-<span class="com"># Import</span>
-garden = import_garden_json(json_str)</code></pre>
-
-    <p>Eccezione: <code>SerializationError</code> per JSON malformato.</p>
 
     <!-- SENSORS -->
     <h3 id="io-sensors">Astrazione sensori — <code>io/sensors/</code></h3>
@@ -1849,7 +1834,7 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
         <tr><td>Layer feedback (fase A)</td><td><code>test_calibration</code>, <code>test_phenology</code>, <code>test_behavioral_calibration</code>, <code>test_lysimeter</code>, <code>test_calibration_resolution</code></td><td>Recupero di parametri noti, robustezza della mediana, guardrail di confidenza e precedenza tra fonti.</td></tr>
         <tr><td>Unit dominio</td><td><code>test_pot</code>, <code>test_garden</code>, <code>test_alerts</code>, ...</td><td>Entità di dominio e invarianti.</td></tr>
         <tr><td>Il giorno a blocchi (A7)</td><td><code>test_blocks</code></td><td><code>WeatherBlock</code> e campioni, ET₀ per blocco, i tre metodi del <code>Pot</code>; l'invariante: un blocco di 24 h ≡ il passo giornaliero, numero per numero.</td></tr>
-        <tr><td>Integrazione I/O</td><td><code>test_persistence</code>, <code>test_serialization</code></td><td>Round-trip SQLite/JSON.</td></tr>
+        <tr><td>Integrazione I/O</td><td><code>test_persistence</code></td><td>Round-trip SQLite.</td></tr>
         <tr><td>Spec sensori v1</td><td><code>test_measurement</code></td><td>Validazione della dataclass canonica <code>Measurement</code>: sensor_id, timestamp tz-aware, vocabolario, range fisici (109 test).</td></tr>
         <tr><td>Adapter sensori</td><td><code>test_sensors_ecowitt</code>, <code>test_sensors_openmeteo</code>, <code>test_sensors_http_json</code>, <code>test_sensors_fixtures</code></td><td>Mapping payload → <code>list[Measurement]</code> canoniche, gestione errori, conformità Protocol.</td></tr>
         <tr><td>End-to-end</td><td><code>test_demo_appartamento</code></td><td>Demo eseguibile che testa l'intero flusso.</td></tr>

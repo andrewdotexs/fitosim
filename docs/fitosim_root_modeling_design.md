@@ -90,7 +90,7 @@ Quando si rinvasa:
 
 ## Raffinamenti emersi dalla simulazione (2026-06-01)
 
-Una simulazione dimostrativa (overlay `root_fraction` sopra la fisica FAO-56 di fitosim, 5 specie × 4 stagioni, vaso da 5 L, vedi `examples/root_ball_water_curve.py`) ha validato il concetto e fatto emergere due precisazioni che vincolano l'implementazione.
+Una simulazione dimostrativa (overlay `root_fraction` sopra la fisica FAO-56 di fitosim, 5 specie × 4 stagioni, vaso da 5 L, vedi `examples/root_ball_water_curve.py`, tolto con gli esempi il 24-11-2026 e conservato nella storia git fino al commit `d310d17`) ha validato il concetto e fatto emergere due precisazioni che vincolano l'implementazione.
 
 ### 1. `root_fraction` modula SOLO la traspirazione e il serbatoio, MAI l'evaporazione
 
@@ -150,7 +150,7 @@ L'utente domestico non sa quantificare lo stato radicale, e il WH51 misura θ se
 ## Riferimenti
 
 - Modello fisico attuale: `src/fitosim/science/balance.py` (TAW/RAW), `src/fitosim/science/dual_kc.py` (Kcb/Ke), `src/fitosim/science/substrate.py` (θ_FC/θ_PWP, geometria).
-- Simulazione dimostrativa dell'overlay: `examples/root_ball_water_curve.py` (5 specie × 4 stagioni, curve idriche + tabella comparativa dei giorni di allerta).
+- Simulazione dimostrativa dell'overlay: `examples/root_ball_water_curve.py`, nella storia git fino a `d310d17` (5 specie × 4 stagioni, curve idriche + tabella comparativa dei giorni di allerta).
 - Variabili del modello: vedi inventario completo discusso in sessione (8 tipologie di input).
 - Collegamento post-rinvaso: `the-pot/docs/the_pot_fitosim_integration.md` §8.6, `the-pot/docs/the_pot_vision.md` cap. 16.
 - Calibrazione passiva: `docs/fitosim_calibration_manual.md`.

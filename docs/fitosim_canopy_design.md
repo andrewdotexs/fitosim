@@ -72,7 +72,7 @@ I tre campi di `Pot` — `plant_height_m`, `canopy_width_m`, `canopy_height_m` �
 |---|---|
 | `science/canopy.py` | `cover_fraction`, `cover_factor`, `kcb_from_cover`, `kc_from_cover`, `COVER_CAP`, `KC_MIN_DEFAULT` |
 | `domain/pot.py` | i tre campi; `canopy_cover_fraction`, `cover_height_m`, `effective_crop_height_m`; `_current_et_c_dual_kc` (Kcb e Kcb della chioma), `current_et_c` single Kc (ricalcolato in loco con il Kc scalato: `Ks × Kc × ET₀`), i due `compute_et` con `effective_crop_height_m` |
-| `io/serialization.py` | le tre chiavi in `static_fields`, lette se presenti: i JSON di prima si rileggono |
+| `io/serialization.py` (tolto il 24-11-2026 con la 0.45.0) | le tre chiavi in `static_fields`, lette se presenti: i JSON di prima si rileggono |
 | `io/persistence.py` | schema v6, migrazione difensiva `_migrate_v5_to_v6` (tre `ALTER TABLE`), salvataggio e ricarico |
 | `tests/test_canopy.py`, `tests/test_canopy_in_pot.py` | eq. 76 sui numeri di FAO-56, continuità a `fc = 1`, il tetto, il pavimento, single e dual, l'altezza in PM fisico, JSON e SQLite avanti e indietro |
 

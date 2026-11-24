@@ -58,7 +58,7 @@ $ python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
 
 ================= 1366 passed, 428 subtests passed =================
 
-Se vedi un risultato simile (al momento di questo aggiornamento la suite del core conta 1366 test verdi più 428 sub-test), tutto è a posto e puoi proseguire. Il core gira con la sola standard library: la sola demo end-to-end tappa5\_E usa matplotlib, per questo qui la escludiamo; se vuoi eseguirla installa gli extra con pip install -e '.[dev]'. I test coprono la fascia 1 e la fascia 2, più la fascia 3 (il layer di feedback, vedi il manuale di calibrazione). Se vedi errori di import, è possibile che la directory src/ non sia nel tuo path: ricorda di lanciare gli script con PYTHONPATH=src impostato, oppure di installare la libreria in modalità sviluppo con pip install -e .
+Se vedi un risultato simile (al momento di questo aggiornamento la suite del core conta 1366 test verdi più 428 sub-test), tutto è a posto e puoi proseguire. Il core gira con la sola standard library: le demo end-to-end, che usavano matplotlib, sono state tolte il 24 novembre 2026. I test coprono la fascia 1 e la fascia 2, più la fascia 3 (il layer di feedback, vedi il manuale di calibrazione). Se vedi errori di import, è possibile che la directory src/ non sia nel tuo path: ricorda di lanciare gli script con PYTHONPATH=src impostato, oppure di installare la libreria in modalità sviluppo con pip install -e .
 
 __*Nota: *__*Se preferisci non manipolare PYTHONPATH ogni volta, l’installazione in modalità sviluppo (pip install -e .) crea un link simbolico nel tuo virtual environment che rende fitosim importabile da qualsiasi script senza configurazione aggiuntiva.*
 
@@ -160,7 +160,7 @@ Questo è il motore che fa girare tutto il resto. Quando vedrai il Garden orches
 
 ## Il giorno fatto di blocchi
 
-Dal 29 settembre 2026 (A7) il vaso sa anche avanzare *dentro* il giorno. `Pot.apply_blocks_from_weather` riceve i `WeatherBlock` di un giorno — un'ora l'uno con la stazione, una o tre con la previsione, in ora solare del sito — e per ogni blocco calcola l'ET₀ con la forma oraria di Penman-Monteith (FAO-56 eq. 53), valuta Ks sullo stato di quel momento e fa entrare pioggia e irrigazioni all'ora in cui accadono. Il giorno resta l'unità della contabilità (Kc, stadio, gradi-giorno, nutrienti), e il passo giornaliero di sempre è il caso di un solo blocco di 24 ore: gli stessi numeri. Quello che i blocchi aggiungono è l'*ora* dell'allerta (`alert_hour`) e il drenaggio giusto di un litro dato alle 20 invece che alle 8. Se ai blocchi manca umidità, vento o radiazione, l'ET₀ del giorno viene ripartita sul profilo del sole: la somma non cambia. Le decisioni e le ragioni sono in `domain/blocks.py`; l'esempio `examples/confronto_et0_risoluzione_temporale.py` mette a confronto i due cammini su due settimane vere di Milano, una di luglio e una di gennaio, con lo stesso vaso.
+Dal 29 settembre 2026 (A7) il vaso sa anche avanzare *dentro* il giorno. `Pot.apply_blocks_from_weather` riceve i `WeatherBlock` di un giorno — un'ora l'uno con la stazione, una o tre con la previsione, in ora solare del sito — e per ogni blocco calcola l'ET₀ con la forma oraria di Penman-Monteith (FAO-56 eq. 53), valuta Ks sullo stato di quel momento e fa entrare pioggia e irrigazioni all'ora in cui accadono. Il giorno resta l'unità della contabilità (Kc, stadio, gradi-giorno, nutrienti), e il passo giornaliero di sempre è il caso di un solo blocco di 24 ore: gli stessi numeri. Quello che i blocchi aggiungono è l'*ora* dell'allerta (`alert_hour`) e il drenaggio giusto di un litro dato alle 20 invece che alle 8. Se ai blocchi manca umidità, vento o radiazione, l'ET₀ del giorno viene ripartita sul profilo del sole: la somma non cambia. Le decisioni e le ragioni sono in `domain/blocks.py`; l'esempio `examples/confronto_et0_risoluzione_temporale.py` (tolto con gli altri il 24-11-2026, nella storia git fino a `d310d17`) mette a confronto i due cammini su due settimane vere di Milano, una di luglio e una di gennaio, con lo stesso vaso.
 
 # 4 — Caratterizzare il vaso
 
@@ -676,45 +676,7 @@ Puoi opzionalmente filtrare per intervallo di date passando i parametri start\_d
 
 # 12 — Backup e trasporto in JSON
 
-La persistenza SQLite del capitolo precedente è perfetta come database operativo del tuo dashboard, ma ha un limite per gli scenari di trasporto: è un file binario legato alla tua macchina, e per spostare un giardino tra ambienti (per esempio dal Raspberry Pi al laptop, o per inviarlo via email a un amico per chiedergli un’opinione) il formato non è ideale. Per questi casi fitosim espone un secondo formato di serializzazione, completamente disaccoppiato dalla persistenza SQLite: il JSON.
-
-L’aspetto importante da capire è che persistenza SQLite e serializzazione JSON sono due moduli distinti che non si conoscono tra loro. La SQLite è il database transazionale per il dashboard; il JSON è il formato di trasporto autocontenuto. Hanno scopi diversi, e usarli insieme è la scelta più potente.
-
-## Esportare un giardino in JSON
-
-Il modulo fitosim.io.serialization espone export\_garden\_json e import\_garden\_json. L’export prende un Garden in-memory e ritorna una stringa JSON autocontenuta:
-
-from fitosim.io.serialization import export\_garden\_json
-
-json\_str = export\_garden\_json(balcone)
-
-with open("backup\_balcone\_2026-04-28.json", "w") as f:
-
-    f.write(json\_str)
-
-Il JSON prodotto è autocontenuto: include il catalogo minimale di tutte le specie e tutti i substrati referenziati dai vasi del giardino. Chi riceve il file può ricostruire l’intero giardino con una singola chiamata a import\_garden\_json, senza bisogno di pre-registrare niente nel suo catalogo locale. È esattamente la differenza tra “database” e “formato di trasporto”: il database vive nel suo ecosistema, il file JSON viaggia da solo.
-
-## Importare un giardino da JSON
-
-L’importazione è simmetrica:
-
-from fitosim.io.serialization import import\_garden\_json
-
-with open("backup\_balcone\_2026-04-28.json") as f:
-
-    json\_str = f.read()
-
-balcone = import\_garden\_json(json\_str)
-
-print(f"Caricati {len(balcone)} vasi dal backup")
-
-Il Garden ricostruito è equivalente all’originale: stessi vasi, stessi stati, stessi eventi pianificati, stessa mappa dei sensori. Puoi continuare a lavorarci come se non avessi mai serializzato niente.
-
-## Casi d’uso del JSON
-
-Il caso d’uso primario è il backup: una volta a settimana esporti il tuo giardino operativo in un file JSON e lo metti su un cloud o lo invii a te stesso via email. Se il Raspberry Pi si rompe, ricostruisci il giardino in pochi secondi dall’ultimo backup. Il secondo caso d’uso è la migrazione tra ambienti: il file JSON è indipendente dalla versione del database, dalla versione di Python, dal sistema operativo. Il terzo caso d’uso è la condivisione: puoi inviare il tuo giardino a un altro giardiniere per fare confronti, o pubblicarlo come configurazione di riferimento.
-
-__*Nota: *__*Il formato JSON è alla versione 2 al momento della scrittura di questo manuale, e include la mappa dei sensori (channel\_id) e gli eventi pianificati. Le versioni future potranno aggiungere campi opzionali, ma fitosim manterrà la retrocompatibilità con i file vecchi: un JSON v1 potrà essere caricato sempre da una libreria nuova.*
+*Tolto il 24 novembre 2026 (fitosim 0.45.0).* Il modulo `fitosim.io.serialization`, con `export_garden_json` e `import_garden_json`, non c'è più: serviva agli esempi dello strato standalone, tolti lo stesso giorno. Per conservare un giardino resta la persistenza SQLite del capitolo 11, il cui file si copia come qualunque altro; chi ha ancora dei backup in JSON li rilegge con una versione fino alla 0.44.0.
 
 # 13 — Sensori reali in batch
 
@@ -940,8 +902,6 @@ from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
 
 from fitosim.io.persistence import GardenPersistence
 
-from fitosim.io.serialization import export\_garden\_json
-
 from fitosim.science.substrate import UNIVERSAL\_POTTING\_SOIL
 
 \# Costruzione del giardino con tre vasi a esposizioni diverse.
@@ -1062,7 +1022,7 @@ def giornata\_tipo(balcone, db, sensore, et\_0\_mm, rainfall\_mm, current\_date)
 
 ## Forecast e allerte settimanali
 
-Una volta a settimana (tipicamente la domenica) produci una previsione a 7 giorni con le allerte previste, esporti il backup JSON, e generi il report del dashboard:
+Una volta a settimana (tipicamente la domenica) produci una previsione a 7 giorni con le allerte previste e generi il report del dashboard:
 
 def report\_settimanale(balcone, db, forecast\_meteo):
 
@@ -1076,12 +1036,6 @@ def report\_settimanale(balcone, db, forecast\_meteo):
 
     future = balcone.forecast\_alerts(forecast\_meteo)
 
-    \# Backup JSON come trasporto di sicurezza.
-
-    with open(f"backup-{date.today()}.json", "w") as f:
-
-        f.write(export\_garden\_json(balcone))
-
     return {
 
         "trajectories": risultato.trajectories,
@@ -1092,7 +1046,7 @@ def report\_settimanale(balcone, db, forecast\_meteo):
 
     }
 
-Questo è il flusso operativo completo: il dashboard chiama giornata\_tipo una volta al giorno e report\_settimanale una volta a settimana. Il database SQLite preserva la storia per i grafici di evoluzione, il backup JSON è la rete di sicurezza in caso di guasto, le allerte correnti e previste guidano gli interventi del giardiniere. Tutto il modello scientifico — il bilancio idrico FAO-56, il modello chimico, la calibrazione dai sensori — è applicato correttamente sotto al cofano senza che tu debba pensarci.
+Questo è il flusso operativo completo: il dashboard chiama giornata\_tipo una volta al giorno e report\_settimanale una volta a settimana. Il database SQLite preserva la storia per i grafici di evoluzione, la copia del file del database è la rete di sicurezza in caso di guasto, le allerte correnti e previste guidano gli interventi del giardiniere. Tutto il modello scientifico — il bilancio idrico FAO-56, il modello chimico, la calibrazione dai sensori — è applicato correttamente sotto al cofano senza che tu debba pensarci.
 
 ## Cosa cambia dopo qualche settimana di dati reali
 
@@ -1334,7 +1288,7 @@ Le letture del WH52 popolano i campi temperature\_c ed ec\_mscm del SoilReading,
 
 ## Una ricetta dell'appartamento
 
-Per vedere il modello indoor in azione su uno scenario realistico, lancia lo script tappa5\_E\_appartamento\_demo.py nella cartella examples/ del repository. Simula un appartamento invernale con tre vasi indoor sparsi tra salotto (Room "salotto" con due vasi: un'orchidea su una finestra INDIRECT\_BRIGHT e un Pothos in posizione DARK) e camera da letto (Room "camera" con una sansevieria su davanzale DIRECT\_SUN, fisiologia CAM). Lo script mostra in azione la selezione automatica del metodo ET (diversa per ognuno dei tre vasi a seconda dei parametri specie), la persistenza completa delle Room nel database SQLite, e produce quattro grafici PNG che danno un'idea concreta del tipo di analisi che il modello indoor permette: andamento idrico per vaso, bilancio idrico per ambiente, heatmap dei metodi ET selezionati giorno per giorno, e confronto dei metodi su una settimana di scenario.
+Lo script dimostrativo `tappa5_E_appartamento_demo.py`, che simulava un appartamento invernale con tre vasi in due stanze, è stato tolto il 24 novembre 2026 con gli altri esempi; la storia git lo conserva.
 
 Lo script gira in pochi secondi senza hardware reale (usa fixture CSV per simulare il microclima delle due Room) ed è un buon punto di partenza per costruire la tua versione personalizzata sostituendo le fixture con EcowittAmbientSensor.daily\_aggregate quando avrai i tuoi WN31 collegati.
 
@@ -1376,7 +1330,7 @@ La ricalibrazione completa via calibrate\_substrate ha senso una volta a stagion
 
 ## Posso far girare il modello a ore invece che a giorni?
 
-Sì, dal 29 settembre 2026 (A7), con `Pot.apply_blocks_from_weather`: gli passi i `WeatherBlock` di un giorno — un'ora l'uno dalla stazione, una o tre dalla previsione, in ora solare del sito — più la longitudine e il fuso standard, e il vaso avanza blocco per blocco. Quello che cambia: l'ET₀ è quella oraria di FAO-56, Ks è valutato sullo stato del momento, pioggia e irrigazioni entrano all'ora in cui accadono, e l'allerta ha un'ora (`alert_hour`). Quello che non cambia: Kc, stadio, gradi-giorno e nutrienti restano del giorno, e un solo blocco di 24 ore dà esattamente il passo giornaliero. Sui millimetri della settimana la differenza è di pochi punti percentuali; sull'ora dell'allerta e sul drenaggio di un litro dato la sera invece che la mattina, no. Il capitolo 3 e l'esempio `examples/confronto_et0_risoluzione_temporale.py` (una settimana di luglio e una di gennaio) lo mostrano coi numeri.
+Sì, dal 29 settembre 2026 (A7), con `Pot.apply_blocks_from_weather`: gli passi i `WeatherBlock` di un giorno — un'ora l'uno dalla stazione, una o tre dalla previsione, in ora solare del sito — più la longitudine e il fuso standard, e il vaso avanza blocco per blocco. Quello che cambia: l'ET₀ è quella oraria di FAO-56, Ks è valutato sullo stato del momento, pioggia e irrigazioni entrano all'ora in cui accadono, e l'allerta ha un'ora (`alert_hour`). Quello che non cambia: Kc, stadio, gradi-giorno e nutrienti restano del giorno, e un solo blocco di 24 ore dà esattamente il passo giornaliero. Sui millimetri della settimana la differenza è di pochi punti percentuali; sull'ora dell'allerta e sul drenaggio di un litro dato la sera invece che la mattina, no. Il capitolo 3 e l'esempio `examples/confronto_et0_risoluzione_temporale.py` (tolto con gli altri il 24-11-2026, nella storia git fino a `d310d17`) (una settimana di luglio e una di gennaio) lo mostrano coi numeri.
 
 # Appendice A — Catalogo delle specie pre-definite
 

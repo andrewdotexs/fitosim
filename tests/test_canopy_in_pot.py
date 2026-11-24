@@ -21,7 +21,6 @@ from fitosim.domain.pot import Location, Pot
 from fitosim.domain.species import BASIL, TOMATO
 from fitosim.domain.weather import WeatherDay
 from fitosim.io.persistence import GardenPersistence
-from fitosim.io.serialization import _dict_to_pot, _pot_to_dict
 from fitosim.science.canopy import COVER_CAP
 from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
 
@@ -155,20 +154,6 @@ class TestAltezzaInPenmanMonteith(unittest.TestCase):
 
 
 class TestSopravvivenzaDelleMisure(unittest.TestCase):
-
-    def test_json_avanti_e_indietro(self):
-        vaso = _vaso(plant_height_m=0.5, canopy_width_m=0.3, canopy_height_m=0.4)
-        dati = _pot_to_dict(vaso)
-        specie = {BASIL.common_name: BASIL}
-        substrati = {UNIVERSAL_POTTING_SOIL.name: UNIVERSAL_POTTING_SOIL}
-        ricostruito = _dict_to_pot(dati, specie, substrati)
-        self.assertEqual(ricostruito.plant_height_m, 0.5)
-        self.assertEqual(ricostruito.canopy_width_m, 0.3)
-        self.assertEqual(ricostruito.canopy_height_m, 0.4)
-        # E un JSON di prima, senza le chiavi, si rilegge lo stesso.
-        for chiave in ("plant_height_m", "canopy_width_m", "canopy_height_m"):
-            dati["static_fields"].pop(chiave)
-        self.assertIsNone(_dict_to_pot(dati, specie, substrati).plant_height_m)
 
     def test_sqlite_avanti_e_indietro(self):
         vaso = _vaso(plant_height_m=0.5, canopy_width_m=0.3)

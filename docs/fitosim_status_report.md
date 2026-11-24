@@ -4,6 +4,14 @@ __fitosim — Status Report__
 
 *Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 24 novembre, del 6 novembre, del 5 novembre, del 30 ottobre, del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
 
+# Aggiornamento al 24 novembre 2026 — via gli esempi e il JSON
+
+**Il primo passo della pulizia** (24 novembre, versione 0.45.0; è P1-a di `docs/fitosim_pulizia_e_ottimizzazione.md`, il modello non cambia). Sono andati via `io/serialization`, il trasporto in JSON del giardino, e `examples/`: 36 file e 12 566 righe di dimostrazioni dello strato standalone, scritte tappa per tappa fra luglio e settembre. Con loro `numpy` e `matplotlib`, che servivano solo a quelli, e i test che li provavano. Nessuno dei tre repository li importava. fitosim e i suoi test girano ora con la sola standard library, e la suite scende da una quindicina di secondi a 6: 1 626 test. La storia git conserva tutto, fino al commit `d310d17`.
+
+**Due moduli sono rimasti, e il piano si corregge.** `science/behavioral_calibration` e `science/calibration_resolution` erano nella lista come «scienza superata». Non lo sono: sono la calibrazione del Kc senza sensore e la regola di precedenza fra più fonti del layer di feedback, implementate e in attesa di chi le chiami — la seconda proprio per il lisimetro. Restano, e la loro sorte si decide a parte.
+
+**Quello che resta della pulizia**: lo strato standalone vero e proprio (`garden`, `scheduling`, `persistence`, `openmeteo`, `io/sensors`), che aspetta due cose di là — The Pot che toglie la fase 0 dello strumento, e il backend del lisimetro, che usa `io/sensors/ecowitt` per il suo ponte verso Ecowitt.
+
 # Aggiornamento al 24 novembre 2026 — la luce misurata al vaso
 
 **Una misura al posto della categoria** (24 novembre, versione 0.44.0; proposta, fonti e misure in `docs/proposta_luce_misurata.md`, dal lisimetro). In casa la luce del vaso era una di tre categorie. Ora il passo in casa prende la radiazione dal dato migliore che c'è, in quattro gradini (`indoor.resolve_indoor_radiation`): la radiazione globale **misurata al vaso** quel giorno; la radiazione di fuori per la **frazione misurata** del posto, per i giorni senza sensore; la radiazione di fuori per la frazione del livello di luce; il numero fisso del livello. `Pot.apply_balance_step_from_indoor` ha due argomenti nuovi, `global_radiation_at_pot_mj_m2_day` e `light_fraction_override`; con una misura il livello di luce non serve, e il gradino usato resta in `Pot.last_indoor_radiation`. Da quel numero solo vengono la netta per Penman-Monteith e la luce utile alla pianta, come prima venivano tutte e due dalla categoria.

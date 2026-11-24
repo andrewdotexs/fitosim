@@ -23,26 +23,22 @@ il giardiniere.
 
 ## Stato del progetto
 
-- **Versione**: 0.44.0 (`pyproject.toml`, dal 2026-11-24: la luce misurata al vaso entra nel passo in casa, con la conversione dal lux; 0.43.0 lo stesso giorno, in casa a Penman-Monteith va la radiazione netta e la luce si conta una volta; 0.42.0 lo stesso giorno, gli strumenti — ruff, mypy e una CI —, Python 3.12 come minimo; 0.41.0 lo stesso giorno, la luce utile alla pianta, `science/light.py`, e il fattore di luce sull'assorbimento dei nutrienti; 0.40.0 il 06-11, il limite inferiore ferma il flusso e non crea acqua, `BalanceStepResult.et_actual`; 0.39.0 lo stesso giorno, un limite solo per il Kc, 2.50; 0.38.0 il 05-11, quanto asciuga il materiale come numero del vaso, `Pot.material_factor`; 0.37.0 il 30-10, la foto della webcam HP10 nel tempo reale di Ecowitt; 0.36.0 il 25-10, le valvole IoT; 0.35.0 il 21-10, le pressioni di vapore dagli estremi del giorno, A9; 0.34.0 il 29-09, il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
-- **1618 test verdi** (534 sub-test) nel core; la demo end-to-end usa matplotlib
+- **Versione**: 0.45.0 (`pyproject.toml`, dal 2026-11-24: via gli esempi e il JSON, la libreria e i suoi test con la sola standard library; 0.44.0 lo stesso giorno, la luce misurata al vaso entra nel passo in casa, con la conversione dal lux; 0.43.0 lo stesso giorno, in casa a Penman-Monteith va la radiazione netta e la luce si conta una volta; 0.42.0 lo stesso giorno, gli strumenti — ruff, mypy e una CI —, Python 3.12 come minimo; 0.41.0 lo stesso giorno, la luce utile alla pianta, `science/light.py`, e il fattore di luce sull'assorbimento dei nutrienti; 0.40.0 il 06-11, il limite inferiore ferma il flusso e non crea acqua, `BalanceStepResult.et_actual`; 0.39.0 lo stesso giorno, un limite solo per il Kc, 2.50; 0.38.0 il 05-11, quanto asciuga il materiale come numero del vaso, `Pot.material_factor`; 0.37.0 il 30-10, la foto della webcam HP10 nel tempo reale di Ecowitt; 0.36.0 il 25-10, le valvole IoT; 0.35.0 il 21-10, le pressioni di vapore dagli estremi del giorno, A9; 0.34.0 il 29-09, il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
+- **1626 test verdi** (529 sub-test), senza dipendenze esterne
 - **Le pressioni di vapore dagli estremi del giorno** (A9, 2026-10-21): e_s ed e_a dagli estremi del giorno nel Penman-Monteith giornaliero: la media di e°(T_max) ed e°(T_min) (FAO-56 eq. 12) al posto di e°(T_media), che la sottostima, ed e_a dalle umidità estreme (eq. 17) quando la stazione le dà, dalla media (eq. 19) altrimenti; `WeatherDay` ha `humidity_min` e `humidity_max`; la forma oraria non cambia. Misurato sulle settimane dell'esempio delle stagioni, l'ET₀ giornaliera sale del 2–4 % e coincide con la FAO di riferimento al decimo di percento; in una stanza non cambia.
 - **Il giorno fatto di blocchi** (A7, 2026-09-29): il vaso avanza a blocchi di ore dentro il giorno — `Pot.apply_blocks_from_weather`, `domain/blocks.py` con le nove decisioni e le fonti; il passo giornaliero è il caso di un blocco di 24 ore, con gli stessi numeri
-- **Tempo esecuzione suite**: ~3 secondi su laptop standard (core)
-- **Linguaggio**: Python ≥ 3.10
+- **Tempo esecuzione suite**: ~6 secondi su laptop standard
+- **Linguaggio**: Python ≥ 3.12
 - **Dipendenze esterne nel core**: zero (solo standard library)
 - **Schema database**: SQLite v8 con migrazioni automatiche v1→…→v8
-- **Formato JSON di trasporto**: v3
 - **Fascia 1**: completa (modello idrico FAO-56 esteso)
 - **Fascia 2**: completa (5 tappe: sensori, chimica, architettura, Penman-Monteith, indoor)
 - **Fascia 3**: **in corso** — la fase A del *layer di feedback* (calibrazione multi-fonte) è in fitosim; il modello è stato rivisto numero per numero il 18–20 settembre 2026 (Kn, CEC e densità, `p`, pendenza salina, dormienza), ogni costante con la fonte o dichiarata stima; il 29 settembre il vaso ha imparato ad avanzare a blocchi di ore dentro il giorno (A7)
 - **Prossimo passo**: la calibrazione sul sensore WH52, cinque vasi sul balcone dalla settimana del 28 settembre 2026 (`docs/calibrazione_con_WH5X.md`; lo strumento vive in The Pot)
 
 ```
-# Core (zero dipendenze esterne):
-$ python -m pytest tests/ --ignore=tests/test_demo_appartamento.py
-================= 1520 passed, 515 subtests passed =================
-
-# Con la demo end-to-end (richiede matplotlib da `pip install -e '.[dev]'`): 1526 test.
+$ python -m pytest tests/
+================= 1626 passed, 529 subtests passed =================
 ```
 
 ## Cosa fa
@@ -306,8 +302,8 @@ spazi indoor con il loro microclima condiviso (sotto-tappa 5-D), `Alert`,
 introdotte dalle tappe 4 e 5.
 
 Il layer `io/` contiene gli adapter di ingresso e uscita: `persistence`
-(SQLite) e `serialization` (JSON) sono completamente disaccoppiati tra loro;
-sotto `io/sensors/` vivono cinque adapter concreti (Ecowitt, Open-Meteo,
+(SQLite; il trasporto in JSON, `serialization`, è stato tolto il 24 novembre
+2026); sotto `io/sensors/` vivono cinque adapter concreti (Ecowitt, Open-Meteo,
 HTTP-JSON, fixtures CSV) che implementano i `Protocol` definiti in
 `protocols.py`. Il file `ecowitt.py` espone tre classi distinte:
 `EcowittEnvironmentSensor` per il meteo outdoor, `EcowittWH51SoilSensor`
@@ -325,12 +321,11 @@ usata da sola, com'era prima dell'app:
 
 | modulo | righe | chi lo usa |
 |---|---|---|
-| `domain/garden.py` | 1 400 | lo strumento di calibrazione, gli esempi |
-| `io/persistence.py` (SQLite) | 2 200 | lo strumento di calibrazione, gli esempi |
-| `io/serialization.py` (JSON) | 800 | gli esempi |
+| `domain/garden.py` | 1 400 | lo strumento di calibrazione (fase 0) |
+| `io/persistence.py` (SQLite) | 2 200 | lo strumento di calibrazione (fase 0) |
 | `domain/scheduling.py` | 170 | `Garden`, lo strumento |
-| `io/openmeteo.py` | 550 | lo strumento (previsione e archivio), gli esempi |
-| `io/sensors/*` (i `Protocol` e i cinque adapter) | 3 500 | gli esempi |
+| `io/openmeteo.py` | 550 | lo strumento (previsione e archivio) |
+| `io/sensors/*` (i `Protocol` e i cinque adapter) | 3 500 | il ponte Ecowitt del lisimetro |
 
 Sono 8 400 righe e 440 test: **congelati** dal 2026-09-20 (B3). Non prendono
 funzionalità nuove — quelle vanno nel modello, dove l'app le vede — e la
@@ -398,7 +393,6 @@ fitosim/
 │   │   └── calibration_resolution.py  # precedenza tra fonti
 │   └── io/                 # adapter di acquisizione e persistenza
 │       ├── persistence.py  # SQLite, schema v8
-│       ├── serialization.py # JSON formato v3
 │       └── sensors/
 │           ├── protocols.py    # SoilSensor, EnvironmentSensor (Protocol)
 │           ├── measurement.py  # Measurement canonico (spec sensori v1)
@@ -408,14 +402,7 @@ fitosim/
 │           ├── openmeteo.py    # adapter Open-Meteo (meteo)
 │           ├── http_json.py    # adapter generico per gateway ESP32
 │           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 1578 test verdi (core)
-├── examples/               # esempi e demo end-to-end
-│   ├── tappa4_complete_demo.py        # demo Garden + persistenza + allerte
-│   ├── tappa5_A_penman_monteith_demo.py
-│   ├── tappa5_B_selettore_demo.py
-│   ├── tappa5_C_garden_demo.py
-│   ├── confronto_et0_risoluzione_temporale.py  # ET₀ a 24 h, 6 h, 4 h e 1 h; il vaso a giorni e a blocchi, luglio e gennaio
-│   └── tappa5_E_appartamento_demo.py  # demo end-to-end appartamento indoor
+├── tests/                  # 1626 test verdi
 ├── docs/                        # i sorgenti sono i .md; i PDF in docs/pdf/
 │   ├── developer_documentation.html # doc tecnica per sviluppatori
 │   ├── fitosim_user_manual.md       # manuale utente
@@ -586,27 +573,10 @@ di codice, allineata alla fascia 3. È il riferimento per chi sviluppa la
 libreria (l'equivalente tecnico del manuale utente). Il design del layer di
 feedback della fascia 3 è in `docs/fitosim_feedback_layer_design.md`.
 
-**Demo end-to-end della tappa 4** (`examples/tappa4_complete_demo.py`):
-script Python eseguibile che mostra in azione tutte le capacità della tappa
-4 su uno scenario realistico di tre vasi di basilico monitorati per 21
-giorni, con output didattico tra blocchi di giorni.
-
-**Demo end-to-end della tappa 5** (`examples/tappa5_E_appartamento_demo.py`):
-script che simula un appartamento invernale con tre vasi indoor sparsi tra
-salotto e camera da letto, mostra in azione la selezione automatica del
-metodo di evapotraspirazione (`compute_et`), la persistenza delle Room nel
-database SQLite, e produce quattro grafici PNG di analisi dell'andamento
-idrico. Le sotto-tappe A, B e C hanno demo pedagogiche dedicate
-(`tappa5_A_penman_monteith_demo.py`, `tappa5_B_selettore_demo.py`,
-`tappa5_C_garden_demo.py`) che articolano un pezzo per volta del
-raffinamento scientifico.
-
-Tutte le demo girano in pochi secondi senza hardware reale grazie agli
-adapter di sensori CSV-fixture.
-
-**Diagrammi UML** (`docs/uml/`): due diagrammi (package e classi del
-dominio) come sorgenti DOT versionati e PNG renderizzati. Si rigenerano
-con `dot -Tpng <file>.dot -o <file>.png`.
+Gli esempi e le demo delle tappe (`examples/`, 31 script) sono stati tolti il
+24 novembre 2026 insieme a `io/serialization`: dimostravano lo strato
+standalone, e la storia git li conserva (l'ultimo commit che li ha è
+`d310d17`).
 
 ## Licenza
 

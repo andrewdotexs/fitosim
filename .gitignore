@@ -235,3 +235,6 @@ docs/pdf/calibrazione_con_WH5X.pdf
 # (D, 2026-09-21). I test li scrivono in una cartella temporanea.
 examples/tappa5_E_*.png
 examples/confronto_et0_*.png
+
+# I grafici prodotti in locale e le impostazioni dell'editor: non si tracciano.
+.vscode/

@@ -56,6 +56,29 @@ fitosim vuole un numero). La CI di The Pot clona fitosim da `main`: metterlo
 ora la farebbe diventare rossa. Si aggiunge quando di là quei quattro punti
 sono a posto; l'elenco sta nel documento di integrazione di The Pot.
 
+**Aggiornamento al 24 novembre 2026 — P1-a è fatto, tranne due moduli.**
+Con la 0.45.0 sono andati via `io/serialization` (819 righe), `examples/`
+(36 file, 12 566 righe), `numpy` e `matplotlib` dalle dipendenze, i test
+`test_serialization` e `test_demo_appartamento` e la prova in JSON di
+`test_canopy_in_pot`; `.vscode/` e `output/` non sono più tracciati. La
+suite è di 1 626 test in 6 secondi (erano una quindicina), e fitosim e i suoi test
+girano con la sola standard library. Nessuno dei tre repository importava
+le cose tolte: verificato su The Pot e sul backend del lisimetro.
+
+**Una correzione a questo documento.** Il §2 chiama
+`science/behavioral_calibration` e `science/calibration_resolution` «scienza
+che nessuno raggiunge più» e la prima «superata da `science/calibration`».
+È vero che nessun codice li importa; **non è vero che siano superati**. Il
+design del layer di feedback (`docs/fitosim_feedback_layer_design.md`) li dà
+come pezzi implementati della fase A: il primo è il livello 3 della
+calibrazione, il Kc **senza sensore** dallo scostamento delle irrigazioni e
+la soglia `p` dai giudizi sulle allerte; il secondo è la regola di
+precedenza quando più fonti toccano lo stesso parametro, che la procedura
+del WH5X cita «per quando arriverà il lisimetro» — e il lisimetro è
+arrivato. Sono in attesa di chi li chiami (le proposte della console di The
+Pot, H.9-c), non codice morto. Sono rimasti dove sono, con i loro 70 test;
+se toglierli lo decide Andrew, sapendo questo.
+
 Il resto del documento è l'analisi del 23 ottobre, lasciata com'era.
 
 ---
