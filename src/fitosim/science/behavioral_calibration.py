@@ -448,17 +448,19 @@ def apply_kc_correction(
             f"ricevuto {factor}."
         )
 
-    def _scale(value: float | None) -> float | None:
-        if value is None:
-            return None
+    def _scale_kc(value: float) -> float:
         return max(KC_MIN_PLAUSIBLE, min(KC_MAX_PLAUSIBLE, value * factor))
+
+    def _scale(value: float | None) -> float | None:
+        # I Kcb ci sono tutti e tre o nessuno: senza, restano senza.
+        return None if value is None else _scale_kc(value)
 
     return dataclasses.replace(
         species,
         common_name=f"{species.common_name}{name_suffix}",
-        kc_initial=_scale(species.kc_initial),
-        kc_mid=_scale(species.kc_mid),
-        kc_late=_scale(species.kc_late),
+        kc_initial=_scale_kc(species.kc_initial),
+        kc_mid=_scale_kc(species.kc_mid),
+        kc_late=_scale_kc(species.kc_late),
         kcb_initial=_scale(species.kcb_initial),
         kcb_mid=_scale(species.kcb_mid),
         kcb_late=_scale(species.kcb_late),
@@ -739,7 +741,9 @@ def calibrate_depletion_from_judgments(
                        healthy_up_to + ONE_SIDED_MARGIN)
     else:
         # Solo sofferenza: la soglia va abbassata sotto il livello a
-        # cui la pianta stava già male.
+        # cui la pianta stava già male. Coi giudizi sufficienti e
+        # nessuna pianta sana, quelli che ci sono dicono sofferenza.
+        assert stressed_from is not None
         proposed = min(current_depletion_fraction,
                        stressed_from - ONE_SIDED_MARGIN)
 

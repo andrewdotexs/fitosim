@@ -88,16 +88,16 @@ ignore = ["E501"]  # la lunghezza della riga non si impone al codice che c'era
 python_version = "3.12"
 files = ["src/fitosim"]
 
-# Lo strato standalone, congelato, e la calibrazione comportamentale
-# superata: se ne vanno con P1 (docs/fitosim_pulizia_e_ottimizzazione.md) e
-# fino ad allora non si toccano. I loro errori di tipo — 28 il 2026-11-24 —
-# tornano visibili togliendo questo blocco.
+# Lo strato standalone, congelato: se ne va con P1-b
+# (docs/fitosim_pulizia_e_ottimizzazione.md) e fino ad allora non si tocca.
+# I suoi errori di tipo — 22 il 2026-11-24 — tornano visibili togliendo
+# questo blocco. La calibrazione comportamentale non è più qui: resta, e i
+# suoi tipi sono a posto.
 [[tool.mypy.overrides]]
 module = [
     "fitosim.io.persistence",
     "fitosim.io.openmeteo",
     "fitosim.io.sensors.*",
     "fitosim.domain.garden",
-    "fitosim.science.behavioral_calibration",
 ]
 ignore_errors = true

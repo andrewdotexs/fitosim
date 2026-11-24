@@ -76,8 +76,12 @@ la soglia `p` dai giudizi sulle allerte; il secondo è la regola di
 precedenza quando più fonti toccano lo stesso parametro, che la procedura
 del WH5X cita «per quando arriverà il lisimetro» — e il lisimetro è
 arrivato. Sono in attesa di chi li chiami (le proposte della console di The
-Pot, H.9-c), non codice morto. Sono rimasti dove sono, con i loro 70 test;
-se toglierli lo decide Andrew, sapendo questo.
+Pot, H.9-c), non codice morto. Sono rimasti dove sono, con i loro 70 test.
+
+**Decisione di Andrew, lo stesso giorno: restano.** `behavioral_calibration`
+è uscito dall'eccezione di mypy, che valeva «fino alla cancellazione»: i suoi
+quattro errori di tipo sono a posto. L'eccezione copre ora solo lo strato
+standalone, che aspetta P1-b.
 
 Il resto del documento è l'analisi del 23 ottobre, lasciata com'era.
 
