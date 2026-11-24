@@ -21,14 +21,17 @@ from fitosim.domain.species import Species, light_requirement_of
 from fitosim.science.indoor import light_fraction
 from fitosim.science.light import (
     LIGHT_CLASS_DLI_RANGE,
+    LUX_PER_UMOL_DAYLIGHT,
     PAR_MOL_PER_MJ,
     LightClass,
     LightRequirement,
     LightSufficiency,
     dli_at_pot,
+    dli_from_illuminance,
     dli_from_shortwave,
     light_class_of,
     light_sufficiency,
+    shortwave_from_illuminance,
 )
 from fitosim.science.nutrients import (
     UPTAKE_LIGHT_FLOOR,
@@ -109,6 +112,51 @@ class TestConversion(unittest.TestCase):
         self.assertEqual(light_fraction(LightExposure.DIRECT_SUN), 0.40)
         self.assertEqual(light_fraction(LightExposure.INDIRECT_BRIGHT), 0.15)
         self.assertEqual(light_fraction(LightExposure.DARK), 0.05)
+
+
+class TestIlluminance(unittest.TestCase):
+    """Dal lux di un sensore di luce ambiente ai fotoni e all'energia."""
+
+    def test_the_daylight_factor_is_that_of_the_source(self):
+        # Purdue HO-238-W, tabella 1: 0,20 µmol/m²/s per foot-candle di
+        # luce solare, e un foot-candle sono 10,764 lux.
+        self.assertAlmostEqual(LUX_PER_UMOL_DAYLIGHT, 10.764 / 0.20, places=1)
+
+    def test_the_chain_gives_the_luminous_efficacy_of_daylight(self):
+        # 1 W/m² di globale → µmol/m²/s di PAR → lux: l'efficacia luminosa
+        # che ne esce sta fra i 105 e i 110 lm/W di Littlefair.
+        efficacy = PAR_MOL_PER_MJ * LUX_PER_UMOL_DAYLIGHT
+        self.assertAlmostEqual(efficacy, 108.5, places=1)
+        self.assertTrue(105.0 <= efficacy <= 110.0)
+
+    def test_a_thousand_lux_hours(self):
+        self.assertAlmostEqual(dli_from_illuminance(1000.0), 0.0669, places=4)
+        self.assertAlmostEqual(shortwave_from_illuminance(1000.0), 0.0332, places=4)
+        self.assertEqual(dli_from_illuminance(0.0), 0.0)
+
+    def test_energy_and_photons_agree(self):
+        # La stessa luce, per le due strade: dal lux al DLI, o dal lux
+        # all'energia e dall'energia al DLI.
+        lux_hours = 42_000.0
+        self.assertAlmostEqual(
+            dli_from_shortwave(shortwave_from_illuminance(lux_hours)),
+            dli_from_illuminance(lux_hours),
+        )
+        # Un megajoule di globale sono trenta kilolux·ora.
+        self.assertAlmostEqual(shortwave_from_illuminance(30_133.0), 1.0, places=3)
+
+    def test_another_source_has_its_own_factor(self):
+        # Sotto lampade al sodio (0,13 µmol per foot-candle): meno fotoni per lux.
+        sodium = dli_from_illuminance(1000.0, lux_per_umol=10.764 / 0.13)
+        self.assertLess(sodium, dli_from_illuminance(1000.0))
+        self.assertAlmostEqual(sodium / dli_from_illuminance(1000.0), 0.13 / 0.20, places=3)
+
+    def test_wrong_numbers_are_refused(self):
+        for function in (dli_from_illuminance, shortwave_from_illuminance):
+            with self.assertRaises(ValueError):
+                function(-1.0)
+            with self.assertRaises(ValueError):
+                function(1000.0, lux_per_umol=0.0)
 
 
 class TestClasses(unittest.TestCase):

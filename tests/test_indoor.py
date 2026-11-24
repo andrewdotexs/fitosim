@@ -28,12 +28,16 @@ from fitosim.science.indoor import (
     INDIRECT_BRIGHT_FRACTION_OF_OUTDOOR,
     INDIRECT_BRIGHT_RADIATION_MJ_M2_DAY,
     INDOOR_ALBEDO,
+    IndoorRadiation,
+    IndoorRadiationSource,
     categorical_indoor_radiation,
     continuous_indoor_radiation,
     estimate_indoor_net_radiation,
     estimate_indoor_radiation,
     net_indoor_radiation,
+    resolve_indoor_radiation,
 )
+from fitosim.science.light import PAR_MOL_PER_MJ, shortwave_from_illuminance
 from fitosim.science.pot_physics import SunExposure
 from fitosim.science.radiation import day_of_year
 from fitosim.science.substrate import Substrate
@@ -208,6 +212,72 @@ class TestNetIndoorRadiation(unittest.TestCase):
                 )
 
 
+class TestResolveIndoorRadiation(unittest.TestCase):
+    """La cascata: dalla misura alla categoria (docs/proposta_luce_misurata.md)."""
+
+    BRIGHT = LightExposure.INDIRECT_BRIGHT
+
+    def test_the_measure_at_the_pot_wins_over_everything(self):
+        found = resolve_indoor_radiation(
+            exposure=self.BRIGHT, outdoor_radiation_mj_m2_day=20.0,
+            global_radiation_at_pot_mj_m2_day=2.4, measured_light_fraction=0.3,
+        )
+        self.assertEqual(found, IndoorRadiation(2.4, IndoorRadiationSource.MEASURED_AT_POT))
+        self.assertAlmostEqual(found.net_mj_m2_day, (1.0 - INDOOR_ALBEDO) * 2.4)
+        self.assertTrue(found.follows_the_day)
+
+    def test_then_the_measured_fraction_of_the_outdoor(self):
+        found = resolve_indoor_radiation(
+            exposure=self.BRIGHT, outdoor_radiation_mj_m2_day=20.0,
+            measured_light_fraction=0.3,
+        )
+        self.assertIs(found.source, IndoorRadiationSource.MEASURED_FRACTION)
+        self.assertAlmostEqual(found.global_mj_m2_day, 6.0)
+
+    def test_then_the_fraction_of_the_light_level(self):
+        found = resolve_indoor_radiation(exposure=self.BRIGHT, outdoor_radiation_mj_m2_day=20.0)
+        self.assertIs(found.source, IndoorRadiationSource.EXPOSURE_FRACTION)
+        self.assertAlmostEqual(found.global_mj_m2_day, 20.0 * INDIRECT_BRIGHT_FRACTION_OF_OUTDOOR)
+        self.assertTrue(found.follows_the_day)
+
+    def test_and_last_the_fixed_number_of_the_level(self):
+        found = resolve_indoor_radiation(exposure=self.BRIGHT)
+        self.assertIs(found.source, IndoorRadiationSource.EXPOSURE_FIXED)
+        self.assertEqual(found.global_mj_m2_day, INDIRECT_BRIGHT_RADIATION_MJ_M2_DAY)
+        self.assertFalse(found.follows_the_day)
+
+    def test_a_fraction_without_the_outdoor_falls_to_the_level(self):
+        found = resolve_indoor_radiation(exposure=self.BRIGHT, measured_light_fraction=0.3)
+        self.assertIs(found.source, IndoorRadiationSource.EXPOSURE_FIXED)
+
+    def test_the_measures_do_not_need_the_level(self):
+        self.assertIs(
+            resolve_indoor_radiation(global_radiation_at_pot_mj_m2_day=2.4).source,
+            IndoorRadiationSource.MEASURED_AT_POT,
+        )
+        self.assertIs(
+            resolve_indoor_radiation(
+                outdoor_radiation_mj_m2_day=20.0, measured_light_fraction=0.3,
+            ).source,
+            IndoorRadiationSource.MEASURED_FRACTION,
+        )
+
+    def test_with_nothing_usable_it_refuses(self):
+        for nothing in ({}, {"outdoor_radiation_mj_m2_day": 20.0}, {"measured_light_fraction": 0.3}):
+            with self.subTest(nothing=nothing), self.assertRaises(ValueError):
+                resolve_indoor_radiation(**nothing)
+
+    def test_wrong_numbers_are_refused(self):
+        for wrong in (
+            {"global_radiation_at_pot_mj_m2_day": -0.1},
+            {"exposure": self.BRIGHT, "outdoor_radiation_mj_m2_day": -1.0},
+            {"exposure": self.BRIGHT, "measured_light_fraction": 1.2},
+            {"exposure": self.BRIGHT, "measured_light_fraction": -0.1},
+        ):
+            with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                resolve_indoor_radiation(**wrong)
+
+
 JUNE = date(2026, 6, 15)
 OUTDOOR_MJ = 20.0
 ROOM = IndoorMicroclimate(
@@ -306,6 +376,82 @@ class TestIndoorStep(unittest.TestCase):
             pot.last_nutrient_step.dli_mol_m2_day,
             OUTDOOR_MJ * INDIRECT_BRIGHT_FRACTION_OF_OUTDOOR * 0.45 * 4.48,
         )
+
+
+class TestMeasuredLightInTheStep(unittest.TestCase):
+    """
+    La luce misurata al vaso dentro il passo in casa: sostituisce la
+    stima, per l'energia e per la luce utile alla pianta.
+    """
+
+    def test_the_measure_replaces_the_estimate(self):
+        measured_mj = 2.4
+        stepped, by_hand = _indoor_pot(), _indoor_pot()
+        stepped.apply_balance_step_from_indoor(
+            ROOM, 0.0, JUNE, outdoor_solar_radiation_mj_m2_day=OUTDOOR_MJ,
+            global_radiation_at_pot_mj_m2_day=measured_mj,
+        )
+        by_hand.apply_balance_step(
+            et_0_mm=_room_et0((1.0 - INDOOR_ALBEDO) * measured_mj),
+            water_input_mm=0.0, current_date=JUNE,
+        )
+        self.assertAlmostEqual(stepped.state_mm, by_hand.state_mm)
+        # La luce utile alla pianta viene dallo stesso numero.
+        self.assertAlmostEqual(
+            stepped.last_nutrient_step.dli_mol_m2_day, measured_mj * PAR_MOL_PER_MJ,
+        )
+        self.assertIs(
+            stepped.last_indoor_radiation.source, IndoorRadiationSource.MEASURED_AT_POT,
+        )
+        self.assertEqual(stepped.last_indoor_radiation.global_mj_m2_day, measured_mj)
+
+    def test_the_measure_works_without_a_light_level(self):
+        pot = _indoor_pot(light_exposure=None)
+        with self.assertRaises(ValueError):
+            pot.apply_balance_step_from_indoor(ROOM, 0.0, JUNE)
+        pot.apply_balance_step_from_indoor(
+            ROOM, 0.0, JUNE, global_radiation_at_pot_mj_m2_day=2.4,
+        )
+        self.assertLess(pot.state_mm, pot.fc_mm)
+        # Anche senza la radiazione di fuori la misura è di quel giorno.
+        self.assertAlmostEqual(pot.last_nutrient_step.dli_mol_m2_day, 2.4 * PAR_MOL_PER_MJ)
+
+    def test_a_day_of_lux_enters_through_the_conversion(self):
+        # Un giorno a 2 000 lux per dodici ore: 24 kilolux·ora.
+        measured_mj = shortwave_from_illuminance(24_000.0)
+        pot = _indoor_pot()
+        pot.apply_balance_step_from_indoor(
+            ROOM, 0.0, JUNE, global_radiation_at_pot_mj_m2_day=measured_mj,
+        )
+        self.assertAlmostEqual(measured_mj, 0.797, places=3)
+        self.assertAlmostEqual(pot.last_nutrient_step.dli_mol_m2_day, 1.606, places=3)
+
+    def test_the_measured_fraction_serves_the_days_without_the_sensor(self):
+        with_fraction, with_level = _indoor_pot(), _indoor_pot()
+        with_fraction.apply_balance_step_from_indoor(
+            ROOM, 0.0, JUNE, outdoor_solar_radiation_mj_m2_day=OUTDOOR_MJ,
+            light_fraction_override=0.30,
+        )
+        with_level.apply_balance_step_from_indoor(
+            ROOM, 0.0, JUNE, outdoor_solar_radiation_mj_m2_day=OUTDOOR_MJ,
+        )
+        self.assertIs(
+            with_fraction.last_indoor_radiation.source, IndoorRadiationSource.MEASURED_FRACTION,
+        )
+        self.assertIs(
+            with_level.last_indoor_radiation.source, IndoorRadiationSource.EXPOSURE_FRACTION,
+        )
+        self.assertAlmostEqual(
+            with_fraction.last_nutrient_step.dli_mol_m2_day, OUTDOOR_MJ * 0.30 * PAR_MOL_PER_MJ,
+        )
+        # Più luce misurata di quella del livello (0,30 contro 0,15): più acqua.
+        self.assertLess(with_fraction.state_mm, with_level.state_mm)
+
+    def test_without_the_outdoor_the_fraction_falls_to_the_fixed_level(self):
+        pot = _indoor_pot()
+        pot.apply_balance_step_from_indoor(ROOM, 0.0, JUNE, light_fraction_override=0.30)
+        self.assertIs(pot.last_indoor_radiation.source, IndoorRadiationSource.EXPOSURE_FIXED)
+        self.assertIsNone(pot.last_nutrient_step.dli_mol_m2_day)
 
 
 if __name__ == "__main__":

@@ -55,6 +55,9 @@ aggiustando la frazione del LightExposure corrispondente).
 """
 
 
+from dataclasses import dataclass
+from enum import Enum
+
 from fitosim.domain.room import LightExposure
 
 # =====================================================================
@@ -299,4 +302,110 @@ def estimate_indoor_net_radiation(
         estimate_indoor_radiation(
             exposure=exposure, outdoor_radiation_mj_m2_day=outdoor_radiation_mj_m2_day,
         )
+    )
+
+
+# =====================================================================
+#  La cascata: dalla misura alla categoria (docs/proposta_luce_misurata.md)
+# =====================================================================
+
+class IndoorRadiationSource(Enum):
+    """Da dove viene la radiazione al vaso di un giorno, dal più misurato al meno."""
+
+    MEASURED_AT_POT = "measured_at_pot"
+    """Misurata al vaso quel giorno (un sensore di luce, un piranometro)."""
+
+    MEASURED_FRACTION = "measured_fraction"
+    """La radiazione di fuori per la frazione di luce misurata del posto."""
+
+    EXPOSURE_FRACTION = "exposure_fraction"
+    """La radiazione di fuori per la frazione del livello di luce del vaso."""
+
+    EXPOSURE_FIXED = "exposure_fixed"
+    """Il numero fisso del livello di luce: uguale tutto l'anno."""
+
+
+@dataclass(frozen=True)
+class IndoorRadiation:
+    """
+    La radiazione **globale** al vaso di un giorno, in MJ/m², e da dove
+    viene. Da questo numero solo si ricavano la netta per
+    Penman-Monteith (`net_mj_m2_day`) e la luce utile alla pianta
+    (`science/light.dli_from_shortwave`).
+    """
+
+    global_mj_m2_day: float
+    source: IndoorRadiationSource
+
+    @property
+    def net_mj_m2_day(self) -> float:
+        """La netta: la parte non riflessa, con l'onda lunga a zero."""
+        return net_indoor_radiation(self.global_mj_m2_day)
+
+    @property
+    def follows_the_day(self) -> bool:
+        """
+        Se il numero è di quel giorno (misurato, o ricavato dalla
+        radiazione di fuori) e non il fisso del livello: solo allora ha
+        senso ricavarne la luce utile alla pianta.
+        """
+        return self.source is not IndoorRadiationSource.EXPOSURE_FIXED
+
+
+def resolve_indoor_radiation(
+    *,
+    exposure: LightExposure | None = None,
+    outdoor_radiation_mj_m2_day: float | None = None,
+    global_radiation_at_pot_mj_m2_day: float | None = None,
+    measured_light_fraction: float | None = None,
+) -> IndoorRadiation:
+    """
+    La radiazione al vaso in casa, dal dato migliore che c'è. Quattro
+    gradini, dal più misurato al meno:
+
+      1. la radiazione globale **misurata al vaso** quel giorno;
+      2. la radiazione di fuori per la **frazione misurata** del posto
+         (per i giorni in cui il sensore manca);
+      3. la radiazione di fuori per la frazione del livello di luce;
+      4. il numero fisso del livello di luce.
+
+    Coi primi due il livello di luce (`exposure`) non serve. Senza
+    niente di usabile solleva ValueError.
+    """
+    if global_radiation_at_pot_mj_m2_day is not None:
+        if global_radiation_at_pot_mj_m2_day < 0:
+            raise ValueError(
+                f"global_radiation_at_pot_mj_m2_day="
+                f"{global_radiation_at_pot_mj_m2_day} non può essere negativa."
+            )
+        return IndoorRadiation(
+            global_radiation_at_pot_mj_m2_day, IndoorRadiationSource.MEASURED_AT_POT,
+        )
+    if outdoor_radiation_mj_m2_day is not None and outdoor_radiation_mj_m2_day < 0:
+        raise ValueError(
+            f"outdoor_radiation_mj_m2_day deve essere non-negativa "
+            f"(ricevuto {outdoor_radiation_mj_m2_day})."
+        )
+    if measured_light_fraction is not None:
+        if not 0.0 <= measured_light_fraction <= 1.0:
+            raise ValueError(
+                f"measured_light_fraction={measured_light_fraction} deve stare fra 0 e 1."
+            )
+        if outdoor_radiation_mj_m2_day is not None:
+            return IndoorRadiation(
+                measured_light_fraction * outdoor_radiation_mj_m2_day,
+                IndoorRadiationSource.MEASURED_FRACTION,
+            )
+    if exposure is None:
+        raise ValueError(
+            "Nessuna radiazione al vaso: serve una misura, una frazione "
+            "misurata con la radiazione di fuori, o il livello di luce."
+        )
+    if outdoor_radiation_mj_m2_day is not None:
+        return IndoorRadiation(
+            continuous_indoor_radiation(exposure, outdoor_radiation_mj_m2_day),
+            IndoorRadiationSource.EXPOSURE_FRACTION,
+        )
+    return IndoorRadiation(
+        categorical_indoor_radiation(exposure), IndoorRadiationSource.EXPOSURE_FIXED,
     )

@@ -18,7 +18,10 @@ Tre cose, tutte funzioni pure di numeri:
 
   2. **Il DLI al vaso**: il piranometro misura il cielo aperto, e al vaso
      ne arriva una frazione — quella di una stanza
-     (`science/indoor.light_fraction`) o quella misurata sul posto.
+     (`science/indoor.light_fraction`) o quella misurata sul posto. Un
+     sensore di luce al vaso la misura direttamente, in lux:
+     `dli_from_illuminance` e `shortwave_from_illuminance` (2026-11-24,
+     docs/proposta_luce_misurata.md).
      All'aperto una frazione per esposizione **non c'è**: i fattori di
      `pot_physics` (0,70 e 0,45) sono fattori di traspirazione, non di
      luce, e qui non si inventano. Chi ha la frazione la passa
@@ -69,6 +72,55 @@ def dli_from_shortwave(radiation_mj_m2_day: float) -> float:
             f"radiation_mj_m2_day={radiation_mj_m2_day} non può essere negativa."
         )
     return radiation_mj_m2_day * PAR_MOL_PER_MJ
+
+
+# Quanti lux fa un micromole di fotoni PAR al metro quadro al secondo,
+# per la **luce del giorno**. Purdue HO-238-W, tabella 1: per la luce
+# solare 0,20 µmol/m²/s per foot-candle, e un foot-candle sono 10,764
+# lux. Con le due costanti qui sopra dà 108,5 lux per W/m² di radiazione
+# globale: è l'efficacia luminosa che Littlefair misura per la luce del
+# giorno (105 lm/W in rassegna, 107–109 in un anno a Garston; Lighting
+# Res. Technol. 17:162–182, 1985).
+#
+# Il numero dipende dalla sorgente: il lux pesa la luce come l'occhio, i
+# fotoni no. Sotto lampade al sodio sono 82,8 lux per µmol (la stessa
+# tabella: 0,13), sotto un LED bianco circa 68. Chi misura sotto una
+# lampada passa il suo fattore.
+LUX_PER_UMOL_DAYLIGHT = 53.8
+
+
+def dli_from_illuminance(
+    lux_hours: float, lux_per_umol: float = LUX_PER_UMOL_DAYLIGHT,
+) -> float:
+    """
+    Il DLI, in mol di fotoni PAR per m² al giorno, dall'integrale
+    giornaliero di illuminamento in lux·ora — quello che dà un sensore
+    di luce ambiente lasciato a campionare per un giorno. Per la luce
+    del giorno: 1 000 lux·ora sono 0,067 mol/m².
+    """
+    if lux_hours < 0:
+        raise ValueError(f"lux_hours={lux_hours} non può essere negativo.")
+    if lux_per_umol <= 0:
+        raise ValueError(f"lux_per_umol={lux_per_umol} deve essere positivo.")
+    return lux_hours * 3600.0 / lux_per_umol / 1e6
+
+
+def shortwave_from_illuminance(
+    lux_hours: float, lux_per_umol: float = LUX_PER_UMOL_DAYLIGHT,
+) -> float:
+    """
+    La radiazione globale del giorno, in MJ/m², dall'integrale di
+    illuminamento in lux·ora: il DLI riportato all'energia con la stessa
+    conversione di `dli_from_shortwave`, al contrario. Per la luce del
+    giorno: 1 000 lux·ora sono 0,033 MJ/m².
+
+    È la conversione più fragile delle due. Vale per la luce del giorno
+    com'è fuori; dietro un vetro selettivo, che lascia passare il
+    visibile e ferma il vicino infrarosso, ogni lux porta meno energia e
+    questa stima è troppo alta (fino a due terzi). Sotto una lampada non
+    vale: lì l'energia non segue la quota PAR della radiazione solare.
+    """
+    return dli_from_illuminance(lux_hours, lux_per_umol) / PAR_MOL_PER_MJ
 
 
 def dli_at_pot(open_sky_radiation_mj_m2_day: float, light_fraction: float) -> float:

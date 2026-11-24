@@ -90,8 +90,13 @@ from fitosim.science.et0 import (
     compute_et,
     daily_vapor_pressures,
 )
-from fitosim.science.indoor import estimate_indoor_net_radiation, light_fraction
-from fitosim.science.light import LightSufficiency, dli_at_pot, light_sufficiency
+from fitosim.science.indoor import IndoorRadiation, light_fraction, resolve_indoor_radiation
+from fitosim.science.light import (
+    LightSufficiency,
+    dli_at_pot,
+    dli_from_shortwave,
+    light_sufficiency,
+)
 from fitosim.science.nutrients import (
     TRANSPIRATION_SHARE_SINGLE_KC,
     ZERO,
@@ -691,6 +696,12 @@ class Pot:
     # L'ultimo passo nutritivo, per chi vuole i numeri del giorno senza
     # tenersi il risultato: non è stato, non si persiste.
     last_nutrient_step: Optional["NutrientStepResult"] = field(
+        default=None, repr=False, compare=False,
+    )
+    # La radiazione al vaso dell'ultimo passo in casa, e da dove veniva
+    # (misurata, da una frazione, dal livello di luce): come sopra, non è
+    # stato e non si persiste.
+    last_indoor_radiation: IndoorRadiation | None = field(
         default=None, repr=False, compare=False,
     )
     # ----- La sonda EC (2026-09-22) -----
@@ -2371,6 +2382,8 @@ class Pot:
         outdoor_solar_radiation_mj_m2_day: float | None = None,
         wind_speed_m_s: float | None = None,
         light_exposure_override: LightExposure | None = None,
+        global_radiation_at_pot_mj_m2_day: float | None = None,
+        light_fraction_override: float | None = None,
     ) -> BalanceStepResult:
         """
         Esegue un passo di bilancio idrico (giornaliero) sul vaso a
@@ -2385,10 +2398,15 @@ class Pot:
              t_max al selettore). INSTANT non è ammesso perché
              rappresenta una lettura puntuale, non un dato giornaliero.
           2. Risolve il light_exposure dalla cascata: parametro
-             esplicito → campo del Pot → errore esplicativo.
-          3. Stima la radiazione indoor con estimate_indoor_radiation.
-             Se outdoor_solar_radiation_mj_m2_day è popolato usa il
-             modo continuo (più accurato); altrimenti il categoriale.
+             esplicito → campo del Pot. Serve solo se manca una misura.
+          3. Prende la radiazione al vaso dal dato migliore che c'è
+             (`indoor.resolve_indoor_radiation`, 2026-11-24): quella
+             misurata al vaso quel giorno; poi la radiazione di fuori
+             per la frazione misurata del posto; poi per la frazione
+             del livello di luce; infine il numero fisso del livello.
+             Da quel numero solo vengono la netta per Penman-Monteith
+             e la luce utile alla pianta. Il gradino usato resta in
+             `last_indoor_radiation`.
           4. Chiama il selettore compute_et con i parametri risolti.
              Il vento è risolto con cascata: parametro esplicito →
              Room.default_wind_m_s → costante globale 0.5.
@@ -2397,14 +2415,11 @@ class Pot:
              ritornato porta il campo et_method valorizzato col
              metodo del selettore.
 
-        Una sottigliezza tecnica indoor: la conversione tra radiazione
-        globale stimata e radiazione netta è meno standardizzata
-        rispetto al caso outdoor (dove serve un calcolo articolato di
-        bilancio radiativo notturno). Per indoor il modello tratta la
-        radiazione globale stimata direttamente come Rn, semplificazione
-        accettabile perché in stanza chiusa il bilancio radiativo
-        notturno è dominato da scambi di onda lunga modesti tra pianta
-        e arredamento, non dal cielo aperto.
+        La radiazione al vaso è globale; a Penman-Monteith va la netta,
+        cioè la parte non riflessa (albedo 0,23), con l'onda lunga
+        netta a zero: in una stanza la chioma scambia con pareti e
+        vetri, non col cielo, e quello scambio non si conosce (vedi
+        `science/indoor`).
 
         Parametri
         ---------
@@ -2435,7 +2450,15 @@ class Pot:
         light_exposure_override : LightExposure, opzionale
             Override del livello di esposizione luminosa del vaso.
             Se None usa self.light_exposure; se anche quello è None
-            solleva ValueError.
+            e non c'è una misura solleva ValueError.
+        global_radiation_at_pot_mj_m2_day : float, opzionale
+            La radiazione globale **misurata al vaso** nel giorno, in
+            MJ/m². Quando c'è sostituisce ogni stima. Da un sensore in
+            lux: `light.shortwave_from_illuminance(lux_ora)`.
+        light_fraction_override : float, opzionale
+            La frazione della luce di fuori che arriva al vaso, misurata
+            sul posto (0–1). Vale con la radiazione di fuori, per i
+            giorni in cui la misura al vaso manca.
 
         Ritorna
         -------
@@ -2469,22 +2492,31 @@ class Pot:
             if light_exposure_override is not None
             else self.light_exposure
         )
-        if effective_exposure is None:
+        measured = global_radiation_at_pot_mj_m2_day is not None or (
+            light_fraction_override is not None
+            and outdoor_solar_radiation_mj_m2_day is not None
+        )
+        if effective_exposure is None and not measured:
             raise ValueError(
                 f"Vaso '{self.label}': light_exposure non disponibile. "
                 f"Va specificato come campo del Pot al momento della "
                 f"costruzione (consigliato), oppure passato come "
-                f"light_exposure_override al metodo."
+                f"light_exposure_override al metodo — o si passa la "
+                f"radiazione misurata al vaso."
             )
 
-        # Step 3: stima della radiazione indoor con la funzione "best
-        # available" del modulo science.indoor.
-        # La netta, non la globale (N2, 2026-11-24): la parte riflessa
-        # via, l'onda lunga a zero. Vedi `science/indoor`.
-        radiation_mj_m2_day = estimate_indoor_net_radiation(
+        # Step 3: la radiazione al vaso, dal dato migliore che c'è: la
+        # misura, la frazione misurata, la frazione del livello di luce,
+        # il numero fisso. A Penman-Monteith va la netta, non la globale
+        # (N2, 2026-11-24): la parte riflessa via, l'onda lunga a zero.
+        radiation = resolve_indoor_radiation(
             exposure=effective_exposure,
             outdoor_radiation_mj_m2_day=outdoor_solar_radiation_mj_m2_day,
+            global_radiation_at_pot_mj_m2_day=global_radiation_at_pot_mj_m2_day,
+            measured_light_fraction=light_fraction_override,
         )
+        self.last_indoor_radiation = radiation
+        radiation_mj_m2_day = radiation.net_mj_m2_day
 
         # Step 4: risoluzione del vento con la cascata.
         # Override esplicito > Room.default_wind_m_s > DEFAULT_INDOOR_WIND_M_S.
@@ -2549,15 +2581,13 @@ class Pot:
         # Col default (FULL_SUN) il fattore vale 1.
         et_0_for_legacy_method /= exposure_correction_factor(self.sun_exposure)
 
-        # La luce al vaso, per l'assorbimento: solo nel modo continuo,
-        # dove la radiazione della stanza segue quella di fuori. Nel
-        # modo categoriale la radiazione è un numero fisso tutto l'anno
-        # e darebbe a dicembre la luce di giugno: lì il DLI non si dà.
+        # La luce al vaso, per l'assorbimento, dalla stessa radiazione
+        # globale — quando è di quel giorno. Il numero fisso del livello
+        # è uguale tutto l'anno e darebbe a dicembre la luce di giugno:
+        # lì il DLI non si dà.
         dli = (
-            dli_at_pot(
-                outdoor_solar_radiation_mj_m2_day, light_fraction(effective_exposure),
-            )
-            if outdoor_solar_radiation_mj_m2_day is not None
+            dli_from_shortwave(radiation.global_mj_m2_day)
+            if radiation.follows_the_day
             else None
         )
 
