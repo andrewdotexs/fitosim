@@ -67,6 +67,8 @@ Prima di accendere il logging e iniziare a raccogliere dati, devi preparare ogni
 
 Ogni vaso deve avere una label univoca, scelta da te, che resta invariata per tutto l'anno di calibrazione e oltre. Ti suggerisco una convenzione che mescola la specie e un numero progressivo, e che mantenga l'informazione della replica e dell'eventuale esposizione: "phalaenopsis-1-finestra", "phalaenopsis-2-media", "phalaenopsis-3-interna", "phalaenopsis-4", "phalaenopsis-5", "phalaenopsis-6", "sansevieria-1", "sansevieria-2", "pothos-1", "ficus-elastica-1", "aloe-1", "aloe-2", "oleandro-1-fertirrigato", "oleandro-2", "oleandro-3", "oleandro-4", "oleandro-5", "rosmarino-1-sole", "rosmarino-2-mezzombra". Sono diciassette label, una per ognuno dei vasi del tuo setup. Stampa un'etichetta adesiva resistente all'acqua e attaccala sul vaso, sotto il bordo dove il sole non la sbiadisce. La stessa label la userai come Pot.label nel codice fitosim.
 
+**Aggiornamento del 25 novembre 2026.** `Garden` e il database SQLite di fitosim non ci sono più (0.46.0): i vasi, le loro etichette e la loro storia stanno in The Pot, e la calibrazione si conduce dalla sua console (`/admin/calibrazione`) o dal suo lettore. Il codice qui sotto è quello di maggio, lasciato com'era per la convenzione delle etichette.
+
 Crea il garden in fitosim e aggiungi tutti i vasi. Per i vasi indoor associali alle rispettive Room (presumibilmente "salotto" e altre stanze a seconda di come hai distribuito i vasi). I vasi outdoor non hanno room\_id. Salva il garden nel database SQLite. Esempio di setup iniziale del codice:
 
 from fitosim.domain.garden import Garden

@@ -396,16 +396,12 @@
             <li><a href="#domain-room"><code>room</code></a></li>
             <li><a href="#domain-weather"><code>weather</code></a></li>
             <li><a href="#domain-blocks"><code>weather</code></a></li>
-            <li><a href="#domain-garden"><code>garden</code></a></li>
-            <li><a href="#domain-scheduling"><code>scheduling</code></a></li>
             <li><a href="#domain-alerts"><code>alerts</code></a></li>
           </ul>
         </li>
         <li><a href="#io">6. Layer <code>io</code></a>
           <ul>
-            <li><a href="#io-persistence"><code>persistence</code></a></li>
-            <li><a href="#io-sensors">sensori (Protocol)</a></li>
-            <li><a href="#io-adapter">adapter concreti</a></li>
+            <li><a href="#io-ecowitt"><code>ecowitt</code></a></li>
           </ul>
         </li>
         <li><a href="#testing">7. Testing</a></li>
@@ -458,11 +454,12 @@
     </ul>
 
     <p>
-      Sopra al modello del singolo vaso, <code>fitosim</code> espone un
-      <strong>dashboard operativo</strong>: il <code>Garden</code> orchestra
-      più vasi, la persistenza SQLite conserva la storia, gli eventi pianificati
-      e le previsioni anticipano gli interventi, e il sistema di allerte
-      trasforma le previsioni in raccomandazioni concrete.
+      Dal 25 novembre 2026 (versione 0.46.0) <code>fitosim</code> è <strong>il
+      motore, non un'applicazione</strong>. Lo strato che lo faceva girare da
+      solo — il <code>Garden</code>, la persistenza SQLite, gli adapter dei
+      sensori, gli eventi pianificati, il client Open-Meteo — è stato tolto:
+      quelle cose le fa The Pot. Restano il modello del vaso, le regole delle
+      allerte e il client grezzo del cloud Ecowitt.
     </p>
 
     <div class="callout note">
@@ -497,7 +494,7 @@
       <div class="layer-card">
         <div class="role">Layer 2 — orchestrazione</div>
         <h4>domain/</h4>
-        <p>Modello di dominio: <code>Pot</code>, <code>Garden</code>, <code>Species</code>, <code>Room</code>, <code>Alert</code>, <code>ScheduledEvent</code>, <code>WeatherDay</code>, <code>WeatherBlock</code> e il giorno fatto di blocchi (<code>blocks.py</code>).</p>
+        <p>Modello di dominio: <code>Pot</code>, <code>Species</code>, <code>Room</code>, <code>Alert</code>, <code>WeatherDay</code>, <code>WeatherBlock</code> e il giorno fatto di blocchi (<code>blocks.py</code>).</p>
         <p><em>Dipendenze: <code>science</code>.</em></p>
       </div>
       <div class="layer-card">
@@ -541,24 +538,13 @@ domain/
 ├── species       (standalone)
 ├── weather       (standalone; WeatherBlock e i campioni, A7)
 ├── blocks        ← weather, science.et0, science.radiation (A7)
-├── scheduling    (standalone)
 ├── room          (standalone)
 ├── alerts        ← pot
 ├── pot           ← species, substrate, weather, blocks, science.*
-├── garden        ← pot, room, scheduling, alerts
 └── (alerts.py)   ← pot
 
 io/
-├── persistence   ← domain.*, science.substrate
-├── ecowitt       (client grezzo) ← domain.weather (WeatherSample, A7)
-└── sensors/
-    ├── types     (stdlib)
-    ├── errors    (stdlib)
-    ├── protocols ← types
-    ├── ecowitt   ← io.ecowitt (legacy), types, errors, protocols
-    ├── openmeteo ← io.openmeteo (legacy), types, errors, protocols
-    ├── http_json ← types, errors, protocols
-    └── fixtures  ← types, errors, protocols</div>
+└── ecowitt       (client grezzo) ← domain.weather (WeatherSample, A7)</div>
 
     <h3 id="principi">2.3 Principi di design</h3>
 
@@ -1162,8 +1148,8 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     <h2 id="domain">5. Layer <code>domain</code></h2>
 
     <p>
-      Modello di dominio: <code>Pot</code> e <code>Garden</code> sono le
-      entità centrali; tutto il resto le supporta o le compone. Le
+      Modello di dominio: <code>Pot</code> è l'entità centrale; tutto il
+      resto la supporta o la compone. Le
       dataclass <code>frozen=True</code> sono <strong>value object</strong>
       immutabili (risultati, eventi); <code>Pot</code> e <code>Room</code>
       hanno stato mutabile esplicito.
@@ -1381,82 +1367,25 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     <p>Tipi: <code>BalanceBlock</code> (ET₀ e input di un blocco; rifiuta ET₀ negativa), <code>BlockFertigation</code>, <code>BlockTrace</code>, <code>BlocksStepResult</code> (traccia, totali, <code>alert_hour</code>), <code>FullBlocksStepResult</code> (eventi, <code>et_method</code>, <code>rs_rso_pre_sunset</code> da passare alla notte del giorno dopo), <code>BlockEt0</code>. Funzioni: <code>validate_block_tiling</code>, <code>et0_for_blocks</code>.</p>
     <p>Le nove decisioni del 29 settembre 2026, con le fonti e i numeri misurati, sono nel docstring del modulo: Kc costante dentro il giorno (D1), Ks sullo stato del blocco (D2), D<sub>e</sub> a blocchi (D3), tasso capillare riscalato 1 − (1 − r)<sup>Δt/24</sup> (D4), cancello del freddo sulla T media del giorno (D5), forma oraria FAO-56 eq. 53 e non ASCE-EWRI (D6), blocchi notturni negativi a zero (D7), G e R<sub>s</sub>/R<sub>so</sub> notturni di FAO-56 cap. 4 (D8), l'ora dell'allerta (D9). Misurato sulla settimana 14–20 settembre 2026 a Milano: somma delle ore +3 % sulla giornaliera FAO, Ks a ore −1,4 % di ET<sub>c</sub>, un litro alle 20 tiene 2,5 mm in più nel vaso. Lo strumento di calibrazione resta sui cali giornalieri.</p>
 
-    <!-- GARDEN -->
-    <h3 id="domain-garden"><code>domain/garden.py</code> — Orchestratore</h3>
-
-    <p>
-      Contenitore di tutti i vasi del balcone come entità coerente. Niente
-      persistenza interna: viste (allerte, forecast) sempre ricalcolate
-      on-demand dallo stato dei vasi.
-    </p>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind dc">dataclass</span>
-        <span class="api-name">Garden</span>
-      </div>
-      <div class="api-body">
-        <p>Attributi: <code>name</code> (id immutabile), <code>location_description</code>, collezioni interne ordinate (<code>_pots</code>, <code>_rooms</code>, <code>_channel_mapping</code>, <code>_scheduled_events</code>).</p>
-        <p><strong>Invarianti</strong>: nome non vuoto; unicità di <code>label</code> vasi e <code>room_id</code>; vasi offline si saltano silenziosamente nelle operazioni batch.</p>
-      </div>
+    <!-- GARDEN e SCHEDULING: tolti il 2026-11-25 -->
+    <div class="callout note">
+      <strong>Tolti il 25 novembre 2026 (0.46.0).</strong>
+      <code>domain/garden.py</code> (l'orchestratore di più vasi, con
+      <code>apply_step_all</code>, il forecast e le allerte del giardino) e
+      <code>domain/scheduling.py</code> (<code>ScheduledEvent</code>,
+      <code>WeatherDayForecast</code>) facevano parte dello strato standalone.
+      Più vasi sono un elenco di <code>Pot</code> su cui chi chiama fa il suo
+      ciclo; una previsione si fa portando avanti una copia del vaso. Il
+      pianificatore <code>domain/scheduler.py</code> era già andato il 20
+      settembre.
     </div>
-
-    <h4>API principali</h4>
-
-    <table>
-      <thead>
-        <tr><th>Area</th><th>Metodi</th></tr>
-      </thead>
-      <tbody>
-        <tr><td><strong>Vasi</strong></td><td><code>add_pot</code>, <code>remove_pot</code>, <code>get_pot</code>, <code>has_pot</code>, <code>pot_labels</code>, iterabile, <code>__len__</code></td></tr>
-        <tr><td><strong>Room</strong></td><td><code>add_room</code>, <code>get_room</code>, <code>has_room</code>, <code>remove_room</code>, <code>pots_in_room(room_id)</code></td></tr>
-        <tr><td><strong>Mapping sensori</strong></td><td><code>set_channel_id</code>, <code>get_channel_id</code>, <code>has_channel_id</code>, <code>remove_channel_id</code></td></tr>
-        <tr><td><strong>Aggiornamento sensori</strong></td><td><code>update_all_from_sensors(sensor)</code> → <code>Dict[label, SensorUpdateResult | Error]</code></td></tr>
-        <tr><td><strong>Evoluzione giornaliera</strong></td><td><code>apply_step_all</code>, <code>apply_step_all_from_weather</code>, <code>apply_step_all_from_indoor</code></td></tr>
-        <tr><td><strong>Eventi</strong></td><td><code>add_scheduled_event</code>, <code>cancel_scheduled_event</code>, <code>events_due_today</code>, <code>events_due_in_range</code></td></tr>
-        <tr><td><strong>Forecast</strong></td><td><code>forecast(weather_forecast) → ForecastResult</code>, <code>forecast_alerts(weather_forecast) → List[Alert]</code></td></tr>
-        <tr><td><strong>Allerte</strong></td><td><code>current_alerts(today)</code>, <code>forecast_alerts(weather_forecast)</code></td></tr>
-      </tbody>
-    </table>
-
-    <!-- SCHEDULING -->
-    <h3 id="domain-scheduling"><code>domain/scheduling.py</code> — Eventi e forecast meteo</h3>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind dc">dataclass (frozen)</span>
-        <span class="api-name">ScheduledEvent</span>
-      </div>
-      <div class="api-body">
-        <p>Evento futuro. Campi: <code>event_id</code> (univoco per <code>pot_label</code>), <code>pot_label</code>, <code>event_type</code> (<code>"fertigation"</code>, <code>"leaching"</code>, <code>"treatment"</code>), <code>scheduled_date</code>, <code>payload</code> (dict JSON-compatibile).</p>
-      </div>
-    </div>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind dc">dataclass (frozen)</span>
-        <span class="api-name">WeatherDayForecast</span>
-      </div>
-      <div class="api-body">
-        <p>Diverso da <code>WeatherDay</code>: già ha ET₀ pre-calcolato per evitare ricomputo su orizzonti N giorni. Campi: <code>date_</code>, <code>et_0_mm</code>, <code>rainfall_mm</code>.</p>
-      </div>
-    </div>
-
-    <!-- SCHEDULER, tolto il 2026-09-20 (B1) -->
-    <p>
-      <strong>Il pianificatore</strong> (<code>domain/scheduler.py</code>, fino al 2026-09-20) è stato tolto: nessuno lo chiamava
-      da quando The Pot ha la sua proiezione in <code>idrica_service</code> — un anello che chiama lo stesso
-      <code>Pot.apply_step</code>, ma sa anche le dosi del diario, i concimi secchi e il microclima della stanza — e la dose la
-      dà lo strumento «acqua». La proiezione dello strumento di calibrazione usa <code>Garden.forecast</code>, che resta.
-    </p>
-
 
     <!-- ALERTS -->
     <h3 id="domain-alerts"><code>domain/alerts.py</code> — Sistema di allerte</h3>
 
     <p>
       Allerte derivate (mai persistite). Sono una <strong>vista</strong> dello
-      stato dei vasi, sempre ricalcolate on-demand dal <code>Garden</code>.
+      stato dei vasi, sempre ricalcolate on-demand da chi le chiede.
     </p>
 
     <div class="api">
@@ -1494,305 +1423,27 @@ $env:PYTHONPATH = <span class="str">"src"</span>; python tuo_script.py</code></p
     <h2 id="io">6. Layer <code>io</code></h2>
 
     <p>
-      Adapter di ingresso e uscita. Persistenza e serializzazione sono
-      disaccoppiate tra loro; i sensori sono <code>Protocol</code> duck-typed
-      così che adapter custom non debbano importare nulla da <code>fitosim</code>.
+      Un modulo solo: il client grezzo del cloud Ecowitt. La persistenza
+      SQLite, il trasporto in JSON, i <code>Protocol</code> dei sensori e i
+      loro adapter (Ecowitt, Open-Meteo, HTTP-JSON, CSV) sono stati tolti con
+      lo strato standalone, il 24 e il 25 novembre 2026.
     </p>
 
-    <!-- PERSISTENCE -->
-    <h3 id="io-persistence"><code>io/persistence.py</code> — SQLite</h3>
+    <!-- ECOWITT -->
+    <h3 id="io-ecowitt"><code>io/ecowitt.py</code> — il cloud Ecowitt</h3>
 
     <p>
-      Database operativo con storia completa degli stati. Schema versionato
-      (attualmente <strong>v5</strong>) con migrazioni automatiche, idempotenti
-      e difensive sull'inizializzazione.
-    </p>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind">class</span>
-        <span class="api-name">GardenPersistence</span>
-      </div>
-      <div class="api-body">
-        <p>API CRUD per giardini, vasi, room, snapshot di stato, catalogo (specie/substrati). Costruttore: <code>GardenPersistence(db_path)</code>. Migrazioni auto sull'inizializzazione.</p>
-        <p>Metodi principali: <code>register_species</code>, <code>register_substrate</code>, <code>save_garden(garden, snapshot_timestamp)</code>, <code>load_garden(name) → Garden</code>, <code>list_gardens()</code>, <code>query_states(pot_label, ...) → List[PotStateSnapshot]</code>, <code>query_events</code>, <code>query_scheduled_events</code>.</p>
-      </div>
-    </div>
-
-    <div class="callout note">
-      <strong>Schema v5 — persistenza della calibrazione (fase A)</strong> (oggi lo schema è v8: v6 la chioma, v7 la densità del substrato, v8 la pendenza salina della specie; ogni passo con la sua migrazione idempotente)<br>
-      Perché una calibrazione che non sopravvive a un reload non esiste, la
-      migrazione v4→v5 ha aggiunto <code>pot_states.gdd_accumulated</code>
-      (nullable per design: <code>NULL</code> = non tracciato) e <strong>11
-      colonne alla tabella specie</strong> — la configurazione fenologica
-      (<code>phenology_anchor</code>, <code>phenology_calendar_json</code>,
-      <code>annual_growth_stages_json</code>, soglie GDD) più quattro campi che
-      <em>predatavano</em> la fase A e non venivano salvati
-      (<code>depletion_fraction</code>, <code>stomatal_resistance_s_m</code>,
-      <code>crop_height_m</code>, <code>notes</code>). La migrazione usa
-      <code>_table_exists</code>/<code>_column_exists</code>, quindi è sicura
-      anche su DB parziali.
-    </div>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind dc">dataclass</span>
-        <span class="api-name">PotStateSnapshot</span>
-      </div>
-      <div class="api-body">
-        <p>Snapshot immutabile di uno stato vaso (per ricostruire l'andamento storico).</p>
-      </div>
-    </div>
-
-    <p>
-      Eccezioni canoniche: <code>PersistenceError</code> (base),
-      <code>SchemaVersionMismatch</code>, <code>CatalogMissingError</code>.
-    </p>
-
-    <!-- SERIALIZATION: tolta il 2026-11-24 -->
-    <h3 id="io-serialization"><code>io/serialization.py</code> — JSON (tolto)</h3>
-
-    <p>
-      Il formato di trasporto in JSON (<code>export_garden_json</code>,
-      <code>import_garden_json</code>) è stato tolto il 24 novembre 2026, con
-      la versione 0.45.0, insieme agli esempi che lo usavano. La persistenza
-      resta quella SQLite qui sopra.
-    </p>
-
-    <!-- SENSORS -->
-    <h3 id="io-sensors">Astrazione sensori — <code>io/sensors/</code></h3>
-
-    <div class="callout note">
-      <strong>Spec sensori v1</strong>
-      A partire dal 2026-05-15 il layer sensori adotta la <strong>spec
-      sensori canonica v1</strong> formalizzata in
-      <code>the-pot/docs/the_pot_sensors_spec.md</code>. Tutti gli adapter
-      operativi (Ecowitt, Open-Meteo, HTTP-JSON, fixture CSV)
-      restituiscono ora liste piatte di <code>Measurement</code>
-      <code>(sensor_id, timestamp, parameter, value)</code> con
-      vocabolario controllato (<code>air_temperature_c</code>,
-      <code>soil_theta</code>, ecc.) e namespace <code>custom:*</code>
-      per estensioni utente. I tipi legacy <code>EnvironmentReading</code>
-      e <code>SoilReading</code> restano disponibili nel modulo
-      <code>io/sensors/types.py</code> ma non sono più prodotti dagli
-      adapter.
-    </div>
-
-    <p>
-      Due interfacce asimmetriche, <code>Protocol</code> runtime-checkable
-      a zero dipendenze:
-    </p>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind proto">protocol</span>
-        <span class="api-name">EnvironmentSensor</span>
-      </div>
-      <div class="api-body">
-        <pre><code><span class="kw">@runtime_checkable</span>
-<span class="kw">class</span> <span class="fn">EnvironmentSensor</span>(Protocol):
-    <span class="kw">def</span> <span class="fn">current_conditions</span>(<span class="kw">self</span>, lat: <span class="kw">float</span>, lon: <span class="kw">float</span>) -&gt; list[Measurement]: ...
-    <span class="kw">def</span> <span class="fn">forecast</span>(<span class="kw">self</span>, lat: <span class="kw">float</span>, lon: <span class="kw">float</span>, days: <span class="kw">int</span>) -&gt; list[Measurement]: ...</code></pre>
-        <p>Un sensore per molti vasi (coordinate geografiche). Una stazione meteo che misura T, RH, vento e pioggia produce 4 <code>Measurement</code> per ogni tick con stesso <code>sensor_id</code> e <code>timestamp</code>.</p>
-      </div>
-    </div>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind proto">protocol</span>
-        <span class="api-name">SoilSensor</span>
-      </div>
-      <div class="api-body">
-        <pre><code><span class="kw">@runtime_checkable</span>
-<span class="kw">class</span> <span class="fn">SoilSensor</span>(Protocol):
-    <span class="kw">def</span> <span class="fn">current_state</span>(<span class="kw">self</span>, channel_id: <span class="kw">str</span>) -&gt; list[Measurement]: ...</code></pre>
-        <p>Un sensore per un vaso (channel_id). Un WH51 produce 1 Measurement (<code>soil_theta</code>); un WH52 fino a 3 (θ + T + EC).</p>
-      </div>
-    </div>
-
-    <h4>Tipo canonico <code>Measurement</code> (<code>io/sensors/measurement.py</code>)</h4>
-
-    <div class="api">
-      <div class="api-head">
-        <span class="api-kind dc">dataclass (frozen)</span>
-        <span class="api-name">Measurement</span>
-      </div>
-      <div class="api-body">
-        <p>4 campi, validati in <code>__post_init__</code>:</p>
-        <ul class="api-fields">
-          <li><code>sensor_id: str</code> — opaco lato spec, convenzione raccomandata <code>&lt;provider&gt;:&lt;device_type&gt;[:&lt;scope&gt;]:&lt;instance&gt;</code></li>
-          <li><code>timestamp: datetime</code> — obbligatoriamente timezone-aware</li>
-          <li><code>parameter: str</code> — uno dei canonici (sotto) o prefisso <code>custom:</code></li>
-          <li><code>value: float</code> — finito (no NaN/inf), dentro il range plausibile del parametro</li>
-        </ul>
-        <p>Validazione: <code>MeasurementValidationError</code> per timestamp naive, parameter sconosciuto, value fuori range.</p>
-      </div>
-    </div>
-
-    <h4>Vocabolario canonico dei parametri</h4>
-
-    <table>
-      <thead>
-        <tr><th>Categoria</th><th>Parametri</th><th>Range</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Ambiente</td>
-          <td><code>air_temperature_c</code>, <code>air_humidity</code> (0..1), <code>wind_speed_m_s</code>, <code>solar_radiation_mj_m2</code>, <code>rainfall_mm</code>, <code>barometric_pressure_hpa</code></td>
-          <td>Plausibili fisici (es. -50..70 °C, 0..1.05 per θ, 800..1100 hPa)</td>
-        </tr>
-        <tr>
-          <td>Substrato</td>
-          <td><code>soil_theta</code> (0..1.05), <code>soil_temperature_c</code>, <code>soil_ec_mscm</code>, <code>soil_ph</code></td>
-          <td>Idem</td>
-        </tr>
-        <tr>
-          <td>Sistema</td>
-          <td><code>battery_level</code>, <code>signal_strength</code></td>
-          <td>0..1 (frazione, NON %)</td>
-        </tr>
-        <tr>
-          <td>Extension</td>
-          <td><code>custom:&lt;arbitrary&gt;</code> (es. <code>custom:co2_ppm</code>, <code>custom:et0_mm</code>)</td>
-          <td>Opachi, nessuna validazione di range</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <p>
-      Esportati come costanti dal modulo: <code>PARAM_AIR_TEMPERATURE_C</code>,
-      <code>PARAM_SOIL_THETA</code>, ecc., più il frozenset
-      <code>CANONICAL_PARAMETERS</code> e il prefisso
-      <code>CUSTOM_NAMESPACE_PREFIX = "custom:"</code>. Costante di
-      versione: <code>SCHEMA_VERSION = 1</code>.
-    </p>
-
-    <h4>Tipi legacy (<code>io/sensors/types.py</code>) — in deprecation</h4>
-
-    <p>
-      <code>EnvironmentReading</code>, <code>SoilReading</code>,
-      <code>ReadingQuality</code> restano disponibili nel modulo per
-      retrocompatibilità con codice che le importa, ma <strong>nessun
-      adapter operativo le produce più</strong>. Saranno rimosse in una
-      futura versione una volta che il backend di The Pot (e il dominio
-      di fitosim) avrà migrato i suoi consumatori.
-    </p>
-
-    <h4>Eccezioni canoniche (<code>io/sensors/errors.py</code>)</h4>
-
-    <table>
-      <thead>
-        <tr><th>Eccezione</th><th>Quando</th><th>Strategia chiamante</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><code>SensorTemporaryError</code></td>
-          <td>Rete giù, timeout, gateway non risponde</td>
-          <td>Retry o leggi da cache</td>
-        </tr>
-        <tr>
-          <td><code>SensorPermanentError</code></td>
-          <td>Credenziali sbagliate, hardware rotto, parametri invalidi</td>
-          <td>Intervento manuale richiesto</td>
-        </tr>
-        <tr>
-          <td><code>SensorDataQualityError</code></td>
-          <td>Valore non plausibile (θ negativo, pH fuori [0,14])</td>
-          <td>Marca offline, ricalibra</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <!-- ADAPTERS -->
-    <h3 id="io-adapter">Adapter concreti</h3>
-
-    <table>
-      <thead>
-        <tr><th>Adapter</th><th>Protocol</th><th>Formato <code>sensor_id</code></th><th>Sorgente</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><code>EcowittEnvironmentSensor</code></td>
-          <td>EnvironmentSensor</td>
-          <td><code>ecowitt:weather_station:&lt;mac_cleaned&gt;</code></td>
-          <td>API cloud Ecowitt (stazione fisica). <code>forecast()</code> → <code>NotImplementedError</code>.</td>
-        </tr>
-        <tr>
-          <td><code>EcowittWH51SoilSensor</code></td>
-          <td>SoilSensor</td>
-          <td><code>ecowitt:wh51|wh52:&lt;mac_cleaned&gt;:ch&lt;N&gt;</code></td>
-          <td>Sensore substrato Ecowitt WH51/WH52 (parametrizzato via <code>model</code>).</td>
-        </tr>
-        <tr>
-          <td><code>EcowittAmbientSensor</code></td>
-          <td>(custom — non implementa il Protocol)</td>
-          <td>n/a</td>
-          <td>Sensore Ecowitt WN31 per microclima indoor. Produce <code>IndoorMicroclimate</code> consumato direttamente dal dominio indoor; non migrato a <code>Measurement</code> per scelta architetturale.</td>
-        </tr>
-        <tr>
-          <td><code>OpenMeteoEnvironmentSensor</code></td>
-          <td>EnvironmentSensor</td>
-          <td><code>openmeteo:lat&lt;lat&gt;_lon&lt;lon&gt;</code> (4 decimali)</td>
-          <td>API Open-Meteo (no auth, grigliata globale, forecast 1-16 giorni). Cache su disco con TTL.</td>
-        </tr>
-        <tr>
-          <td><code>HttpJsonSoilSensor</code></td>
-          <td>SoilSensor</td>
-          <td><code>http_json:&lt;hostname&gt;:&lt;channel_id&gt;</code></td>
-          <td>Gateway HTTP locale (es. ESP32 + Modbus RS485). Schema JSON V1 documentato in <code>HttpJsonSchemaV1</code>.</td>
-        </tr>
-        <tr>
-          <td><code>CsvEnvironmentFixture</code></td>
-          <td>EnvironmentSensor</td>
-          <td><code>csv_fixture:&lt;filename_stem&gt;</code> (override possibile)</td>
-          <td>Test offline deterministico da CSV.</td>
-        </tr>
-        <tr>
-          <td><code>CsvSoilFixture</code></td>
-          <td>SoilSensor</td>
-          <td><code>csv_fixture:&lt;filename_stem&gt;</code> (override possibile)</td>
-          <td>Test offline deterministico da CSV.</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <p>
-      Ogni adapter espone un helper per produrre il <code>sensor_id</code>
-      che userà nelle Measurement: <code>EcowittEnvironmentSensor.sensor_id</code>
-      (property), <code>EcowittWH51SoilSensor.sensor_id_for(channel_id)</code>,
-      <code>OpenMeteoEnvironmentSensor.sensor_id_for(lat, lon)</code>,
-      <code>HttpJsonSoilSensor.sensor_id_for(channel_id)</code>,
-      <code>CsvEnvironmentFixture.sensor_id</code> /
-      <code>CsvSoilFixture.sensor_id</code> (property).
-    </p>
-
-    <div class="callout warn">
-      <strong>Legacy vs nuovo</strong>
-      Il modulo <code>io/ecowitt.py</code> (vecchio) espone funzioni low-level
-      che restituiscono <code>EcowittObservation</code> (snapshot raw,
-      dettagli provider esposti). I nuovi adapter in <code>io/sensors/</code>
-      restituiscono <code>list[Measurement]</code> canoniche secondo la spec
-      sensori v1 e implementano i <code>Protocol</code>. <strong>Preferire i
-      nuovi</strong>; il legacy <code>EcowittObservation</code> e i tipi
-      <code>EnvironmentReading</code>/<code>SoilReading</code> sono mantenuti
-      perché il nuovo adapter Ecowitt riusa internamente <code>fetch_real_time</code>
-      e i tipi legacy potrebbero ancora essere importati da codice utente
-      esistente. Dal 2026-09-29 il client grezzo espone anche <code>weather_samples_from_series</code>: dallo storico (<code>fetch_history</code>) ai <code>WeatherSample</code> che <code>domain.weather.weather_blocks_from_samples</code> raggruppa in blocchi di ore (A7).
-    </div>
-
-    <h4>Variabili d'ambiente per credenziali</h4>
-
-    <pre><code><span class="com"># Ecowitt (con fallback al naming legacy)</span>
-FITOSIM_ECOWITT_APPLICATION_KEY=...
-FITOSIM_ECOWITT_API_KEY=...
-FITOSIM_ECOWITT_MAC=...
-
-<span class="com"># HTTP-JSON gateway (opzionale)</span>
-FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
-
-    <p>
-      I costruttori espongono <code>from_env()</code> come metodo di classe
-      per istanziare l'adapter senza passare manualmente le credenziali.
+      <code>fetch_real_time(application_key, api_key, mac)</code> torna un
+      <code>EcowittObservation</code>: la stazione (temperatura, umidità,
+      vento, radiazione, pioggia), le sonde nel substrato per canale
+      (<code>soil_moisture_pct</code>, <code>soil_temperature_c</code>,
+      <code>soil_ec_mscm</code>, il grezzo <code>soil_ad</code>, la pila), le
+      valvole e la webcam. <code>fetch_history</code> dà la serie
+      (<code>EcowittTimeSeries</code>), e
+      <code>weather_samples_from_series</code> i campioni per il giorno a
+      blocchi. Le unità sono sempre metriche, qualunque sia la configurazione
+      dell'account. Lo usano The Pot e il ponte del lisimetro; le credenziali
+      si leggono con <code>credentials_from_env()</code>.
     </p>
 
     <!-- =================== 7. TESTING =================== -->
@@ -1832,12 +1483,8 @@ FITOSIM_HTTP_GATEWAY_TOKEN=...</code></pre>
       <tbody>
         <tr><td>Unit scientifici</td><td><code>test_balance</code>, <code>test_et0</code>, <code>test_substrate</code>, ...</td><td>Funzioni pure FAO-56 e helper.</td></tr>
         <tr><td>Layer feedback (fase A)</td><td><code>test_calibration</code>, <code>test_phenology</code>, <code>test_behavioral_calibration</code>, <code>test_lysimeter</code>, <code>test_calibration_resolution</code></td><td>Recupero di parametri noti, robustezza della mediana, guardrail di confidenza e precedenza tra fonti.</td></tr>
-        <tr><td>Unit dominio</td><td><code>test_pot</code>, <code>test_garden</code>, <code>test_alerts</code>, ...</td><td>Entità di dominio e invarianti.</td></tr>
+        <tr><td>Unit dominio</td><td><code>test_pot</code>, <code>test_alerts</code>, ...</td><td>Entità di dominio e invarianti.</td></tr>
         <tr><td>Il giorno a blocchi (A7)</td><td><code>test_blocks</code></td><td><code>WeatherBlock</code> e campioni, ET₀ per blocco, i tre metodi del <code>Pot</code>; l'invariante: un blocco di 24 h ≡ il passo giornaliero, numero per numero.</td></tr>
-        <tr><td>Integrazione I/O</td><td><code>test_persistence</code></td><td>Round-trip SQLite.</td></tr>
-        <tr><td>Spec sensori v1</td><td><code>test_measurement</code></td><td>Validazione della dataclass canonica <code>Measurement</code>: sensor_id, timestamp tz-aware, vocabolario, range fisici (109 test).</td></tr>
-        <tr><td>Adapter sensori</td><td><code>test_sensors_ecowitt</code>, <code>test_sensors_openmeteo</code>, <code>test_sensors_http_json</code>, <code>test_sensors_fixtures</code></td><td>Mapping payload → <code>list[Measurement]</code> canoniche, gestione errori, conformità Protocol.</td></tr>
-        <tr><td>End-to-end</td><td><code>test_demo_appartamento</code></td><td>Demo eseguibile che testa l'intero flusso.</td></tr>
       </tbody>
     </table>
 
@@ -1883,14 +1530,14 @@ python -m pytest --cov=fitosim --cov-report=term-missing</code></pre>
     <ul>
       <li>Type hints <strong>obbligatori</strong> su tutte le funzioni pubbliche.</li>
       <li><code>Optional[...]</code> esplicito; mai <code>= None</code> implicito su parametri tipizzati senza marcatura.</li>
-      <li><code>Protocol</code> per duck-typing (vedi <code>io/sensors/protocols.py</code>); preferiti rispetto ad ABC perché non richiedono ereditarietà esplicita.</li>
+      <li><code>Protocol</code> per duck-typing (vedi <code>SoilReading</code> in <code>domain/pot.py</code>); preferiti rispetto ad ABC perché non richiedono ereditarietà esplicita.</li>
     </ul>
 
     <h3>Dataclass</h3>
 
     <ul>
       <li><code>@dataclass(frozen=True)</code> per <strong>value object</strong>: risultati, eventi, letture sensori, parametri.</li>
-      <li><code>@dataclass</code> mutabile <strong>solo</strong> per le entità con stato che evolve nel tempo: <code>Pot</code>, <code>Garden</code>, <code>Room</code>.</li>
+      <li><code>@dataclass</code> mutabile <strong>solo</strong> per le entità con stato che evolve nel tempo: <code>Pot</code>, <code>Room</code>.</li>
       <li><code>__post_init__</code> per <strong>validazione fisica</strong> all'istanziazione (es. range di pH 0..14).</li>
     </ul>
 

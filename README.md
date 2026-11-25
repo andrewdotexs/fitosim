@@ -1,7 +1,7 @@
 # fitosim
 
 > Libreria Python per la simulazione FAO-56 del bilancio idrico e chimico
-> dei vasi domestici. Il motore agronomico del dashboard "Il Mio Giardino".
+> dei vasi domestici. Il motore agronomico di The Pot.
 
 fitosim è una libreria Python che ti aiuta a capire quanto e quando irrigare
 le piante nei tuoi vasi. Funziona modellando il bilancio idrico e chimico del
@@ -14,23 +14,22 @@ sottovaso, dalle miscele di substrati al modello chimico, dal bilancio
 indoor con microclima della stanza al selettore "best available" del metodo
 di evapotraspirazione.
 
-Sopra al modello del singolo vaso, fitosim costruisce un dashboard operativo
-completo: il `Garden` orchestra più vasi insieme (anche distribuiti tra più
-stanze indoor), la persistenza SQLite conserva la storia, gli eventi
-pianificati e le previsioni a N giorni anticipano gli interventi, e il
-sistema di allerte trasforma le previsioni in raccomandazioni concrete per
-il giardiniere.
+fitosim è **il motore, non un'applicazione**. È nato per girare da solo — un
+giardino di vasi, un database SQLite, i sensori letti in rete, un'agenda — e
+dal settembre 2026 è il motore di **The Pot**, che ha il suo database, i suoi
+sensori e il suo calendario. Lo strato che faceva quelle cose è stato tolto
+il 25 novembre 2026 (versione 0.46.0): restano il modello del vaso, le
+regole delle allerte e il client grezzo del cloud Ecowitt.
 
 ## Stato del progetto
 
-- **Versione**: 0.45.0 (`pyproject.toml`, dal 2026-11-24: via gli esempi e il JSON, la libreria e i suoi test con la sola standard library; 0.44.0 lo stesso giorno, la luce misurata al vaso entra nel passo in casa, con la conversione dal lux; 0.43.0 lo stesso giorno, in casa a Penman-Monteith va la radiazione netta e la luce si conta una volta; 0.42.0 lo stesso giorno, gli strumenti — ruff, mypy e una CI —, Python 3.12 come minimo; 0.41.0 lo stesso giorno, la luce utile alla pianta, `science/light.py`, e il fattore di luce sull'assorbimento dei nutrienti; 0.40.0 il 06-11, il limite inferiore ferma il flusso e non crea acqua, `BalanceStepResult.et_actual`; 0.39.0 lo stesso giorno, un limite solo per il Kc, 2.50; 0.38.0 il 05-11, quanto asciuga il materiale come numero del vaso, `Pot.material_factor`; 0.37.0 il 30-10, la foto della webcam HP10 nel tempo reale di Ecowitt; 0.36.0 il 25-10, le valvole IoT; 0.35.0 il 21-10, le pressioni di vapore dagli estremi del giorno, A9; 0.34.0 il 29-09, il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
-- **1626 test verdi** (529 sub-test), senza dipendenze esterne
+- **Versione**: 0.46.0 (`pyproject.toml`, dal 2026-11-25: via lo strato standalone — giardino, database, sensori, eventi —, resta il motore; 0.45.0 il 24-11, via gli esempi e il JSON, la libreria e i suoi test con la sola standard library; 0.44.0 lo stesso giorno, la luce misurata al vaso entra nel passo in casa, con la conversione dal lux; 0.43.0 lo stesso giorno, in casa a Penman-Monteith va la radiazione netta e la luce si conta una volta; 0.42.0 lo stesso giorno, gli strumenti — ruff, mypy e una CI —, Python 3.12 come minimo; 0.41.0 lo stesso giorno, la luce utile alla pianta, `science/light.py`, e il fattore di luce sull'assorbimento dei nutrienti; 0.40.0 il 06-11, il limite inferiore ferma il flusso e non crea acqua, `BalanceStepResult.et_actual`; 0.39.0 lo stesso giorno, un limite solo per il Kc, 2.50; 0.38.0 il 05-11, quanto asciuga il materiale come numero del vaso, `Pot.material_factor`; 0.37.0 il 30-10, la foto della webcam HP10 nel tempo reale di Ecowitt; 0.36.0 il 25-10, le valvole IoT; 0.35.0 il 21-10, le pressioni di vapore dagli estremi del giorno, A9; 0.34.0 il 29-09, il giorno fatto di blocchi; 0.33.0 il 22-09, la sonda EC; 0.32.0 lo stesso giorno, i serbatoi nutritivi; 0.31.0 il 20-09; prima la serie `v0_NN` nei commit, fino a `v0_30`)
+- **1150 test verdi** (520 sub-test), senza dipendenze esterne
 - **Le pressioni di vapore dagli estremi del giorno** (A9, 2026-10-21): e_s ed e_a dagli estremi del giorno nel Penman-Monteith giornaliero: la media di e°(T_max) ed e°(T_min) (FAO-56 eq. 12) al posto di e°(T_media), che la sottostima, ed e_a dalle umidità estreme (eq. 17) quando la stazione le dà, dalla media (eq. 19) altrimenti; `WeatherDay` ha `humidity_min` e `humidity_max`; la forma oraria non cambia. Misurato sulle settimane dell'esempio delle stagioni, l'ET₀ giornaliera sale del 2–4 % e coincide con la FAO di riferimento al decimo di percento; in una stanza non cambia.
 - **Il giorno fatto di blocchi** (A7, 2026-09-29): il vaso avanza a blocchi di ore dentro il giorno — `Pot.apply_blocks_from_weather`, `domain/blocks.py` con le nove decisioni e le fonti; il passo giornaliero è il caso di un blocco di 24 ore, con gli stessi numeri
-- **Tempo esecuzione suite**: ~6 secondi su laptop standard
+- **Tempo esecuzione suite**: poco più di un secondo
 - **Linguaggio**: Python ≥ 3.12
 - **Dipendenze esterne nel core**: zero (solo standard library)
-- **Schema database**: SQLite v8 con migrazioni automatiche v1→…→v8
 - **Fascia 1**: completa (modello idrico FAO-56 esteso)
 - **Fascia 2**: completa (5 tappe: sensori, chimica, architettura, Penman-Monteith, indoor)
 - **Fascia 3**: **in corso** — la fase A del *layer di feedback* (calibrazione multi-fonte) è in fitosim; il modello è stato rivisto numero per numero il 18–20 settembre 2026 (Kn, CEC e densità, `p`, pendenza salina, dormienza), ogni costante con la fonte o dichiarata stima; il 29 settembre il vaso ha imparato ad avanzare a blocchi di ore dentro il giorno (A7)
@@ -38,7 +37,7 @@ il giardiniere.
 
 ```
 $ python -m pytest tests/
-================= 1626 passed, 529 subtests passed =================
+================= 1150 passed, 520 subtests passed =================
 ```
 
 ## Cosa fa
@@ -86,27 +85,21 @@ parametri noti. In questo dominio specifico la libreria copre:
   scostamento delle irrigazioni e giudizi sulle allerte per il comportamento
   — più una regola di precedenza che le compone quando più fonti toccano lo
   stesso parametro
-- **Garden**: orchestrazione di più vasi come unità coerente
-- **Persistenza SQLite**: database operativo con storia completa degli stati
-- **Serializzazione JSON**: formato di trasporto autocontenuto
-- **Integrazione sensori in batch**: aggiornamento robusto a errori
-  transitori
-- **Eventi pianificati e forecast**: piani di fertirrigazione e proiezioni
-  dello stato a N giorni
-- **Sistema di allerte**: cinque categorie e tre severità, derivate dallo
-  stato corrente o proiettato
+- **Sistema di allerte**: cinque categorie e tre severità, regole pure sul
+  singolo vaso, derivate dallo stato corrente
 - **Selettore "best available" dell'evapotraspirazione**: Penman-Monteith
   fisico (con resistenza stomatica della specie), Penman-Monteith standard
   FAO-56 e Hargreaves-Samani come fallback, scelti automaticamente in
   funzione dei dati meteo disponibili e dei parametri della specie
 - **Modello dei vasi indoor**: entità `Room` per gli spazi indoor con
-  microclima condiviso, sensore ambientale WN31 di Ecowitt, modello a tre
-  livelli di esposizione luminosa (`LightExposure`), bilancio idrico
-  alimentato dal microclima della stanza invece che dal meteo esterno
-- **Supporto sensore di substrato evoluto**: il WH52 (upgrade del WH51 con
-  temperatura ed EC del substrato) è gestito dallo stesso adapter
-  parametrizzato, con fallback automatico alle capacità del WH51 quando
-  i campi nuovi non sono disponibili
+  microclima condiviso, bilancio idrico alimentato dal microclima della
+  stanza invece che dal meteo esterno, e la radiazione al vaso dal dato
+  migliore che c'è — misurata, da una frazione misurata, o dal livello di
+  luce (`LightExposure`)
+- **La luce utile alla pianta**: il DLI al vaso, anche da un sensore in lux,
+  e il suo effetto sull'assorbimento dei nutrienti (`science/light.py`)
+- **Il client del cloud Ecowitt** (`io/ecowitt.py`): la stazione, le sonde
+  WH51 e WH52 nel substrato, le valvole, la storia; grezzo, senza adapter
 
 ## Cosa NON fa
 
@@ -157,81 +150,13 @@ vaso.apply_balance_step(
 print(f"Dopo un giorno di sole: {vaso.state_mm:.1f} mm")
 ```
 
-### Hello balcone (Garden, sensori, allerte, persistenza)
-
-L'esempio "completo" che mostra le capacità della tappa 4 in azione: tre
-vasi orchestrati insieme, persistenza SQLite, eventi pianificati, allerte
-sullo stato corrente e previste nei prossimi giorni.
-
-```python
-from datetime import date, datetime, timedelta, timezone
-from fitosim.domain.garden import Garden
-from fitosim.domain.pot import Location, Pot
-from fitosim.domain.species import BASIL
-from fitosim.domain.scheduling import ScheduledEvent, WeatherDayForecast
-from fitosim.io.persistence import GardenPersistence
-from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
-
-# Costruisci il giardino con tre vasi a esposizioni diverse alla pioggia.
-balcone = Garden(name="balcone-milano")
-for label, exposure in [("aperto", 1.0),
-                        ("ringhiera", 0.5),
-                        ("albero", 0.2)]:
-    balcone.add_pot(Pot(
-        label=label, species=BASIL, substrate=UNIVERSAL_POTTING_SOIL,
-        pot_volume_l=2.0, pot_diameter_cm=18.0,
-        location=Location.OUTDOOR,
-        planting_date=date(2026, 5, 1),
-        rainfall_exposure=exposure,
-    ))
-
-# Persisti il giardino in un database SQLite locale.
-db = GardenPersistence("/tmp/giardino.db")
-db.register_species(BASIL)
-db.register_substrate(UNIVERSAL_POTTING_SOIL)
-db.save_garden(balcone, snapshot_timestamp=datetime.now(timezone.utc))
-
-# Pianifica una fertirrigazione per il prossimo lunedì.
-balcone.add_scheduled_event(ScheduledEvent(
-    event_id="fert-aperto-w1",
-    pot_label="aperto",
-    event_type="fertigation",
-    scheduled_date=date(2026, 5, 25),
-    payload={"volume_l": 0.3, "ec_mscm": 2.0, "ph": 6.2},
-))
-
-# Applica un giorno di simulazione a tutti i vasi insieme.
-balcone.apply_step_all(
-    et_0_mm=4.5, current_date=date(2026, 5, 20),
-    rainfall_mm=0.0,
-)
-
-# Allerte sullo stato corrente.
-for alert in balcone.current_alerts(date(2026, 5, 20)):
-    print(f"[{alert.severity.value}] {alert.pot_label}: {alert.message}")
-
-# Previsione e allerte previste per i prossimi 7 giorni.
-forecast_meteo = [
-    WeatherDayForecast(
-        date_=date(2026, 5, 20) + timedelta(days=i),
-        et_0_mm=5.0, rainfall_mm=0.0,
-    )
-    for i in range(7)
-]
-risultato = balcone.forecast(forecast_meteo)
-for alert in balcone.forecast_alerts(forecast_meteo):
-    print(f"Tra {(alert.triggered_date - date(2026, 5, 20)).days} giorni: "
-          f"{alert.pot_label} - {alert.category.value}")
-```
-
-Se il primo esempio gira e stampa tre numeri sensati, fitosim è installato
-correttamente. Se il secondo esempio gira e produce le allerte, hai a
-disposizione tutto il dashboard operativo della tappa 4.
+Se l'esempio gira e stampa tre numeri sensati, fitosim è installato
+correttamente.
 
 ## Installazione
 
 fitosim richiede **Python ≥ 3.12** (dal 24 novembre 2026, come The Pot). Non ha dipendenze esterne nel core: tutto
-il codice agronomico, dalla matematica FAO-56 alla persistenza SQLite, gira
+il codice agronomico gira
 con la sola standard library di Python. È pensato per girare bene anche su
 ambienti vincolati come Termux su Android o Raspberry Pi 5.
 
@@ -278,10 +203,13 @@ uv run pytest -q              # i test
 La libreria è organizzata in tre layer architetturali con dipendenze che
 vanno solo "verso il basso": `domain` dipende da `science` (mai il
 contrario), `io` dipende da `domain` (mai il contrario). Questo principio
-protegge il modello scientifico dai dettagli applicativi: puoi cambiare il
-database da SQLite a PostgreSQL senza toccare nulla del modello FAO-56.
+protegge il modello scientifico dai dettagli applicativi.
 
 ![Diagramma dei package di fitosim](docs/uml/fitosim_packages.png)
+
+*I due diagrammi di questa sezione sono di prima del 25 novembre 2026:
+mostrano ancora `Garden`, la persistenza e gli adapter dei sensori, che non
+ci sono più. Sono da rigenerare dai sorgenti `.dot`.*
 
 Il layer `science/` contiene il modello matematico FAO-56 esteso: bilancio
 idrico, calcolo ET (Penman-Monteith fisico, Penman-Monteith standard FAO-56,
@@ -293,59 +221,40 @@ fascia 3** (calibrazione da sensore, gradi-giorno, lisimetro, calibrazione
 comportamentale, e precedenza tra fonti). Sono prevalentemente funzioni pure
 più qualche dataclass (`Substrate`, `BaseMaterial`, `EtResult`).
 
-Il layer `domain/` contiene gli oggetti di dominio e l'orchestrazione: `Pot`
-è la classe centrale che monta insieme tutte le componenti scientifiche in
-un'entità coerente, `Garden` orchestra più vasi insieme, `Species` e
-`Substrate` caratterizzano la pianta e il terriccio, `Room` modella gli
-spazi indoor con il loro microclima condiviso (sotto-tappa 5-D), `Alert`,
-`ScheduledEvent`, `WeatherDay` e `WeatherDayForecast` sono le strutture
-introdotte dalle tappe 4 e 5.
+Il layer `domain/` contiene gli oggetti di dominio: `Pot` è la classe
+centrale che monta insieme tutte le componenti scientifiche in un'entità
+coerente, `Species` e `Substrate` caratterizzano la pianta e il terriccio,
+`Room` modella gli spazi indoor con il loro microclima condiviso (sotto-tappa
+5-D), `Alert` e le sue regole sono le allerte, `WeatherDay` e `WeatherBlock`
+il meteo di un giorno e delle sue ore.
 
-Il layer `io/` contiene gli adapter di ingresso e uscita: `persistence`
-(SQLite; il trasporto in JSON, `serialization`, è stato tolto il 24 novembre
-2026); sotto `io/sensors/` vivono cinque adapter concreti (Ecowitt, Open-Meteo,
-HTTP-JSON, fixtures CSV) che implementano i `Protocol` definiti in
-`protocols.py`. Il file `ecowitt.py` espone tre classi distinte:
-`EcowittEnvironmentSensor` per il meteo outdoor, `EcowittWH51SoilSensor`
-per il substrato (parametrizzato per WH51 e WH52), e `EcowittAmbientSensor`
-per il microclima delle stanze indoor (WN31).
+Il layer `io/` ha un modulo solo, `ecowitt.py`: il client grezzo del cloud
+Ecowitt (`fetch_real_time`, `fetch_history`), che The Pot e il ponte del
+lisimetro usano per leggere la stazione e le sonde.
 
-### Il modello e lo strato standalone
+### Lo strato standalone, tolto
 
 Dal 2026-09-19 fitosim è il motore di **The Pot**, e The Pot importa il
 modello: tutto `science/`, e di `domain/` il `Pot`, la `Species`, `WeatherDay` e
-`WeatherBlock` con `blocks.py` (il giorno fatto di blocchi, A7),
-`Room.LightExposure` e le regole di `alerts`; di `io/` il solo client Ecowitt
-grezzo (`io/ecowitt.py`). Il resto è lo **strato standalone** — la libreria
-usata da sola, com'era prima dell'app:
+`WeatherBlock` con `blocks.py` (il giorno fatto di blocchi, A7), la `Room`
+con `LightExposure` e le regole di `alerts`; di `io/` il client Ecowitt.
 
-| modulo | righe | chi lo usa |
-|---|---|---|
-| `domain/garden.py` | 1 400 | lo strumento di calibrazione (fase 0) |
-| `io/persistence.py` (SQLite) | 2 200 | lo strumento di calibrazione (fase 0) |
-| `domain/scheduling.py` | 170 | `Garden`, lo strumento |
-| `io/openmeteo.py` | 550 | lo strumento (previsione e archivio) |
-| `io/sensors/*` (i `Protocol` e i cinque adapter) | 3 500 | il ponte Ecowitt del lisimetro |
-
-Sono 8 400 righe e 440 test: **congelati** dal 2026-09-20 (B3). Non prendono
-funzionalità nuove — quelle vanno nel modello, dove l'app le vede — e la
-loro sorte si decide dopo la fase 2 della calibrazione, quando lo strumento
-passerà sui modelli dell'app e lo strato resterà agli esempi. Il
-pianificatore (`domain/scheduler.py`) è stato tolto lo stesso giorno (B1):
-nessuno lo chiamava, e la proiezione dell'app in `idrica_service` fa lo
-stesso anello con lo stesso `Pot.apply_step`, sapendo anche le dosi del
-diario, i concimi secchi e il microclima della stanza. Due client Open-Meteo
-restano per scelta (B2): quello di fitosim è sincrono, minimo, e ha
-l'archivio ERA5 che serve ai gradi-giorno; quello di The Pot (`previsione.py`)
-è asincrono e legge le orarie, l'«adesso» e i codici del cielo per
-l'interfaccia. Si sovrappongono su quattro colonne giornaliere.
+Il resto era lo **strato standalone**, la libreria usata da sola com'era
+prima dell'app: `domain/garden.py` e `domain/scheduling.py`, `io/persistence.py`
+(SQLite), `io/openmeteo.py`, `io/sensors/*` con i `Protocol` e i cinque
+adapter, e prima ancora `io/serialization.py` e gli esempi. Congelato il 20
+settembre 2026 (B3), è stato tolto in due passi: gli esempi e il JSON il 24
+novembre (0.45.0), il resto il 25 (0.46.0), quando The Pot ha ritirato la
+fase 0 dello strumento di calibrazione e il ponte del lisimetro è passato
+al client grezzo. In tutto circa 24 000 righe fra codice, esempi e test. La
+storia git le conserva: l'ultima versione che le ha tutte è la 0.44.0
+(`d310d17`), l'ultima con giardino e database la 0.45.0 (`539dca7`).
 
 ### Le entità di dominio
 
 Il diagramma delle classi qui sotto mostra le entità principali con le loro
 relazioni. Il `Pot` è la scatola più grande perché concentra tutto il sapere
-agronomico della libreria; il `Garden` è il punto di sutura tra modello
-scientifico e applicazione operativa.
+agronomico della libreria.
 
 ![Diagramma delle classi del dominio](docs/uml/fitosim_classes.png)
 
@@ -354,24 +263,21 @@ Una proprietà strutturale che il diagramma mette in luce è il pattern
 attributi di stato dinamico (`state_mm`, `salt_mass_meq`, `ph_substrate`,
 `saucer_state_mm`), e tutte le altre quantità (`state_theta`,
 `ec_substrate_mscm`, `fc_mm`, `pwp_mm`, `alert_mm`, `kp`) sono property
-calcolate on-demand. Conseguenza pratica: il database memorizza solo quei
-quattro numeri per ogni snapshot, e tutto il resto viene ricalcolato al
-caricamento.
+calcolate on-demand. Conseguenza pratica: chi conserva un vaso — The Pot nel
+suo database — memorizza quei quattro numeri, e tutto il resto si ricalcola.
 
 ## Repository
 
 ```
 fitosim/
 ├── src/fitosim/
-│   ├── domain/             # entità di dominio e orchestrazione
-│   │   ├── garden.py       # Garden orchestratore (tappe 4-5)
+│   ├── domain/             # entità di dominio
 │   │   ├── pot.py          # Pot, classe centrale del modello
 │   │   ├── blocks.py       # il giorno fatto di blocchi (A7, 2026-09-29)
 │   │   ├── species.py      # Species, catalogo specie predefinite
 │   │   ├── room.py         # Room, IndoorMicroclimate (tappa 5-D)
 │   │   ├── weather.py      # WeatherDay (tappa 5-C), WeatherBlock e i campioni (A7)
-│   │   ├── alerts.py       # Sistema di allerte (tappa 4)
-│   │   └── scheduling.py   # ScheduledEvent, WeatherDayForecast
+│   │   └── alerts.py       # Sistema di allerte (tappa 4)
 │   ├── science/            # modello matematico FAO-56 esteso
 │   │   ├── substrate.py    # Substrate, BaseMaterial, mix
 │   │   ├── balance.py      # bilancio idrico FAO-56
@@ -391,18 +297,9 @@ fitosim/
 │   │   ├── behavioral_calibration.py  # irrigazioni -> Kc, giudizi -> p
 │   │   ├── lysimeter.py               # pesata -> Kc (ground truth)
 │   │   └── calibration_resolution.py  # precedenza tra fonti
-│   └── io/                 # adapter di acquisizione e persistenza
-│       ├── persistence.py  # SQLite, schema v8
-│       └── sensors/
-│           ├── protocols.py    # SoilSensor, EnvironmentSensor (Protocol)
-│           ├── measurement.py  # Measurement canonico (spec sensori v1)
-│           ├── types.py        # SoilReading, EnvironmentReading (legacy)
-│           ├── errors.py       # gerarchia eccezioni a 3 livelli
-│           ├── ecowitt.py      # adapter Ecowitt: WH51/WH52, WN31, Env
-│           ├── openmeteo.py    # adapter Open-Meteo (meteo)
-│           ├── http_json.py    # adapter generico per gateway ESP32
-│           └── fixtures.py     # adapter CSV per test
-├── tests/                  # 1626 test verdi
+│   └── io/
+│       └── ecowitt.py      # il client grezzo del cloud Ecowitt
+├── tests/                  # 1150 test verdi
 ├── docs/                        # i sorgenti sono i .md; i PDF in docs/pdf/
 │   ├── developer_documentation.html # doc tecnica per sviluppatori
 │   ├── fitosim_user_manual.md       # manuale utente
@@ -422,6 +319,11 @@ fitosim/
 ```
 
 ## Storia delle tappe
+
+*Le tabelle qui sotto sono la storia di come la libreria è cresciuta, lasciata
+com'era: molte delle cose che elencano (il `Garden`, la persistenza, gli
+adapter dei sensori, gli eventi pianificati) facevano parte dello strato
+standalone e non ci sono più dal 25 novembre 2026.*
 
 Il progetto è strutturato in fasce di lavoro, ognuna composta da più tappe.
 La fascia 1 ha costruito il modello idrico completo del singolo vaso; la
@@ -548,10 +450,11 @@ maggio non ci sono più); i PDF in `docs/pdf/` si rigenerano con
 
 **Manuale utente** (`docs/fitosim_user_manual.md`): la guida completa di
 19 capitoli più tre appendici, scritta in italiano con stile narrativo. È
-il punto di riferimento per imparare a usare la libreria da sola, dai
-concetti fondamentali (capitoli 1-3) alle capacità avanzate del singolo
-vaso (4-9), dal dashboard operativo del balcone (10-16) al selettore di
-evapotraspirazione e ai vasi indoor (17-18) alle FAQ (19). Le appendici
+il punto di riferimento per imparare a usare il motore, dai concetti
+fondamentali (capitoli 1-3) alle capacità avanzate del singolo vaso (4-9),
+alle allerte (15), al selettore di evapotraspirazione e ai vasi indoor
+(17-18), alle FAQ (19). I capitoli 10–14 e 16 descrivevano lo strato
+standalone e sono ridotti a una nota. Le appendici
 contengono le specie e i substrati dimostrativi (il catalogo ufficiale è in
 The Pot) e un glossario dei termini agronomici. Non racconta ancora la
 chioma, la fenologia delle perenni e il catalogo di The Pot: un capitolo da

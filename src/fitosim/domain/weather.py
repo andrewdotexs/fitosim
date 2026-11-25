@@ -6,29 +6,14 @@ ingredienti meteo che il modello scientifico consuma per calcolare
 l'evapotraspirazione attraverso il selettore "best available" del
 modulo `science/et0.py`.
 
-La distinzione tra `WeatherDay` e `WeatherDayForecast` (che vive in
-`scheduling.py`) merita un po' di attenzione perché le due dataclass
-si somigliano in superficie ma servono scopi concettualmente diversi.
-
-`WeatherDayForecast` è "previsione meteo aggregata per il forecast a
-N giorni del Garden". Ha solo tre campi (data, ET₀ pre-calcolata,
-pioggia) perché chi la usa è già in possesso di ET₀ pronta da
-applicare al bilancio idrico, tipicamente dal forecast Open-Meteo
-che la calcola al posto suo.
-
-`WeatherDay` è invece "dati meteo grezzi di un singolo giorno", quelli
-che la stazione Ecowitt sul balcone produce direttamente: temperature
-minima e massima, umidità relativa, velocità del vento, radiazione
-solare globale. Il chiamante che usa `WeatherDay` lascia al modello
-scientifico (attraverso il selettore della sotto-tappa B) il compito
-di trasformare questi dati grezzi in ET, scegliendo automaticamente
-la formula migliore applicabile in funzione di quali dati sono
-effettivamente disponibili.
-
-Le due dataclass sono complementari, non concorrenti: il chiamante
-sceglie quella adatta al proprio contesto. Chi ha già ET₀ calcolata
-da un'altra fonte usa `WeatherDayForecast`. Chi ha dati meteo grezzi
-e vuole che la libreria scelga la formula migliore usa `WeatherDay`.
+`WeatherDay` è "i dati meteo grezzi di un singolo giorno", quelli che
+la stazione sul balcone produce direttamente: temperature minima e
+massima, umidità relativa, velocità del vento, radiazione solare
+globale. Chi lo usa lascia al modello scientifico (il selettore di
+`science/et0.py`) il compito di trasformarli in ET, scegliendo la
+formula migliore applicabile con i dati che ci sono. Chi ha già l'ET₀
+calcolata da un'altra fonte la passa direttamente ai passi del vaso
+(`Pot.apply_step`), senza passare di qui.
 """
 
 from collections.abc import Iterable, Sequence

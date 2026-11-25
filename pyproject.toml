@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fitosim"
-version = "0.45.0"
+version = "0.46.0"
 description = "Motore scientifico per la simulazione agronomica di piante in vaso: bilancio idrico, evapotraspirazione, calendario di cura."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -79,25 +79,7 @@ ignore = ["E501"]  # la lunghezza della riga non si impone al codice che c'era
 # Nei test `dict(...)` per gli argomenti di default si legge meglio di un
 # letterale, e i nomi portano le unità come si scrivono (pH, 5L).
 "tests/*" = ["C408", "N802"]
-# I test dello strato standalone, congelato: le classi `Test_Cosa_caso` non
-# si rinominano, se ne vanno con lo strato (P1-b).
-"tests/test_measurement.py" = ["C408", "N802", "N801"]
-"tests/test_sensors_*.py" = ["C408", "N802", "N801"]
 
 [tool.mypy]
 python_version = "3.12"
 files = ["src/fitosim"]
-
-# Lo strato standalone, congelato: se ne va con P1-b
-# (docs/fitosim_pulizia_e_ottimizzazione.md) e fino ad allora non si tocca.
-# I suoi errori di tipo — 22 il 2026-11-24 — tornano visibili togliendo
-# questo blocco. La calibrazione comportamentale non è più qui: resta, e i
-# suoi tipi sono a posto.
-[[tool.mypy.overrides]]
-module = [
-    "fitosim.io.persistence",
-    "fitosim.io.openmeteo",
-    "fitosim.io.sensors.*",
-    "fitosim.domain.garden",
-]
-ignore_errors = true

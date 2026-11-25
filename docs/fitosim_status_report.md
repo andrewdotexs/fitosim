@@ -2,7 +2,17 @@ __fitosim — Status Report__
 
 *Stato dello sviluppo della libreria di simulazione FAO-56*
 
-*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 24 novembre, del 6 novembre, del 5 novembre, del 30 ottobre, del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+*Maggio 2026 — Aggiornato a fine tappa 5 fascia 2 (chiusura fascia 2). In testa, gli aggiornamenti del 25 novembre, del 24 novembre, del 6 novembre, del 5 novembre, del 30 ottobre, del 25 ottobre, del 21 ottobre, del 29, del 22 e del 20 settembre 2026; il corpo del documento è la fotografia di maggio, lasciata com'era.*
+
+# Aggiornamento al 25 novembre 2026 — fitosim è il motore
+
+**Via lo strato standalone** (25 novembre, versione 0.46.0; è P1-b di `docs/fitosim_pulizia_e_ottimizzazione.md`, il modello non cambia). fitosim è nato per girare da solo: un giardino di vasi, un database SQLite, i sensori letti in rete, un'agenda di eventi. Dal 19 settembre è il motore di The Pot, che ha tutte quelle cose per conto suo, e lo strato era congelato dal 20. Ora è andato: `domain/garden`, `domain/scheduling`, `io/persistence`, `io/openmeteo`, gli otto moduli di `io/sensors`, e i loro test. Restano il modello — `science/` intero, e di `domain/` il vaso, la specie, il meteo, i blocchi, la stanza, le allerte — e il client grezzo del cloud Ecowitt, il solo modulo di `io/`.
+
+**I due blocchi si sono mossi lo stesso giorno.** The Pot ha ritirato la fase 0 dello strumento di calibrazione, l'ultimo codice suo che importava il giardino e il database; il backend del lisimetro ha riscritto il ponte verso Ecowitt sul client grezzo, lasciando gli adapter. Le verifiche dai loro repository, rifatte prima di cancellare, non hanno trovato un solo import dello strato.
+
+**I numeri.** 31 moduli e 18 216 righe (erano 44 e 26 032 a ottobre, e nel frattempo sono entrate la luce e la radiazione in casa); 1 150 test in poco più di un secondo; mypy a zero senza più eccezioni. La lettura completa della sonda che `Pot.update_from_sensor` accetta è ora un protocollo nel modulo del vaso, con lo stesso comportamento.
+
+**Quello che resta da allineare**: i due diagrammi UML mostrano ancora lo strato tolto, e il manuale utente ha sei capitoli ridotti a una nota.
 
 # Aggiornamento al 24 novembre 2026 — via gli esempi e il JSON
 
@@ -10,7 +20,7 @@ __fitosim — Status Report__
 
 **Due moduli sono rimasti, e il piano si corregge.** `science/behavioral_calibration` e `science/calibration_resolution` erano nella lista come «scienza superata». Non lo sono: sono la calibrazione del Kc senza sensore e la regola di precedenza fra più fonti del layer di feedback, implementate e in attesa di chi le chiami — la seconda proprio per il lisimetro. Restano, e la loro sorte si decide a parte.
 
-**Quello che resta della pulizia**: lo strato standalone vero e proprio (`garden`, `scheduling`, `persistence`, `openmeteo`, `io/sensors`), che aspetta due cose di là — The Pot che toglie la fase 0 dello strumento, e il backend del lisimetro, che usa `io/sensors/ecowitt` per il suo ponte verso Ecowitt.
+**Quello che restava della pulizia** era lo strato standalone vero e proprio (`garden`, `scheduling`, `persistence`, `openmeteo`, `io/sensors`): è andato il giorno dopo, vedi sopra.
 
 # Aggiornamento al 24 novembre 2026 — la luce misurata al vaso
 

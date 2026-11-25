@@ -1,25 +1,16 @@
 """
 Client per la stazione meteo Ecowitt — letture in tempo reale.
 
-NOTA SULLA NUOVA ASTRAZIONE DELLA FASCIA 2
-------------------------------------------
+È il solo modulo di ``fitosim.io``: il client grezzo del cloud Ecowitt,
+con ``fetch_real_time``, ``fetch_history`` e ``credentials_from_env``.
+Lo usano The Pot (la stazione, l'aria delle stanze, i dispositivi) e il
+ponte del lisimetro. Gli adapter di ``fitosim.io.sensors`` che ci si
+appoggiavano sono stati tolti il 2026-11-25 con lo strato standalone.
 
-Questo modulo continua a funzionare come prima ed è completamente
-backward-compatible, incluse le funzioni ``fetch_real_time``,
-``fetch_history`` e ``credentials_from_env``. Per nuovo codice si
-consiglia tuttavia di usare gli adapter esposti da
-``fitosim.io.sensors``: ``EcowittEnvironmentSensor`` per i dati
-meteorologici e ``EcowittWH51SoilSensor`` per le letture θ dei
-sensori di umidità del substrato. Quegli adapter implementano
-i Protocol uniformi ``EnvironmentSensor`` e ``SoilSensor``, che
-permettono di scrivere codice agnostico rispetto al provider.
-
-Le credenziali sono ora lette dalle variabili d'ambiente
+Le credenziali si leggono dalle variabili d'ambiente
 ``FITOSIM_ECOWITT_APPLICATION_KEY``, ``FITOSIM_ECOWITT_API_KEY``,
 ``FITOSIM_ECOWITT_MAC`` (i nomi senza prefisso ``FITOSIM_``
 continuano a funzionare come fallback con DeprecationWarning).
-Le funzioni esposte qui sono la base su cui i nuovi adapter si
-appoggiano internamente, quindi continueranno a essere mantenute.
 
 Diversamente da Open-Meteo che fornisce dati grigliati su scala
 chilometrica, Ecowitt restituisce le letture *fisiche* della stazione
@@ -966,7 +957,7 @@ def fetch_real_time(
     fetcher : callable, opzionale
         Funzione che prende un URL e restituisce un dict (il JSON
         parsato). Se None, viene usato il default urllib. Iniettabile
-        per i test, esattamente come in `openmeteo.fetch_daily_forecast`.
+        per i test.
 
     Ritorna
     -------
@@ -1678,102 +1669,6 @@ def fetch_history(
         ) from exc
 
     return parse_ecowitt_history_response(payload)
-
-
-# -----------------------------------------------------------------------
-#  Aggregatore: EcowittTimeSeries → list[DailyWeather]
-# -----------------------------------------------------------------------
-#
-# Questa è la funzione che chiude il cerchio sensore-modello.
-# Trasforma una serie sub-oraria di osservazioni Ecowitt nel formato
-# `DailyWeather` consumato dal motore FAO-56 di fitosim, identico a
-# quello prodotto da Open-Meteo. Da qui in avanti, la pianificazione
-# può essere fatta usando i dati LOCALI della stazione invece dei
-# dati grigliati globali.
-
-def aggregate_to_daily_weather(
-    series: EcowittTimeSeries,
-    min_points_per_day: int = 4,
-) -> list:
-    """
-    Aggrega una serie temporale Ecowitt in una lista di `DailyWeather`,
-    una entry per giorno coperto dalla serie.
-
-    Per ogni giorno solare (UTC) presente nella serie:
-      - T_min = minimo della temperatura outdoor sui campioni del giorno
-      - T_max = massimo della temperatura outdoor sui campioni del giorno
-      - precipitation_mm = max del campo `rainfall_mm` nel giorno
-        (Ecowitt restituisce un cumulato giornaliero, quindi il
-        massimo della giornata = pioggia totale del giorno)
-      - et0_mm = None (non possiamo derivarlo dalla sola stazione
-        senza Penman-Monteith; il chiamante calcolerà ET₀ dal nostro
-        Hargreaves-Samani sui T_min/T_max prodotti)
-
-    Parametri
-    ---------
-    series : EcowittTimeSeries
-        La serie da aggregare.
-    min_points_per_day : int, default 4
-        Numero minimo di campioni outdoor temperatura richiesti per
-        produrre una entry giornaliera. Sotto questa soglia il giorno
-        è considerato non-affidabile e viene scartato. Con cadenza
-        di 30 minuti, 4 punti coprono almeno 2 ore — molto basso, ma
-        cattura il caso "stazione installata a metà giornata" senza
-        produrre giornate fittizie con T_min=T_max ricavata da pochi
-        sample.
-
-    Ritorna
-    -------
-    list[DailyWeather]
-        Una entry per giorno valido, in ordine cronologico. Lista
-        vuota se nessun giorno raggiunge la soglia minima.
-    """
-    # Import locale per evitare dipendenze circolari tra moduli io.
-    from fitosim.io.openmeteo import DailyWeather
-
-    # Raggruppiamo i punti per giorno solare UTC. usiamo defaultdict
-    # implicitamente: chiave = data, valore = lista di punti.
-    by_day: dict[date, list] = {}
-    for p in series.points:
-        d = p.timestamp.date()
-        by_day.setdefault(d, []).append(p)
-
-    daily: list = []
-    for day in sorted(by_day.keys()):
-        day_points = by_day[day]
-
-        # Estraiamo le temperature outdoor disponibili nel giorno.
-        temps = [
-            p.outdoor_temp_c for p in day_points
-            if p.outdoor_temp_c is not None
-        ]
-        if len(temps) < min_points_per_day:
-            # Giorno con troppi pochi punti: skip silenzioso.
-            continue
-
-        # T_min/T_max sui sample disponibili.
-        t_min = min(temps)
-        t_max = max(temps)
-
-        # Pioggia: il campo rainfall_mm è un cumulato giornaliero,
-        # quindi il massimo nella giornata corrisponde al totale.
-        # Se non c'è alcun valore di pioggia, assumiamo 0.0 (è il
-        # comportamento normale del pluviometro).
-        rains = [
-            p.rainfall_mm for p in day_points
-            if p.rainfall_mm is not None
-        ]
-        precipitation_mm = max(rains) if rains else 0.0
-
-        daily.append(DailyWeather(
-            day=day,
-            t_min=t_min,
-            t_max=t_max,
-            precipitation_mm=precipitation_mm,
-            et0_mm=None,  # ET₀ va calcolato a valle con HS
-        ))
-
-    return daily
 
 
 # ---------------------------------------------------------------------

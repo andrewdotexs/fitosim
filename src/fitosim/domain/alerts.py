@@ -1,5 +1,5 @@
 """
-Sistema di allerte per il Garden.
+Sistema di allerte del vaso.
 
 Il modulo introduce nella sotto-tappa E della tappa 4 della fascia 2
 il sistema di allerte: comunicazioni strutturate dal sistema al
@@ -17,12 +17,10 @@ delle regole allo stato corrente del modello. Se ricalcoli le
 allerte un'ora dopo aver fatto una fertirrigazione, l'allerta che
 chiedeva la fertirrigazione sarà scomparsa.
 
-Questo è coerente con la filosofia "Garden orchestratore puro" che
-abbiamo seguito fin dalla sotto-tappa A: le allerte sono una vista,
-non un dato. Niente tabella SQL, niente serializzazione JSON,
-niente metodi di add/cancel. Il chiamante chiama
-``Garden.current_alerts()`` o ``Garden.forecast_alerts(...)`` ogni
-volta che vuole avere lo stato corrente del piano operativo.
+Le allerte sono una vista, non un dato: niente da salvare, niente
+metodi per aggiungerle o toglierle. Chi le vuole applica le regole al
+vaso ogni volta che gli serve lo stato corrente del piano operativo —
+è quello che fa The Pot.
 
 Struttura del modulo
 --------------------
@@ -41,9 +39,9 @@ ritornano l'allerta se la condizione si verifica, altrimenti None.
 Sono indipendenti tra loro e si possono applicare in qualsiasi
 ordine.
 
-Il modulo NON conosce il Garden — è un livello di astrazione
-inferiore. Il Garden si appoggia a questo modulo per implementare
-``current_alerts`` e ``forecast_alerts``.
+Il modulo conosce solo il vaso. L'orchestratore che le applicava a un
+giardino intero (`Garden`) è stato tolto il 2026-11-25 con lo strato
+standalone: chi ha più vasi itera su `ALL_RULES` da sé.
 
 Determinismo dell'alert_id
 --------------------------
@@ -515,7 +513,7 @@ def check_nutrient_low(
 # =======================================================================
 
 # Ogni regola è una funzione pura (Pot, date) → Optional[Alert].
-# Il Garden itera su questa tuple per applicare tutte le regole.
+# Chi chiama itera su questa tuple per applicare tutte le regole.
 ALL_RULES: tuple[Callable[[Pot, date], Alert | None], ...] = (
     check_irrigation_needed,
     check_ec_too_high,

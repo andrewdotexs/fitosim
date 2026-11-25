@@ -83,6 +83,43 @@ Pot, H.9-c), non codice morto. Sono rimasti dove sono, con i loro 70 test.
 quattro errori di tipo sono a posto. L'eccezione copre ora solo lo strato
 standalone, che aspetta P1-b.
 
+**Aggiornamento al 25 novembre 2026 — P1-b è fatto: la pulizia è chiusa.**
+Con la 0.46.0 è andato via lo strato standalone: `domain/garden`,
+`domain/scheduling`, `io/persistence`, `io/openmeteo`, `io/sensors/*` (otto
+moduli), `ecowitt.aggregate_to_daily_weather` che dipendeva da uno di loro,
+e dieci file di test. I due blocchi erano fuori da questo repository e si
+sono mossi lo stesso giorno: The Pot ha ritirato la fase 0 dello strumento
+di calibrazione (`eed527ed`) e il backend del lisimetro ha riscritto il suo
+ponte sul client grezzo (`dbffb54`). Prima di cancellare ho rifatto le
+verifiche dai loro repository: nessun import dello strato, in nessuno dei
+due.
+
+| | 23 ottobre (0.35.0) | 25 novembre (0.46.0) |
+|---|---:|---:|
+| Moduli in `src/` | 44 | 31 |
+| Righe in `src/` | 26 032 | 18 216 |
+| Test | 1 578 in 11,5 s | 1 150 in 1,3 s |
+| Esempi | 12 566 righe | — |
+| Dipendenze oltre la standard library | `numpy`, `matplotlib` (esempi) | nessuna |
+| Rilievi di ruff con le regole di The Pot | 700 | 0 |
+| Errori di mypy | 86 | 0, senza eccezioni |
+| CI | nessuna | ruff, mypy, pytest su Python 3.12–3.14 |
+
+Le righe di `src/` contano anche quello che è entrato nel frattempo: la
+luce, la radiazione netta in casa, la luce misurata al vaso.
+
+`Pot.update_from_sensor` accetta ancora una lettura completa della sonda:
+il tipo che la descriveva stava in `io/sensors`, e ora è un protocollo nel
+modulo del vaso (`pot.SoilReading`), cioè «un oggetto con questi cinque
+attributi». Il comportamento è lo stesso.
+
+**Quello che resta aperto**, e non è pulizia: `py.typed`, che aspetta i
+quattro errori di mypy di The Pot; i due diagrammi in `docs/uml/`, che
+mostrano ancora lo strato tolto e vanno rigenerati dai `.dot` (qui manca
+Graphviz); il manuale utente, i cui capitoli 10–14 e 16 sono ridotti a una
+nota e che andrebbe riscritto attorno al motore; e la spaccatura di
+`domain/pot.py`, che il §5 dava come possibile e non urgente.
+
 Il resto del documento è l'analisi del 23 ottobre, lasciata com'era.
 
 ---

@@ -10,17 +10,13 @@ Tre cose:
      quella della specie, e le misure sopravvivono a JSON e SQLite.
 """
 
-import os
-import tempfile
 import unittest
 from dataclasses import replace
 from datetime import date
 
-from fitosim.domain.garden import Garden
 from fitosim.domain.pot import Location, Pot
 from fitosim.domain.species import BASIL, TOMATO
 from fitosim.domain.weather import WeatherDay
-from fitosim.io.persistence import GardenPersistence
 from fitosim.science.canopy import COVER_CAP
 from fitosim.science.substrate import UNIVERSAL_POTTING_SOIL
 
@@ -151,26 +147,6 @@ class TestAltezzaInPenmanMonteith(unittest.TestCase):
         alto.apply_balance_step_from_weather(meteo, water_input_mm=0.0, current_date=OGGI)
         # Una pianta più alta ha meno resistenza aerodinamica: traspira di più.
         self.assertLess(alto.state_mm, basso.state_mm)
-
-
-class TestSopravvivenzaDelleMisure(unittest.TestCase):
-
-    def test_sqlite_avanti_e_indietro(self):
-        vaso = _vaso(plant_height_m=0.5, canopy_width_m=0.3)
-        giardino = Garden(name="Balcone")
-        giardino.add_pot(vaso)
-        with tempfile.TemporaryDirectory() as cartella:
-            percorso = os.path.join(cartella, "prova.sqlite")
-            with GardenPersistence(percorso) as store:
-                store.register_species(BASIL)
-                store.register_substrate(UNIVERSAL_POTTING_SOIL)
-                store.save_garden(giardino)
-            with GardenPersistence(percorso) as store:
-                riletto = store.load_garden("Balcone")
-        pianta = list(riletto)[0]
-        self.assertEqual(pianta.plant_height_m, 0.5)
-        self.assertEqual(pianta.canopy_width_m, 0.3)
-        self.assertIsNone(pianta.canopy_height_m)
 
 
 if __name__ == "__main__":

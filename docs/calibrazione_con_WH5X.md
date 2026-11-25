@@ -641,7 +641,7 @@ Due decisioni trovate controllando il `domain` di fitosim contro The Pot, e pres
 **pianificatore** di fitosim (`domain/scheduler.py`) è stato tolto, perché nessuno lo chiamava e la proiezione di
 `idrica_service` fa lo stesso anello con lo stesso `Pot.apply_step` sapendo di più; i **due client Open-Meteo**
 (`io/openmeteo.py` e `previsione.py`) restano per scelta — quello di fitosim ha l'archivio ERA5 per i gradi-giorno,
-quello di The Pot le orarie, l'«adesso» e i codici del cielo per l'interfaccia. Garden, persistenza SQLite,
+quello di The Pot le orarie, l'«adesso» e i codici del cielo per l'interfaccia. **Dal 25 novembre 2026 questo capoverso è storia**: lo strato standalone è stato tolto da fitosim (0.46.0) dopo che The Pot ha ritirato la fase 0 dello strumento, e con lui il client Open-Meteo di fitosim; resta quello di The Pot. Garden, persistenza SQLite,
 serializzazione e i `Protocol` dei sensori di fitosim li usano solo lo strumento e gli esempi: sono lo strato
 standalone, congelato per iscritto nel README, e la loro sorte si decide dopo la fase 2, quando lo strumento
 passerà sui modelli dell'app.
@@ -652,7 +652,7 @@ passerà sui modelli dell'app.
 - Ancora e pendenza: `src/fitosim/science/calibration.py`
 - Riconciliazione dallo stato del sensore: `Pot.update_from_sensor` in `src/fitosim/domain/pot.py`
 - Precedenza tra fonti quando arriverà il lisimetro: `src/fitosim/science/calibration_resolution.py`
-- Adapter Ecowitt: `src/fitosim/io/ecowitt.py` (`fetch_real_time`, `fetch_history`) e `src/fitosim/io/sensors/ecowitt.py`
+- Client Ecowitt: `src/fitosim/io/ecowitt.py` (`fetch_real_time`, `fetch_history`); gli adapter di `io/sensors` sono stati tolti il 25-11-2026
 - Spec dei sensori (gateway, routing, validità temporale): `the-pot/docs/the_pot_sensors_spec.md`
 - Lisimetro fisico: progetto sorella `the-pot-lisimetro`
 - Design del layer di feedback: `docs/fitosim_feedback_layer_design.md`

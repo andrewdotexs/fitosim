@@ -37,7 +37,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import Any, Optional, Protocol
 
 from fitosim.domain.blocks import (
     BalanceBlock,
@@ -140,9 +140,35 @@ from fitosim.science.substrate import (
     truncated_cone_pot_surface_area_m2,
 )
 
-if TYPE_CHECKING:
-    # Solo per le annotazioni: a runtime il vaso non importa i sensori.
-    from fitosim.io.sensors.types import SoilReading
+
+class SoilReading(Protocol):
+    """
+    Una lettura della sonda nel substrato, per `Pot.update_from_sensor`:
+    quello che il vaso ne legge, e niente di più. Chi ha la lettura —
+    The Pot, un ponte verso un gateway — passa un oggetto suo con questi
+    attributi; lo strato dei sensori che ne dava uno pronto è stato
+    tolto il 2026-11-25.
+    """
+
+    @property
+    def theta_volumetric(self) -> float:
+        """L'umidità volumetrica del substrato, frazione fra 0 e 1."""
+
+    @property
+    def temperature_c(self) -> float | None:
+        """La temperatura del substrato in °C, se la sonda la dà."""
+
+    @property
+    def ec_mscm(self) -> float | None:
+        """L'EC letta dalla sonda in mS/cm, se la sonda la dà."""
+
+    @property
+    def ph(self) -> float | None:
+        """Il pH letto dalla sonda, se la sonda lo dà."""
+
+    @property
+    def provider_specific(self) -> dict[str, Any]:
+        """I campi del fornitore, portati nel risultato così come sono."""
 
 
 class Location(Enum):
@@ -256,8 +282,8 @@ class SensorUpdateResult:
     observed_temperature_c : float | None
         Temperatura del substrato letta dal sensore, in °C. Aggiunto in
         tappa 2 della fascia 2: valorizzato solo quando l'aggiornamento
-        viene fatto con un SoilReading "ricco" (es. da ATO 7-in-1 via
-        HttpJsonSoilSensor); None per gli aggiornamenti via float
+        viene fatto con una lettura completa (un `SoilReading`, per
+        esempio da una sonda 7-in-1); None per gli aggiornamenti via float
         legacy o per sensori che non misurano la temperatura
         (es. WH51).
     observed_ec_mscm : float | None
@@ -548,9 +574,8 @@ class Pot:
         Identificatore della Room del giardino a cui il vaso indoor
         appartiene (sotto-tappa D fase 1 tappa 5). Per i vasi outdoor
         resta None e il modello indoor non si attiva. Quando è
-        valorizzato, il bilancio idrico indoor (fase D2) leggerà il
-        microclima dalla Room corrispondente del Garden invece di
-        richiederlo come parametro esplicito.
+        valorizzato dice a chi chiama in quale stanza sta il vaso: il
+        microclima della stanza si passa comunque al passo in casa.
     light_exposure : LightExposure | None, opzionale
         Livello qualitativo di esposizione luminosa del vaso
         (DARK, INDIRECT_BRIGHT, DIRECT_SUN). Usato dal bilancio idrico
@@ -1880,9 +1905,8 @@ class Pot:
              `SoilReading` completo via il parametro keyword-only
              `reading`. È la forma da preferire quando il sensore
              fornisce anche temperatura del substrato, EC, pH,
-             come l'ATO 7-in-1 via HttpJsonSoilSensor::
+             come una sonda 7-in-1::
 
-                 reading = http_sensor.current_state(channel_id="1")
                  result = pot.update_from_sensor(reading=reading)
 
         Solo uno dei due parametri va passato. Passare entrambi o
@@ -1947,11 +1971,10 @@ class Pot:
             >>> if result.is_significant:
             ...     print(f"Drift di {result.discrepancy_mm:.1f} mm")
 
-        Aggiornamento con SoilReading da HttpJsonSoilSensor:
+        Aggiornamento con una lettura completa (un oggetto con gli
+        attributi di `SoilReading`):
 
-            >>> from fitosim.io.sensors import HttpJsonSoilSensor
-            >>> sensor = HttpJsonSoilSensor(base_url="http://esp32.local")
-            >>> reading = sensor.current_state(channel_id="1")
+            >>> reading = lettura_della_sonda(canale=1)
             >>> result = pot.update_from_sensor(reading=reading)
             >>> # I campi extra sono accessibili nel result:
             >>> if result.observed_ec_mscm is not None:
@@ -1970,7 +1993,7 @@ class Pot:
         if theta_observed is None and reading is None:
             raise ValueError(
                 "Specificare theta_observed (forma legacy) o reading "
-                "(SoilReading da un SoilSensor). Uno dei due è "
+                "(una lettura completa della sonda). Uno dei due è "
                 "obbligatorio."
             )
 
@@ -2435,10 +2458,8 @@ class Pot:
             Data corrente, usata per determinare lo stadio fenologico
             della specie.
         room : Room, opzionale
-            La Room di appartenenza del vaso. Se None, il metodo
-            cerca di recuperarla dal contesto (TODO: in futuro,
-            attraverso il Garden); per ora se è None usa il default
-            globale del vento.
+            La Room di appartenenza del vaso, per il suo vento. Se None
+            si usa il default globale del vento.
         outdoor_solar_radiation_mj_m2_day : float, opzionale
             Radiazione globale outdoor del giorno, dal piranometro
             della stazione meteo esterna. Se popolata si usa il modo

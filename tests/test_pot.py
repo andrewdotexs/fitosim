@@ -10,7 +10,8 @@ Cinque famiglie di test:
 """
 
 import unittest
-from datetime import UTC, date, timedelta
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 
 from fitosim.domain.blocks import BalanceBlock
 from fitosim.domain.pot import Location, Pot, SensorUpdateResult
@@ -30,6 +31,21 @@ from fitosim.science.substrate import (
     circular_pot_surface_area_m2,
     pot_substrate_depth_mm,
 )
+
+
+@dataclass(frozen=True)
+class SoilReading:
+    """
+    Una lettura di sonda per i test: gli attributi che
+    `Pot.update_from_sensor` legge (il protocollo `pot.SoilReading`).
+    """
+
+    timestamp: datetime
+    theta_volumetric: float
+    temperature_c: float | None = None
+    ec_mscm: float | None = None
+    ph: float | None = None
+    provider_specific: dict = field(default_factory=dict)
 
 
 def _make_basil_pot(state_mm: float = -1.0) -> Pot:
@@ -1473,7 +1489,6 @@ class TestSensorUpdateWithSoilReading(unittest.TestCase):
         """Helper: costruisce un SoilReading di test con default ATO-like."""
         from datetime import datetime
 
-        from fitosim.io.sensors import SoilReading
         defaults = dict(
             timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             theta_volumetric=0.32,
@@ -1529,7 +1544,6 @@ class TestSensorUpdateWithSoilReading(unittest.TestCase):
         # nel result restano None coerentemente.
         from datetime import datetime
 
-        from fitosim.io.sensors import SoilReading
 
         partial_reading = SoilReading(
             timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
@@ -1576,26 +1590,6 @@ class TestSensorUpdateWithSoilReading(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             pot.update_from_sensor()
         self.assertIn("obbligatorio", str(ctx.exception))
-
-    def test_reading_with_invalid_theta_raises_at_construction(self):
-        # Il SoilReading già valida θ nel suo __post_init__: un θ
-        # fuori range viene intercettato prima ancora di arrivare a
-        # update_from_sensor. Questo è il pattern del sistema di
-        # tipi: gli errori sono catturati al confine (al momento
-        # della costruzione del Reading), non al livello del modello.
-        from datetime import datetime
-
-        from fitosim.io.sensors import (
-            SensorDataQualityError,
-            SoilReading,
-        )
-
-        with self.assertRaises(SensorDataQualityError):
-            SoilReading(
-                timestamp=datetime(2026, 5, 1, 12, 0,
-                                    tzinfo=UTC),
-                theta_volumetric=2.5,  # fuori range fisico
-            )
 
     def test_is_significant_works_with_reading_modality(self):
         # Le proprietà derivate del SensorUpdateResult (is_significant,
@@ -2471,7 +2465,6 @@ class TestSensorUpdateChemistry(unittest.TestCase):
     def _make_reading(self, **overrides):
         from datetime import datetime
 
-        from fitosim.io.sensors import SoilReading
         defaults = dict(
             timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             theta_volumetric=0.32,
@@ -2549,7 +2542,6 @@ class TestSensorUpdateChemistry(unittest.TestCase):
         # non devono cambiare.
         from datetime import datetime
 
-        from fitosim.io.sensors import SoilReading
         partial = SoilReading(
             timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             theta_volumetric=0.30,
@@ -2565,7 +2557,6 @@ class TestSensorUpdateChemistry(unittest.TestCase):
         # Reading con solo θ ed EC, niente pH: ph_substrate invariato.
         from datetime import datetime
 
-        from fitosim.io.sensors import SoilReading
         partial = SoilReading(
             timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             theta_volumetric=0.30,
